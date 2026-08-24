@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans;
+  }
+}
+
+/* Indicador global de cursor en proceso */
+html.cursor-progress,
+html.cursor-progress *,
+body.cursor-progress,
+body.cursor-progress * {
+  cursor: progress !important;
+}
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%) scaleX(0.2);
+  }
+  50% {
+    transform: translateX(20%) scaleX(0.7);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.2);
+  }
+}
