@@ -1,8 +1,36 @@
 @import "tailwindcss";
 
 @layer base {
-  body {
-    @apply bg-slate-50 text-slate-900 font-sans;
+  :root {
+    --font-corporate: 'Calibri', 'Carlito', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  }
+
+  html, body {
+    font-family: var(--font-corporate);
+    @apply bg-slate-100/90 text-slate-800 antialiased;
+    letter-spacing: -0.01em;
+    font-feature-settings: "tnum", "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Financial and numerical alignment: Tabular numbers */
+  .font-mono, td, th, input[type="number"], .tabular-nums {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Professional corporate scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
   }
 }
 
@@ -25,3 +53,4 @@ body.cursor-progress * {
     transform: translateX(100%) scaleX(0.2);
   }
 }
+

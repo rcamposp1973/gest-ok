@@ -13,10 +13,16 @@ import React, { useEffect, useState } from 'react';
 import { doc, collection, collectionGroup, onSnapshot, deleteDoc, getDocs, query, where, addDoc } from 'firebase/firestore';
 import { db, auth } from './lib/firebase';
 import { signOut } from 'firebase/auth';
-import { Study, UserRole } from './types';
+import { Study, UserRole, Company } from './types';
 import PlanManager from './components/PlanManager';
 import StudyDetails from './components/StudyDetails';
 import StudyAdminDashboard from './components/StudyAdminDashboard';
+import SuperUsersManager from './components/SuperUsersManager';
+import AuditLogsViewer from './components/AuditLogsViewer';
+import ExecutiveHeader from './components/ExecutiveHeader';
+import IndicadoresEconomicosView from './components/IndicadoresEconomicosView';
+import { logAuditEvent } from './utils/auditLogger';
+import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History } from 'lucide-react';
 
 function Dashboard() {
   const { currentUser } = useAuth();
@@ -25,11 +31,24 @@ function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [studies, setStudies] = useState<Study[]>([]);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
-  const [showPlans, setShowPlans] = useState(false);
+  const [superAdminTab, setSuperAdminTab] = useState<'studies' | 'create_study' | 'plans' | 'super_users' | 'audit_logs'>('studies');
   const [role, setRole] = useState<UserRole | null>(null);
+  const [activeCompany, setActiveCompany] = useState<Company | null>(null);
+  const [showGlobalIndicatorsModal, setShowGlobalIndicatorsModal] = useState(false);
 
   const handleLogout = async () => {
     try {
+      if (currentUser) {
+        logAuditEvent({
+          userId: currentUser.uid,
+          userEmail: currentUser.email || '',
+          userRole: role || 'USUARIO',
+          action: 'LOGOUT',
+          module: 'AUTENTICACION',
+          details: `Cierre de sesión de usuario ${currentUser.email}`
+        });
+      }
+      sessionStorage.removeItem('gestok_login_logged');
       await signOut(auth);
     } catch (e) {
       console.error("Error signing out:", e);
@@ -48,10 +67,11 @@ function Dashboard() {
       console.log("Fetching data for:", currentUser.email);
       const userEmail = currentUser.email?.toLowerCase();
 
-      // 1. Check SuperUser
+      // 1. Root Super Admin Global Bootstrap (Only rcampos@pulsocontable.cl)
       if (userEmail === 'rcampos@pulsocontable.cl') {
-        console.log("User is superuser");
+        console.log("User is root bootstrap Super Admin Global:", userEmail);
         setRole(UserRole.SUPER_USER);
+        setUserData({ email: userEmail, name: 'Super Administrador Global', isSuperUser: true });
         return;
       }
 
@@ -100,7 +120,7 @@ function Dashboard() {
 
       if (foundStudyAdmin) return;
 
-      // 3. Check Accountant / Subcollection users
+      // 3. Check Accountant / Analyst (in studies/{id}/users)
       try {
         const qUser = query(collectionGroup(db, 'users'), where('email', '==', userEmail));
         const snapUser = await getDocs(qUser);
@@ -111,7 +131,8 @@ function Dashboard() {
             throw new Error('Tu usuario se encuentra inactivo o sin vigencia.');
           }
           setUserData({ ...uData, id: uDoc.id, studyId: uData.studyId });
-          setRole(uData.role || UserRole.ACCOUNTANT);
+          const userRole = uData.role === UserRole.ANALYST ? UserRole.ANALYST : (uData.role || UserRole.ACCOUNTANT);
+          setRole(userRole);
           return;
         }
       } catch (cgErr: any) {
@@ -125,10 +146,31 @@ function Dashboard() {
               throw new Error('Tu usuario se encuentra inactivo o sin vigencia.');
             }
             setUserData({ ...uData, id: uDoc.id, studyId: sDoc.id });
-            setRole(uData.role || UserRole.ACCOUNTANT);
+            const userRole = uData.role === UserRole.ANALYST ? UserRole.ANALYST : (uData.role || UserRole.ACCOUNTANT);
+            setRole(userRole);
             return;
           }
         }
+      }
+
+      // 4. Check Explicit SuperUser in Firestore 'superUsers' collection (excluding study admins)
+      try {
+        const qSuper = query(collection(db, 'superUsers'), where('email', '==', userEmail));
+        const snapSuper = await getDocs(qSuper);
+        if (!snapSuper.empty) {
+          const superDoc = snapSuper.docs[0];
+          const superData = superDoc.data();
+          if (superData.estado === 'Inactivo' || superData.estado === 'Sin Vigencia') {
+            throw new Error('Tu cuenta de Super Administrador se encuentra inactiva o bloqueada.');
+          }
+          console.log("User is superuser (DB verified):", userEmail);
+          setRole(UserRole.SUPER_USER);
+          setUserData({ ...superData, id: superDoc.id, isSuperUser: true });
+          return;
+        }
+      } catch (superErr: any) {
+        if (superErr.message?.includes('inactiva') || superErr.message?.includes('bloqueada')) throw superErr;
+        console.warn("Error querying superUsers collection:", superErr);
       }
     } catch (err: any) {
       console.error("Error loading user data in Dashboard:", err);
@@ -143,7 +185,7 @@ function Dashboard() {
     
     // Subscribe to studies (only for superuser)
     let unsubscribe = () => {};
-    if (currentUser?.email === 'rcampos@pulsocontable.cl') {
+    if (role === UserRole.SUPER_USER || currentUser?.email === 'rcampos@pulsocontable.cl') {
       try {
         unsubscribe = onSnapshot(collection(db, 'studies'), (snapshot) => {
           const studiesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Study));
@@ -156,14 +198,14 @@ function Dashboard() {
       }
     }
     return () => unsubscribe();
-  }, [currentUser?.email]);
+  }, [currentUser?.email, role]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="text-sm font-medium text-slate-700">Cargando datos contables...</p>
+          <p className="text-sm font-medium text-slate-700">Cargando datos contables y verificando perfil...</p>
         </div>
       </div>
     );
@@ -178,7 +220,7 @@ function Dashboard() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h3 className="text-base font-bold text-slate-900">Error al cargar la información</h3>
+          <h3 className="text-base font-bold text-slate-900">Error de Autenticación o Acceso</h3>
           <p className="text-xs text-slate-500">{errorMsg}</p>
           <div className="flex gap-2 justify-center pt-2">
             <button
@@ -229,7 +271,7 @@ function Dashboard() {
 
   const handleDeleteStudy = async (studyId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('¿Seguro que deseas eliminar este estudio?')) {
+    if (window.confirm('¿Seguro que deseas eliminar este estudio contable y todos sus datos asociados?')) {
       await deleteDoc(doc(db, 'studies', studyId));
       if (selectedStudy?.id === studyId) setSelectedStudy(null);
     }
@@ -237,66 +279,128 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900">
-      {/* Encabezado Principal Persistente (Sticky Top) */}
-      <header className="sticky top-0 z-50 bg-slate-900 text-white px-4 md:px-6 py-2 flex justify-between items-center shadow-md border-b border-slate-800 flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center font-black text-white text-xs shadow-sm">
-            G
-          </div>
-          <span className="font-bold text-sm tracking-tight text-slate-100">Gest_OK</span>
-          <span className="text-slate-400 text-xs hidden sm:inline font-medium">| Sistema Contable</span>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-slate-400 hidden sm:inline">Bienvenido,</span>
-            <span className="font-medium text-slate-200 font-mono text-[11px]">{currentUser?.email}</span>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="px-3 py-1 bg-slate-800 hover:bg-slate-700 active:bg-slate-950 text-slate-200 hover:text-white text-xs font-semibold rounded border border-slate-700 transition-all shadow-xs"
-          >
-            Cerrar Sesión
-          </button>
-        </div>
-      </header>
+      {/* Encabezado Principal Persistente (Executive Header) */}
+      <ExecutiveHeader
+        currentUserEmail={currentUser?.email}
+        currentUserRole={role}
+        activeCompany={activeCompany}
+        activeStudy={selectedStudy || (role === UserRole.STUDY_ADMIN ? userData : null)}
+        onLogout={handleLogout}
+        onGoHome={() => {
+          setActiveCompany(null);
+          setSelectedStudy(null);
+        }}
+        onOpenHistoricalRates={() => setShowGlobalIndicatorsModal(true)}
+      />
       
       <main className="flex-1 p-3 md:p-5 w-full">
         {role === UserRole.SUPER_USER ? (
           selectedStudy ? (
             <StudyDetails study={selectedStudy} onBack={() => setSelectedStudy(null)} />
           ) : (
-          <div className="grid gap-6">
-            <section>
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold text-slate-900">Administración Global</h2>
-                <button 
-                  onClick={() => setShowPlans(!showPlans)}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline"
-                >
-                  {showPlans ? 'Ver Estudios' : 'Gestionar Planes'}
-                </button>
+          <div className="space-y-6 max-w-7xl mx-auto">
+            {/* SUPER ADMIN NAVIGATION TABS */}
+            <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap gap-2">
+              <button
+                onClick={() => setSuperAdminTab('studies')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'studies'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+                <span>Estudios Registrados ({studies.length})</span>
+              </button>
+
+              <button
+                onClick={() => setSuperAdminTab('create_study')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'create_study'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Crear Nuevo Estudio</span>
+              </button>
+
+              <button
+                onClick={() => setSuperAdminTab('plans')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'plans'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Gestionar Planes</span>
+              </button>
+
+              <button
+                onClick={() => setSuperAdminTab('super_users')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'super_users'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Super Administradores (RBAC)</span>
+              </button>
+
+              <button
+                onClick={() => setSuperAdminTab('audit_logs')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'audit_logs'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <History className="w-4 h-4 text-indigo-400" />
+                <span>Bitácora de Sistema (Audit Logs)</span>
+              </button>
+            </div>
+
+            {/* TAB CONTENTS */}
+            {superAdminTab === 'audit_logs' && (
+              <AuditLogsViewer studies={studies} />
+            )}
+
+            {superAdminTab === 'super_users' && (
+              <SuperUsersManager />
+            )}
+
+            {superAdminTab === 'plans' && (
+              <PlanManager />
+            )}
+
+            {superAdminTab === 'create_study' && (
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm max-w-4xl mx-auto">
+                <h3 className="text-base font-bold text-slate-950 mb-4 flex items-center gap-2">
+                  <PlusCircle className="w-5 h-5 text-indigo-600" />
+                  <span>Crear Nuevo Estudio Contable</span>
+                </h3>
+                <CreateStudy />
               </div>
-              
-              {showPlans ? (
-                <PlanManager />
-              ) : (
-                <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                  <h3 className="text-base font-semibold text-slate-950 mb-4">Crear Nuevo Estudio</h3>
-                  <CreateStudy />
-                </div>
-              )}
-            </section>
-            
-            {!showPlans && (
-              <section>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-base font-bold text-slate-900">Estudios Registrados ({studies.length})</h3>
-                  <span className="text-xs text-slate-500">Selecciona un estudio para modificar datos o administradores</span>
+            )}
+
+            {superAdminTab === 'studies' && (
+              <section className="space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Estudios Contables Registrados ({studies.length})</h3>
+                    <p className="text-xs text-slate-500">Selecciona un estudio para auditar sus sociedades o gestionar sus administradores.</p>
+                  </div>
+                  <button
+                    onClick={() => setSuperAdminTab('create_study')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" /> Nuevo Estudio
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {studies.map(study => {
                     const isVigente = study.estado !== 'Sin Vigencia';
                     const adminEmail = study.adminEmail || study.email || (study.administrators && study.administrators[0]?.email) || 'No configurado';
@@ -326,7 +430,7 @@ function Dashboard() {
                           <div className="text-xs text-slate-600 space-y-1 my-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
                             <p className="flex justify-between">
                               <span className="text-slate-400">Admin:</span>
-                              <span className="font-mono font-medium text-slate-800">{adminEmail}</span>
+                              <span className="font-mono font-medium text-slate-800 truncate max-w-[170px]">{adminEmail}</span>
                             </p>
                             <p className="flex justify-between">
                               <span className="text-slate-400">Total Admins:</span>
@@ -337,7 +441,7 @@ function Dashboard() {
 
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between mt-2">
                           <span className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-                            Modificar y Gestionar &rarr;
+                            Auditar y Gestionar &rarr;
                           </span>
 
                           {study.name !== 'Pulso Contable' && study.name !== 'EST_PRUEBA' && (
@@ -354,7 +458,7 @@ function Dashboard() {
                   })}
                   {studies.length === 0 && (
                     <div className="col-span-full p-8 text-center bg-white rounded-xl border border-slate-200 text-xs text-slate-500 italic">
-                      No hay estudios registrados actualmente. Utiliza el formulario superior para crear el primero.
+                      No hay estudios registrados actualmente. Utiliza el botón superior para registrar el primero.
                     </div>
                   )}
                 </div>
@@ -362,8 +466,14 @@ function Dashboard() {
             )}
           </div>
           )
-        ) : (role === UserRole.STUDY_ADMIN || role === UserRole.ACCOUNTANT) && userData?.studyId ? (
-          <StudyAdminDashboard studyId={userData.studyId} />
+        ) : (role === UserRole.STUDY_ADMIN || role === UserRole.ACCOUNTANT || role === UserRole.ANALYST) && userData?.studyId ? (
+          <StudyAdminDashboard
+            studyId={userData.studyId}
+            currentUserRole={role}
+            currentUserId={userData?.id || currentUser?.uid}
+            currentUserEmail={currentUser?.email}
+            onCompanyChange={(comp) => setActiveCompany(comp)}
+          />
         ) : (
           <div className="p-8 bg-white rounded-2xl border border-slate-200 shadow-lg max-w-lg mx-auto text-center space-y-5">
             <div className="w-14 h-14 bg-emerald-100 text-[#4A5D45] rounded-2xl flex items-center justify-center mx-auto shadow-sm">
@@ -372,8 +482,8 @@ function Dashboard() {
               </svg>
             </div>
             <div>
-              <h3 className="text-xl font-bold text-slate-900">¡Bienvenido a Pulso Contable!</h3>
-              <p className="text-xs text-slate-500 mt-1">Tu cuenta está activa ({currentUser?.email}). Para comenzar, crea tu estudio contable o accede a un estudio demo de prueba.</p>
+              <h3 className="text-xl font-bold text-slate-900">¡Bienvenido a Gest_OK!</h3>
+              <p className="text-xs text-slate-500 mt-1">Tu cuenta está activa ({currentUser?.email}). Para comenzar, crea tu estudio contable o solicita asignación a tu administrador.</p>
             </div>
 
             <div className="pt-2 space-y-3">
@@ -382,7 +492,7 @@ function Dashboard() {
                   if (!currentUser) return;
                   setLoading(true);
                   try {
-                    const studyRef = await addDoc(collection(db, 'studies'), {
+                    await addDoc(collection(db, 'studies'), {
                       name: `Estudio Contable de ${currentUser.email?.split('@')[0] || 'Nuevo Usuario'}`,
                       rut: '76.543.210-K',
                       adminEmail: currentUser.email,
@@ -390,7 +500,9 @@ function Dashboard() {
                       adminId: currentUser.uid,
                       address: 'Santiago, Chile',
                       phone: '+56 9 1234 5678',
-                      giro: 'Servicios Contables y Asesorías'
+                      giro: 'Servicios Contables y Asesorías',
+                      estado: 'Vigente',
+                      createdAt: new Date().toISOString()
                     });
                     
                     // Re-fetch user data
@@ -402,7 +514,7 @@ function Dashboard() {
                     setLoading(false);
                   }
                 }}
-                className="w-full py-3 px-4 bg-[#4A5D45] hover:bg-[#3d4d39] text-white font-bold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2"
+                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2"
               >
                 🚀 Crear Mi Estudio Contable e Ingresar
               </button>
@@ -417,6 +529,34 @@ function Dashboard() {
           </div>
         )}
       </main>
+
+      <footer className="bg-white border-t border-slate-200 px-4 py-2 text-[10px] text-slate-400 text-center">
+        Gest_OK v1.1.0 - Build 20260827 | Sistema de Gestión Contable
+      </footer>
+
+      {/* Modal de Indicadores Económicos Oficiales Global */}
+      {showGlobalIndicatorsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-5xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+              <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                <span className="text-xl">📊</span>
+                <span>Indicadores Económicos Oficiales (SII y Banco Central de Chile)</span>
+              </h3>
+              <button
+                onClick={() => setShowGlobalIndicatorsModal(false)}
+                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-bold transition-colors"
+              >
+                ✕ Cerrar
+              </button>
+            </div>
+            <IndicadoresEconomicosView
+              studyId={userData?.studyId || selectedStudy?.id || 'default'}
+              selectedYear={2026}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

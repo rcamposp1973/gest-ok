@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, doc } from 'firebase/firestore';
-import { Company, ChartOfAccount, Auxiliary, Voucher, VoucherLine } from '../types';
+import { Company, ChartOfAccount, Auxiliary, Voucher, VoucherLine, FiscalPeriodYear } from '../types';
 import { useProcess } from '../context/ProcessContext';
+import { logAuditEvent } from '../utils/auditLogger';
 
 interface ExcelImportCenterModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface ExcelImportCenterModalProps {
   company: Company;
   accounts: ChartOfAccount[];
   auxiliaries: Auxiliary[];
+  fiscalYears?: FiscalPeriodYear[];
   onDataImported: () => void;
 }
 
@@ -23,6 +25,7 @@ export default function ExcelImportCenterModal({
   company,
   accounts,
   auxiliaries,
+  fiscalYears = [],
   onDataImported
 }: ExcelImportCenterModalProps) {
   const { withProcess } = useProcess();
@@ -198,6 +201,10 @@ export default function ExcelImportCenterModal({
               const reqDoc = ['si', 's', 'true', '1'].includes((docStr || '').toLowerCase());
               const estado = (estadoStr || '').toLowerCase().includes('inactiv') ? 'Inactivo' : 'Activo';
 
+              const userUid = auth.currentUser?.uid || 'import-excel';
+              const userEmail = auth.currentUser?.email || '';
+              const nowIso = new Date().toISOString();
+
               const accountPayload: Omit<ChartOfAccount, 'id'> = {
                 code,
                 name,
@@ -207,13 +214,23 @@ export default function ExcelImportCenterModal({
                 requiereAuxiliarRUT: reqAux,
                 requiereConciliacionBancaria: reqConc,
                 requiereDocumento: reqDoc,
-                estado
+                estado,
+                createdBy: userUid,
+                createdByUserEmail: userEmail,
+                creationMode: 'IMPORTACION_MASIVA',
+                createdAt: nowIso,
+                lastModifiedBy: userUid,
+                lastModifiedAt: nowIso
               };
 
               await addDoc(collection(companyRef, 'chartOfAccounts'), accountPayload);
               successCount++;
             }
           } else if (activeTab === 'clientes' || activeTab === 'proveedores') {
+            const userUid = auth.currentUser?.uid || 'import-excel';
+            const userEmail = auth.currentUser?.email || '';
+            const nowIso = new Date().toISOString();
+
             for (let i = 0; i < rows.length; i++) {
               const row = rows[i];
               const [rut, name, roleStr, email, phone, banco, tipoCtaStr, numCta, accCode1, accCode2, estadoStr] = row;
@@ -257,7 +274,13 @@ export default function ExcelImportCenterModal({
                 defaultDebtorAccountId: role === 'Deudor' || role === 'Ambos' ? (matchedAcc1?.id || '') : '',
                 defaultCreditorAccountId: role === 'Acreedor' || role === 'Ambos' ? (matchedAcc1?.id || '') : '',
                 defaultExpenseOrIncomeAccountId: matchedAcc2?.id || '',
-                estado: (estadoStr || '').toLowerCase().includes('inactiv') ? 'Inactivo' : 'Activo'
+                estado: (estadoStr || '').toLowerCase().includes('inactiv') ? 'Inactivo' : 'Activo',
+                createdBy: userUid,
+                createdByUserEmail: userEmail,
+                creationMode: 'IMPORTACION_MASIVA',
+                createdAt: nowIso,
+                lastModifiedBy: userUid,
+                lastModifiedAt: nowIso
               };
 
               await addDoc(collection(companyRef, 'auxiliaries'), auxPayload);
@@ -318,8 +341,38 @@ export default function ExcelImportCenterModal({
               }
             }
 
+            // Validar si algún comprobante pertenece a un período cerrado
+            if (fiscalYears && fiscalYears.length > 0) {
+              const closedDrafts: string[] = [];
+              for (const vData of vouchersMap.values()) {
+                const pStr = vData.period || vData.date.slice(0, 7);
+                const parts = pStr.split('-');
+                if (parts.length >= 2) {
+                  const y = parts[0];
+                  const m = parseInt(parts[1], 10);
+                  const fy = fiscalYears.find(f => f.id === y);
+                  if (fy && fy.months?.[m] === 'Cerrado') {
+                    closedDrafts.push(`Comprobante N° ${vData.voucherNumber} (${pStr})`);
+                  }
+                }
+              }
+
+              if (closedDrafts.length > 0) {
+                throw new Error(
+                  `Acción bloqueada: Se encontraron ${closedDrafts.length} comprobantes con fecha en períodos CERRADOS.\n` +
+                  closedDrafts.slice(0, 3).join(', ') +
+                  (closedDrafts.length > 3 ? '...' : '') +
+                  `\nPor favor abre los períodos correspondientes en 'Configuraciones > Períodos Contables' antes de importar.`
+                );
+              }
+            }
+
             const totalVouchers = vouchersMap.size;
             let vIdx = 0;
+            const userUid = auth.currentUser?.uid || 'import-excel';
+            const userEmail = auth.currentUser?.email || '';
+            const nowIso = new Date().toISOString();
+
             for (const vData of vouchersMap.values()) {
               vIdx++;
               updateProgress({
@@ -342,7 +395,12 @@ export default function ExcelImportCenterModal({
                 totalDebit,
                 totalCredit,
                 status: 'Valido',
-                createdAt: new Date().toISOString()
+                createdBy: userUid,
+                createdByUserEmail: userEmail,
+                creationMode: 'IMPORTACION_MASIVA',
+                createdAt: nowIso,
+                lastModifiedBy: userUid,
+                lastModifiedAt: nowIso
               };
 
               await addDoc(collection(companyRef, 'vouchers'), voucherPayload);
@@ -351,6 +409,23 @@ export default function ExcelImportCenterModal({
           }
         }
       );
+
+      // Audit Log
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'IMPORTACION_MASIVA',
+        module: activeTab === 'cuentas' ? 'PLAN_CUENTAS' : activeTab === 'comprobantes' ? 'COMPROBANTES' : 'AUXILIARES',
+        details: `Carga masiva Excel de ${activeTab}: ${successCount} registros procesados con éxito en ${company.name}`,
+        metadata: {
+          tipo: activeTab,
+          archivo: fileName,
+          exitosos: successCount,
+          errores: errorCount
+        }
+      });
 
       setImportReport(`✅ Proceso finalizado con éxito: ${successCount} registros importados correctamente. (Errores/Filas vacías omitidas: ${errorCount})`);
       onDataImported();

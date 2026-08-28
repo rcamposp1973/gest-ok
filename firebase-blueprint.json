@@ -29,6 +29,20 @@
         "name": { "type": "string" }
       },
       "required": ["studyId", "name"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Registro global de eventos y bitácora de auditoría",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "module": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["timestamp", "userId", "userEmail", "action", "module", "details"]
     }
   },
   "firestore": {
@@ -43,6 +57,10 @@
     "/companies/{companyId}": {
       "schema": "company",
       "description": "Empresas clientes"
+    },
+    "/auditLogs/{auditLogId}": {
+      "schema": "auditLog",
+      "description": "Eventos globales de auditoría y bitácora"
     }
   }
 }

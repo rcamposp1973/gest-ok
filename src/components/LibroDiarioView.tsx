@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
+import { generateSIIReportPDF } from '../utils/pdfGenerator';
 
 interface LibroDiarioViewProps {
   company: Company;
@@ -205,6 +206,26 @@ export default function LibroDiarioView({
     window.print();
   };
 
+  const handleDownloadSIIReport = () => {
+    if (filteredVouchers.length === 0) {
+      alert('No hay asientos contables para generar el informe.');
+      return;
+    }
+    
+    const title = `Libro_Diario_${company.name}_${periodFilter}`;
+    const columns = ['N°', 'Fecha', 'Tipo', 'Glosa', 'Debe', 'Haber'];
+    const data = filteredVouchers.map(v => [
+      v.voucherNumber.toString(),
+      v.date,
+      v.type,
+      v.gloss || '',
+      (v.totalDebit || 0).toLocaleString('es-CL'),
+      (v.totalCredit || 0).toLocaleString('es-CL')
+    ]);
+    
+    generateSIIReportPDF(title, columns, data);
+  };
+
   return (
     <div className="space-y-4">
       {/* Header & Controls */}
@@ -220,6 +241,13 @@ export default function LibroDiarioView({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleDownloadSIIReport}
+            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
+          >
+            <span>📄</span>
+            <span>Informe SII (PDF)</span>
+          </button>
           <button
             onClick={() => setViewMode(viewMode === 'detailed' ? 'compact' : 'detailed')}
             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-colors"
@@ -499,6 +527,38 @@ export default function LibroDiarioView({
                     </tfoot>
                   </table>
                 </div>
+
+                {/* Audit & Traceability Bar */}
+                {(v.createdBy || v.creationMode || v.createdAt || v.lastModifiedBy) && (
+                  <div className="px-4 py-1.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 font-mono">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {v.creationMode && (
+                        <span className={`px-1.5 py-0.2 rounded font-semibold text-[9px] uppercase ${
+                          v.creationMode === 'MANUAL' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                          v.creationMode === 'IMPORTACION_RCV' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                          'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}>
+                          {v.creationMode}
+                        </span>
+                      )}
+                      {(v.createdByUserEmail || v.createdBy) && (
+                        <span>
+                          Creado por: <strong className="text-slate-600 font-medium">{v.createdByUserEmail || v.createdBy}</strong>
+                        </span>
+                      )}
+                      {v.createdAt && (
+                        <span>
+                          Fecha Reg: {v.createdAt.replace('T', ' ').slice(0, 19)}
+                        </span>
+                      )}
+                    </div>
+                    {v.lastModifiedAt && (
+                      <div className="text-slate-400">
+                        Última modif: {v.lastModifiedAt.replace('T', ' ').slice(0, 19)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

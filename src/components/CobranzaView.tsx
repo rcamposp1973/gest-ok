@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Company, ChartOfAccount, Auxiliary, RCVDocument, Voucher, CollectionRecord, CollectionItem, FiscalPeriodYear } from '../types';
+import { checkIsPeriodClosed } from '../utils/periodUtils';
+import { logAuditEvent } from '../utils/auditLogger';
 
 interface CobranzaViewProps {
   studyId: string;
@@ -13,6 +15,12 @@ interface CobranzaViewProps {
   fiscalYears: FiscalPeriodYear[];
   onVouchersUpdated?: () => void;
 }
+
+
+const isNotaCredito = (tipoDoc: string | number) => {
+  const str = String(tipoDoc).toLowerCase();
+  return str === '61' || str.includes('61') || str.includes('crédito') || str.includes('credito');
+};
 
 export default function CobranzaView({
   studyId,
@@ -33,6 +41,16 @@ export default function CobranzaView({
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [selectedCustomerRut, setSelectedCustomerRut] = useState<string>('');
 
+  // Column Specific Filters
+  const [colFilterDate, setColFilterDate] = useState<string>('');
+  const [colFilterType, setColFilterType] = useState<string>('Todos');
+  const [colFilterFolio, setColFilterFolio] = useState<string>('');
+  const [colFilterRut, setColFilterRut] = useState<string>('');
+  const [colFilterRazon, setColFilterRazon] = useState<string>('');
+  const [colFilterDays, setColFilterDays] = useState<string>('');
+  const [colFilterAging, setColFilterAging] = useState<string>('Todos');
+  const [colFilterAmount, setColFilterAmount] = useState<string>('');
+
   // New Collection Form
   const [showCollectModal, setShowCollectModal] = useState<boolean>(false);
   const [collectDate, setCollectDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -45,18 +63,28 @@ export default function CobranzaView({
 
   const companyRef = doc(db, 'studies', studyId, 'companies', company.id);
 
-  // Bank & Cash accounts from chart of accounts
+  // Bank & Cash accounts from chart of accounts (prioritizing accounts with requiereConciliacionBancaria = true)
   const depositAccounts = useMemo(() => {
-    return accounts.filter(acc => {
-      const code = acc.code || '';
+    const list = accounts.filter(acc => {
+      if (acc.estado === 'Inactivo') return false;
+      const code = (acc.code || '').replace(/-/g, '.');
       const name = (acc.name || '').toLowerCase();
-      const type = (acc.type || '').toLowerCase();
       return (
-        acc.estado !== 'Inactivo' &&
-        (type.includes('activo') || code.startsWith('1')) &&
-        (name.includes('banco') || name.includes('caja') || name.includes('cuenta corriente') || name.includes('transbank') || code.startsWith('1-1-01'))
+        acc.requiereConciliacionBancaria ||
+        (code.startsWith('1.1.01') && (name.includes('banco') || name.includes('cuenta corriente') || name.includes('caja') || name.includes('tesoreria') || name.includes('transbank')))
       );
     });
+
+    if (list.length === 0) {
+      return accounts.filter(acc => {
+        if (acc.estado === 'Inactivo') return false;
+        const code = (acc.code || '').replace(/-/g, '.');
+        const name = (acc.name || '').toLowerCase();
+        return code.startsWith('1.1.01') || name.includes('banco') || name.includes('caja');
+      });
+    }
+
+    return list;
   }, [accounts]);
 
   useEffect(() => {
@@ -95,10 +123,55 @@ export default function CobranzaView({
       }
     });
 
+    // Build set of RUTs and Folios collected or canceled via NCs or Vouchers
+    const canceledOrCollectedDocKeys = new Set<string>();
+
+    // A) Check RCV Credit Notes (tipoDoc 61) for Sales
+    rcvDocuments.forEach(d => {
+      if (d.tipoRegistro === 'Venta' && (String(d.tipoDoc) === '61' || String(d.tipoDoc).includes('61'))) {
+        const rut = (d.rutReceptor || d.rutEmisor || '').toUpperCase().replace(/\./g, '').trim();
+        const folio = String(d.folio || '').trim();
+        const refFolio = String(d.refFolioOrig || '').trim();
+        if (folio) canceledOrCollectedDocKeys.add(`${rut}__${folio}`);
+        if (refFolio) canceledOrCollectedDocKeys.add(`${rut}__${refFolio}`);
+      }
+    });
+
+    // B) Check Vouchers for collections/credits on Clientes (1.1.02 / Clientes)
+    vouchers.forEach(v => {
+      if (v.status === 'Anulado') return;
+      v.lines.forEach(line => {
+        if (!line.auxiliaryRut) return;
+        const lineCode = (line.accountCode || '').trim();
+        const lineName = (line.accountName || '').toLowerCase();
+        const isClientAcc = lineCode.startsWith('1.1.02') || lineName.includes('cliente');
+        const credit = Number(line.credit) || 0;
+
+        if (isClientAcc && credit > 0) {
+          const rut = line.auxiliaryRut.toUpperCase().replace(/\./g, '').trim();
+          const refStr = (line.documentRef || line.gloss || '').trim();
+          const numMatch = refStr.match(/\b(\d+)\b/);
+          if (numMatch) {
+            canceledOrCollectedDocKeys.add(`${rut}__${numMatch[1]}`);
+          }
+        }
+      });
+    });
+
     const today = new Date();
 
     return rcvDocuments
-      .filter(doc => doc.tipoRegistro === 'Venta' && !collectedDocIds.has(doc.id))
+      .filter(doc => {
+        if (doc.tipoRegistro !== 'Venta') return false;
+        if (collectedDocIds.has(doc.id)) return false;
+        if (String(doc.tipoDoc) === '61') return false;
+
+        const rut = (doc.rutReceptor || doc.rutEmisor || '').toUpperCase().replace(/\./g, '').trim();
+        const folio = String(doc.folio || '').trim();
+        if (canceledOrCollectedDocKeys.has(`${rut}__${folio}`)) return false;
+
+        return true;
+      })
       .map(doc => {
         const issueDate = new Date(doc.fechaEmision);
         const diffTime = Math.abs(today.getTime() - issueDate.getTime());
@@ -130,7 +203,7 @@ export default function CobranzaView({
           badgeColor
         };
       });
-  }, [rcvDocuments, collectionRecords]);
+  }, [rcvDocuments, collectionRecords, vouchers]);
 
   // Aging Summary Metrics
   const agingStats = useMemo(() => {
@@ -182,9 +255,35 @@ export default function CobranzaView({
         const folioMatch = inv.folio.toLowerCase().includes(q);
         if (!rutMatch && !nameMatch && !folioMatch) return false;
       }
+      // Column search filters
+      if (colFilterDate.trim() && !inv.fechaEmision.toLowerCase().includes(colFilterDate.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterType !== 'Todos') {
+        if (colFilterType === '61' && !isNotaCredito(inv.tipoDoc)) return false;
+        if (colFilterType !== '61' && String(inv.tipoDoc) !== colFilterType) return false;
+      }
+      if (colFilterFolio.trim() && !String(inv.folio).toLowerCase().includes(colFilterFolio.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterRut.trim() && !inv.rutEmisor.toLowerCase().includes(colFilterRut.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterRazon.trim() && !inv.razonSocialEmisor.toLowerCase().includes(colFilterRazon.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterDays.trim() && !String(inv.diffDays).includes(colFilterDays.trim())) {
+        return false;
+      }
+      if (colFilterAging !== 'Todos' && inv.agingCategory !== colFilterAging) {
+        return false;
+      }
+      if (colFilterAmount.trim() && !String(inv.montoTotal).includes(colFilterAmount.trim())) {
+        return false;
+      }
       return true;
     });
-  }, [invoicesWithAging, agingFilter, customerSearch]);
+  }, [invoicesWithAging, agingFilter, customerSearch, colFilterDate, colFilterType, colFilterFolio, colFilterRut, colFilterRazon, colFilterDays, colFilterAging, colFilterAmount]);
 
   // Toggle selection for collection
   const toggleSelectInvoice = (id: string, total: number) => {
@@ -215,7 +314,10 @@ export default function CobranzaView({
         });
       }
     });
-    const total = items.reduce((s, it) => s + it.montoCobrado, 0);
+    const total = items.reduce((s, it) => {
+      const isNC = isNotaCredito(it.tipoDoc);
+      return s + (isNC ? -Math.abs(it.montoCobrado) : Math.abs(it.montoCobrado));
+    }, 0);
     return { items, total };
   }, [invoicesWithAging, selectedInvoiceIds]);
 
@@ -225,6 +327,13 @@ export default function CobranzaView({
       alert('Seleccione al menos una factura a cobrar.');
       return;
     }
+
+    const periodCheck = checkIsPeriodClosed(collectPeriod, fiscalYears);
+    if (periodCheck.isClosed) {
+      alert(periodCheck.errorMsg);
+      return;
+    }
+
     if (!selectedDepositAccountId) {
       alert('Seleccione la cuenta bancaria o caja de destino.');
       return;
@@ -249,31 +358,40 @@ export default function CobranzaView({
 
       const totalAmount = selectedItemsToCollect.total;
 
-      // 1. Voucher Lines for Ingreso
-      const voucherLines = [
-        // Línea 1: Banco o Caja al DEBE (Aumenta el Activo disponible)
-        {
-          id: 'line_1',
-          accountId: depositAcc.id,
-          accountCode: depositAcc.code,
-          accountName: depositAcc.name,
-          debit: totalAmount,
-          credit: 0,
-          documentRef: `Recaudación N° ${nextRecordNumber}`,
-          gloss: `Cobro ${selectedItemsToCollect.items.length} facturas (${paymentMethod})`
-        },
-        // Línea 2: Clientes por Cobrar al HABER (Disminuye la cuenta por cobrar)
-        {
-          id: 'line_2',
+      // 1. Voucher Lines for Ingreso (Individual lines per document with RUT, Name and DocumentRef)
+      const customerLines = selectedItemsToCollect.items.map((it, idx) => {
+        const isNC = isNotaCredito(it.tipoDoc);
+        const amount = Math.abs(it.montoCobrado);
+        const docRefStr = `${it.tipoDoc} N° ${it.folio}`;
+
+        return {
+          id: `line_cust_${idx + 1}`,
           accountId: customerReceivableAcc.id,
           accountCode: customerReceivableAcc.code,
           accountName: customerReceivableAcc.name,
-          debit: 0,
-          credit: totalAmount,
-          documentRef: `Recaudación N° ${nextRecordNumber}`,
-          gloss: `Saldado de Clientes según Recaudación N° ${nextRecordNumber}`
-        }
-      ];
+          auxiliaryRut: it.rut,
+          auxiliaryName: it.razonSocial,
+          debit: isNC ? amount : 0,
+          credit: isNC ? 0 : amount,
+          documentRef: docRefStr,
+          gloss: `Cobro ${isNC ? 'NC' : 'Factura'} ${docRefStr} (${it.razonSocial})`
+        };
+      });
+
+      const bankLine = {
+        id: `line_bank_${customerLines.length + 1}`,
+        accountId: depositAcc.id,
+        accountCode: depositAcc.code,
+        accountName: depositAcc.name,
+        debit: totalAmount,
+        credit: 0,
+        documentRef: `Recaudación N° ${nextRecordNumber}`,
+        gloss: `Ingreso Bancario Recaudación N° ${nextRecordNumber} (${paymentMethod})`
+      };
+
+      const voucherLines = [bankLine, ...customerLines];
+      const totalDebitVal = voucherLines.reduce((s, l) => s + (l.debit || 0), 0);
+      const totalCreditVal = voucherLines.reduce((s, l) => s + (l.credit || 0), 0);
 
       // 2. Create Voucher in Firestore
       const newVoucherData = {
@@ -283,8 +401,8 @@ export default function CobranzaView({
         type: 'Ingreso',
         gloss: `Recaudación N° ${nextRecordNumber} (${paymentMethod}) - ${collectGloss}`,
         lines: voucherLines,
-        totalDebit: totalAmount,
-        totalCredit: totalAmount,
+        totalDebit: totalDebitVal,
+        totalCredit: totalCreditVal,
         status: 'Valido',
         createdAt: new Date().toISOString()
       };
@@ -326,6 +444,12 @@ export default function CobranzaView({
 
   // Void Collection Record
   const handleVoidCollection = async (rec: CollectionRecord) => {
+    const periodCheck = checkIsPeriodClosed(rec.period || rec.date, fiscalYears);
+    if (periodCheck.isClosed) {
+      alert(periodCheck.errorMsg);
+      return;
+    }
+
     if (!confirm(`¿Está seguro de anular la Recaudación N° ${rec.recordNumber}? Esto anulará el comprobante de ingreso asociado y reabrirá las facturas.`)) {
       return;
     }
@@ -343,13 +467,41 @@ export default function CobranzaView({
         });
       }
 
-      alert('Recaudación y comprobante anulados exitosamente.');
+      // Audit Log
+      await logAuditEvent({
+        userId: auth.currentUser?.uid || 'anonymous',
+        userEmail: auth.currentUser?.email || 'sistema',
+        action: 'ANULAR',
+        module: 'PAGOS_COBRANZAS',
+        studyId: studyId,
+        companyId: company.id,
+        companyName: company.name,
+        details: `Anulación de Recaudación N° ${rec.recordNumber} por $${rec.totalAmount.toLocaleString('es-CL')}. Anulado comprobante ${rec.voucherId || 'N/A'}. Facturas liberadas.`,
+        metadata: {
+          action: 'CANCEL',
+          documentType: 'RECAUDACION',
+          documentId: rec.id,
+          recordNumber: rec.recordNumber,
+          voucherId: rec.voucherId,
+          motivo: `Anulación de Recaudación N° ${rec.recordNumber}`,
+          totalAmount: rec.totalAmount,
+          date: rec.date,
+          period: rec.period
+        }
+      });
+
+      alert('✅ Recaudación y comprobante anulados exitosamente.');
       fetchCollections();
       if (onVouchersUpdated) onVouchersUpdated();
     } catch (err: any) {
       console.error('Error voiding collection:', err);
       alert('Error al anular: ' + err.message);
     }
+  };
+
+  // Delete Collection Record
+  const handleDeleteCollection = async (rec: CollectionRecord) => {
+    alert('La eliminación permanente está desactivada por normativas de auditoría. Por favor, utilice la opción de "Anular" para revertir esta operación.');
   };
 
   // Unique customers for Current Account statement
@@ -569,19 +721,121 @@ export default function CobranzaView({
             </div>
           </div>
 
-          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <div className="overflow-auto max-h-[500px] border border-slate-200 rounded-lg relative shadow-2xs">
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase">
+              <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase sticky top-0 z-20 shadow-2xs">
                 <tr>
-                  <th className="py-2.5 px-3 w-10 text-center">Sel.</th>
-                  <th className="py-2.5 px-2.5">Emisión</th>
-                  <th className="py-2.5 px-2.5">Tipo</th>
-                  <th className="py-2.5 px-2.5">Folio</th>
-                  <th className="py-2.5 px-3">RUT Cliente</th>
-                  <th className="py-2.5 px-3">Razón Social</th>
-                  <th className="py-2.5 px-2.5 text-center">Días</th>
-                  <th className="py-2.5 px-3">Antigüedad</th>
-                  <th className="py-2.5 px-3 text-right">Monto Total ($)</th>
+                  <th className="py-2.5 px-3 w-10 text-center bg-slate-100">Sel.</th>
+                  <th className="py-2.5 px-2.5 bg-slate-100">Emisión</th>
+                  <th className="py-2.5 px-2.5 bg-slate-100">Tipo</th>
+                  <th className="py-2.5 px-2.5 bg-slate-100">Folio</th>
+                  <th className="py-2.5 px-3 bg-slate-100">RUT Cliente</th>
+                  <th className="py-2.5 px-3 bg-slate-100">Razón Social</th>
+                  <th className="py-2.5 px-2.5 text-center bg-slate-100">Días</th>
+                  <th className="py-2.5 px-3 bg-slate-100">Antigüedad</th>
+                  <th className="py-2.5 px-3 text-right bg-slate-100">Monto Total ($)</th>
+                </tr>
+                {/* Column Filter Row */}
+                <tr className="bg-slate-50 border-b border-slate-200 text-xs normal-case sticky top-[38px] z-10 shadow-2xs font-normal">
+                  <th className="p-1 text-center">
+                    {(colFilterDate || colFilterType !== 'Todos' || colFilterFolio || colFilterRut || colFilterRazon || colFilterDays || colFilterAging !== 'Todos' || colFilterAmount) && (
+                      <button
+                        onClick={() => {
+                          setColFilterDate('');
+                          setColFilterType('Todos');
+                          setColFilterFolio('');
+                          setColFilterRut('');
+                          setColFilterRazon('');
+                          setColFilterDays('');
+                          setColFilterAging('Todos');
+                          setColFilterAmount('');
+                        }}
+                        className="text-[10px] text-rose-600 hover:text-rose-800 font-bold"
+                        title="Limpiar filtros de columna"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </th>
+                  <th className="p-1">
+                    <input
+                      type="text"
+                      placeholder="Fecha..."
+                      value={colFilterDate}
+                      onChange={e => setColFilterDate(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white font-mono text-[11px]"
+                    />
+                  </th>
+                  <th className="p-1">
+                    <select
+                      value={colFilterType}
+                      onChange={e => setColFilterType(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                    >
+                      <option value="Todos">Todos</option>
+                      <option value="33">33 - Factura</option>
+                      <option value="34">34 - Exenta</option>
+                      <option value="61">61 - NC</option>
+                    </select>
+                  </th>
+                  <th className="p-1">
+                    <input
+                      type="text"
+                      placeholder="Folio..."
+                      value={colFilterFolio}
+                      onChange={e => setColFilterFolio(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white font-mono text-[11px]"
+                    />
+                  </th>
+                  <th className="p-1">
+                    <input
+                      type="text"
+                      placeholder="RUT..."
+                      value={colFilterRut}
+                      onChange={e => setColFilterRut(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                    />
+                  </th>
+                  <th className="p-1">
+                    <input
+                      type="text"
+                      placeholder="Razón Social..."
+                      value={colFilterRazon}
+                      onChange={e => setColFilterRazon(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                    />
+                  </th>
+                  <th className="p-1 text-center">
+                    <input
+                      type="text"
+                      placeholder="Días"
+                      value={colFilterDays}
+                      onChange={e => setColFilterDays(e.target.value)}
+                      className="w-12 border border-slate-300 rounded p-1 bg-white text-[11px] text-center font-mono"
+                    />
+                  </th>
+                  <th className="p-1">
+                    <select
+                      value={colFilterAging}
+                      onChange={e => setColFilterAging(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                    >
+                      <option value="Todos">Todos</option>
+                      <option value="0-30">0-30 d</option>
+                      <option value="31-60">31-60 d</option>
+                      <option value="61-90">61-90 d</option>
+                      <option value="+90">+90 d</option>
+                    </select>
+                  </th>
+                  <th className="p-1">
+                    <input
+                      type="text"
+                      placeholder="Monto..."
+                      value={colFilterAmount}
+                      onChange={e => setColFilterAmount(e.target.value)}
+                      className="w-full border border-slate-300 rounded p-1 bg-white text-[11px] font-mono text-right"
+                    />
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
@@ -594,8 +848,9 @@ export default function CobranzaView({
                 ) : (
                   filteredPending.map(inv => {
                     const isSelected = selectedInvoiceIds[inv.id] !== undefined;
+                    const isNC = isNotaCredito(inv.tipoDoc);
                     return (
-                      <tr key={inv.id} className={isSelected ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}>
+                      <tr key={inv.id} className={isSelected ? (isNC ? 'bg-amber-50/70' : 'bg-indigo-50/60') : 'hover:bg-slate-50'}>
                         <td className="py-2 px-3 text-center">
                           <input
                             type="checkbox"
@@ -605,8 +860,16 @@ export default function CobranzaView({
                           />
                         </td>
                         <td className="py-2 px-2.5 text-slate-700">{inv.fechaEmision}</td>
-                        <td className="py-2 px-2.5 font-sans font-semibold text-slate-800">
-                          {inv.tipoDoc === '33' ? 'Factura Electrónica' : inv.tipoDoc === '34' ? 'Factura Exenta' : inv.tipoDoc}
+                        <td className="py-2 px-2.5 font-sans font-semibold">
+                          {isNC ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px]">
+                              <span>📜</span> NC {inv.tipoDoc}
+                            </span>
+                          ) : (
+                            <span className="text-slate-800">
+                              {inv.tipoDoc === '33' ? 'Factura Electrónica' : inv.tipoDoc === '34' ? 'Factura Exenta' : inv.tipoDoc}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 px-2.5 font-bold text-indigo-700">{inv.folio}</td>
                         <td className="py-2 px-3 font-semibold text-slate-800">{inv.rutEmisor}</td>
@@ -617,8 +880,8 @@ export default function CobranzaView({
                             {inv.agingLabel}
                           </span>
                         </td>
-                        <td className="py-2 px-3 text-right font-black text-slate-900">
-                          ${inv.montoTotal.toLocaleString('es-CL')}
+                        <td className={`py-2 px-3 text-right font-black ${isNC ? 'text-amber-700' : 'text-slate-900'}`}>
+                          {isNC ? '-' : ''}${inv.montoTotal.toLocaleString('es-CL')}
                         </td>
                       </tr>
                     );
@@ -680,15 +943,24 @@ export default function CobranzaView({
                         </span>
                       </td>
                       <td className="py-2 px-3 text-center font-sans">
-                        {rec.status === 'Valido' && (
+                        <div className="flex items-center justify-center gap-1">
+                          {rec.status === 'Valido' && (
+                            <button
+                              onClick={() => handleVoidCollection(rec)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold rounded border border-amber-200"
+                              title="Anular Recaudación"
+                            >
+                              Anular
+                            </button>
+                          )}
                           <button
-                            onClick={() => handleVoidCollection(rec)}
+                            onClick={() => handleDeleteCollection(rec)}
                             className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-bold rounded border border-rose-200"
-                            title="Anular Recaudación"
+                            title="Eliminar Recaudación permanentemente"
                           >
-                            Anular
+                            🗑️
                           </button>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   ))

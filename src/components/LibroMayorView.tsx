@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
+import { generateSIIReportPDF } from '../utils/pdfGenerator';
 
 interface LibroMayorViewProps {
   company: Company;
@@ -109,11 +110,21 @@ export default function LibroMayorView({
         // Find or fallback account
         let targetAcc = accountMap.get(line.accountId) || accountMap.get(line.accountCode);
         if (!targetAcc) {
+          const accCodeStr = line.accountCode || 'S/C';
+          const prefix = accCodeStr.trim().charAt(0);
+          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Activo';
+          if (prefix === '1') inferredType = 'Activo';
+          else if (prefix === '2') {
+            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3') || accCodeStr.startsWith('2-3')) ? 'Patrimonio' : 'Pasivo';
+          }
+          else if (prefix === '3') inferredType = 'Ingreso';
+          else if (prefix === '4' || prefix === '5') inferredType = 'Gasto';
+
           targetAcc = {
             id: line.accountId || line.accountCode || 'unknown',
-            code: line.accountCode || 'S/C',
+            code: accCodeStr,
             name: line.accountName || 'Cuenta Sin Clasificar',
-            type: 'Activo',
+            type: inferredType,
             requiereCentroCosto: false,
             requiereAuxiliarRUT: false,
             requiereConciliacionBancaria: false,
@@ -297,6 +308,33 @@ export default function LibroMayorView({
     window.print();
   };
 
+  const handleDownloadSIIReport = () => {
+    if (displayedLedgers.length === 0) {
+      alert('No hay movimientos en el Libro Mayor para generar el informe.');
+      return;
+    }
+    
+    const title = `Libro_Mayor_${company.name}_${periodFilter}`;
+    const columns = ['Código', 'Cuenta', 'Fecha', 'N° Asiento', 'Glosa', 'Debe', 'Haber'];
+    const data: any[][] = [];
+    
+    displayedLedgers.forEach(ledger => {
+      ledger.movements.forEach(mov => {
+        data.push([
+          ledger.account.code,
+          ledger.account.name,
+          mov.date,
+          mov.voucherNumber.toString(),
+          mov.lineGloss || mov.gloss || '',
+          mov.debit > 0 ? mov.debit.toLocaleString('es-CL') : '0',
+          mov.credit > 0 ? mov.credit.toLocaleString('es-CL') : '0'
+        ]);
+      });
+    });
+    
+    generateSIIReportPDF(title, columns, data);
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -312,6 +350,13 @@ export default function LibroMayorView({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleDownloadSIIReport}
+            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
+          >
+            <span>📄</span>
+            <span>Informe SII (PDF)</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"

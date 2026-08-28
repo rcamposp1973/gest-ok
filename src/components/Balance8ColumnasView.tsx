@@ -32,6 +32,22 @@ export default function Balance8ColumnasView({
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [onlyWithMovements, setOnlyWithMovements] = useState<boolean>(true);
+
+  // Handle date changes with cycle validation
+  const handleDateFromChange = (date: string) => {
+    // Para balances anuales/acumulados, forzar inicio en 01-01
+    const [year] = date.split('-');
+    setDateFrom(`${year}-01-01`);
+  };
+
+  const handleDateToChange = (date: string) => {
+    // Validar que la fecha final sea mayor o igual a la de inicio
+    if (dateFrom && date < dateFrom) {
+        alert("La fecha de término no puede ser anterior a la fecha de inicio.");
+        return;
+    }
+    setDateTo(date);
+  };
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Available periods
@@ -95,11 +111,21 @@ export default function Balance8ColumnasView({
 
         let targetAcc = accountMap.get(l.accountId) || accountMap.get(l.accountCode);
         if (!targetAcc) {
+          const accCodeStr = l.accountCode || 'S/C';
+          const prefix = accCodeStr.trim().charAt(0);
+          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Activo';
+          if (prefix === '1') inferredType = 'Activo';
+          else if (prefix === '2') {
+            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3') || accCodeStr.startsWith('2-3')) ? 'Patrimonio' : 'Pasivo';
+          }
+          else if (prefix === '3') inferredType = 'Ingreso';
+          else if (prefix === '4' || prefix === '5') inferredType = 'Gasto';
+
           targetAcc = {
             id: l.accountId || l.accountCode || 'unknown',
-            code: l.accountCode || 'S/C',
+            code: accCodeStr,
             name: l.accountName || 'Cuenta Sin Clasificar',
-            type: 'Activo',
+            type: inferredType,
             requiereCentroCosto: false,
             requiereAuxiliarRUT: false,
             requiereConciliacionBancaria: false,
@@ -140,28 +166,54 @@ export default function Balance8ColumnasView({
       let resLoss = 0;
       let resGain = 0;
 
+      const code = (account.code || '').trim();
+      const codePrefix = code.charAt(0);
       const normType = (account.type || 'Activo').toLowerCase();
 
-      if (normType.includes('activo')) {
+      // Criterios de Clasificación: 1 = Activos, 2 = Pasivo (salvedad 23 = Patrimonio), 3 = Ingresos, 4 / 5 = Gastos
+      const isPatrimonio = 
+        code.startsWith('23') || 
+        code.startsWith('2.3') || 
+        code.startsWith('2-3') || 
+        normType.includes('patrimonio') || 
+        normType.includes('capital');
+
+      const isActivo = 
+        codePrefix === '1' || 
+        (!['2', '3', '4', '5'].includes(codePrefix) && normType.includes('activo'));
+
+      const isPasivo = 
+        !isPatrimonio && 
+        (codePrefix === '2' || (!['1', '3', '4', '5'].includes(codePrefix) && normType.includes('pasivo')));
+
+      const isGasto = 
+        codePrefix === '4' || 
+        codePrefix === '5' || 
+        (!['1', '2', '3'].includes(codePrefix) && (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida')));
+
+      const isIngreso = 
+        codePrefix === '3' || 
+        (!['1', '2', '4', '5'].includes(codePrefix) && (normType.includes('ingreso') || normType.includes('ganancia') || normType.includes('venta')));
+
+      if (isActivo) {
         invAsset = balDebit - balCredit;
         if (invAsset < 0) {
-          // Negative asset balance displays as negative or adjusts
           invAsset = 0;
           invLiability = balCredit - balDebit;
         }
-      } else if (normType.includes('pasivo') || normType.includes('patrimonio') || normType.includes('capital')) {
+      } else if (isPasivo || isPatrimonio) {
         invLiability = balCredit - balDebit;
         if (invLiability < 0) {
           invLiability = 0;
           invAsset = balDebit - balCredit;
         }
-      } else if (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida')) {
+      } else if (isGasto) {
         resLoss = balDebit - balCredit;
         if (resLoss < 0) {
           resLoss = 0;
           resGain = balCredit - balDebit;
         }
-      } else if (normType.includes('ingreso') || normType.includes('ganancia') || normType.includes('venta')) {
+      } else if (isIngreso) {
         resGain = balCredit - balDebit;
         if (resGain < 0) {
           resGain = 0;
@@ -428,7 +480,7 @@ export default function Balance8ColumnasView({
             <input
               type="date"
               value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={(e) => handleDateFromChange(e.target.value)}
               className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
           </div>
@@ -438,7 +490,7 @@ export default function Balance8ColumnasView({
             <input
               type="date"
               value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(e) => handleDateToChange(e.target.value)}
               className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
           </div>

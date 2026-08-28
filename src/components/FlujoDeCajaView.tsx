@@ -153,7 +153,7 @@ export default function FlujoDeCajaView({
     projections.forEach(proj => {
       if (proj.status === 'Inactivo') return;
       const pDate = proj.date || `${selectedYear}-01-01`;
-      const pYear = parseInt(pDate.slice(0, 4));
+      const pYear = parseInt(pDate.slice(0, 4)) || selectedYear;
       const pMonth = parseInt(pDate.slice(5, 7)) - 1;
 
       if (proj.recurrence === 'Unica') {
@@ -170,7 +170,7 @@ export default function FlujoDeCajaView({
           }
         }
       } else if (proj.recurrence === 'Anual') {
-        if (selectedYear >= pYear && (selectedYear - pYear) % 1 === 0) {
+        if (selectedYear >= pYear) {
           if (pMonth >= 0 && pMonth <= 11) {
             if (proj.type === 'Ingreso') monthlyProjInflows[pMonth] += proj.amount;
             else monthlyProjOutflows[pMonth] += proj.amount;
@@ -484,7 +484,7 @@ export default function FlujoDeCajaView({
           </div>
 
           {/* Hybrid Matrix Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-x-auto">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs font-semibold text-slate-700">
               <div className="flex items-center gap-2">
                 <span>📊</span>
@@ -496,88 +496,90 @@ export default function FlujoDeCajaView({
               </div>
             </div>
 
-            <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-900 text-white font-bold uppercase text-[11px] tracking-wider">
-                  <th className="p-2.5 min-w-[220px] border-r border-slate-700">Concepto Financiero / Tesorería</th>
-                  {monthNames.map(m => (
-                    <th key={m} className="p-2 text-right border-r border-slate-700 font-mono min-w-[90px]">{m}</th>
-                  ))}
-                  <th className="p-2.5 text-right font-mono min-w-[120px] bg-slate-950">Total {selectedYear}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 font-mono">
-                <tr className="bg-emerald-50/50 hover:bg-emerald-50 text-emerald-950 font-bold">
-                  <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5">
-                    <span className="text-emerald-700">🟢</span> (+) Ingresos Reales de Caja (Cobrados)
-                  </td>
-                  {hybridCashFlow.monthlyRealInflows.map((v, i) => (
-                    <td key={i} className="p-2 text-right border-r border-slate-200">
-                      {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+            <div className="overflow-auto max-h-[550px] relative shadow-2xs">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead className="sticky top-0 z-10 shadow-2xs">
+                  <tr className="bg-slate-900 text-white font-bold uppercase text-[11px] tracking-wider">
+                    <th className="p-2.5 min-w-[220px] border-r border-slate-700 bg-slate-900 sticky left-0 z-20">Concepto Financiero / Tesorería</th>
+                    {monthNames.map(m => (
+                      <th key={m} className="p-2 text-right border-r border-slate-700 font-mono min-w-[90px]">{m}</th>
+                    ))}
+                    <th className="p-2.5 text-right font-mono min-w-[120px] bg-slate-950">Total {selectedYear}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 font-mono">
+                  <tr className="bg-emerald-50/50 hover:bg-emerald-50 text-emerald-950 font-bold">
+                    <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 bg-emerald-50 sticky left-0 z-10">
+                      <span className="text-emerald-700">🟢</span> (+) Ingresos Reales de Caja (Cobrados)
                     </td>
-                  ))}
-                  <td className="p-2.5 text-right font-black bg-emerald-100 text-emerald-900">
-                    ${hybridCashFlow.totalRealInflow.toLocaleString('es-CL')}
-                  </td>
-                </tr>
+                    {hybridCashFlow.monthlyRealInflows.map((v, i) => (
+                      <td key={i} className="p-2 text-right border-r border-slate-200">
+                        {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                      </td>
+                    ))}
+                    <td className="p-2.5 text-right font-black bg-emerald-100 text-emerald-900">
+                      ${hybridCashFlow.totalRealInflow.toLocaleString('es-CL')}
+                    </td>
+                  </tr>
 
-                <tr className="bg-rose-50/50 hover:bg-rose-50 text-rose-950 font-bold">
-                  <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5">
-                    <span className="text-rose-700">🔴</span> (-) Egresos Reales de Caja (Pagados)
-                  </td>
-                  {hybridCashFlow.monthlyRealOutflows.map((v, i) => (
-                    <td key={i} className="p-2 text-right border-r border-slate-200">
-                      {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                  <tr className="bg-rose-50/50 hover:bg-rose-50 text-rose-950 font-bold">
+                    <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 bg-rose-50 sticky left-0 z-10">
+                      <span className="text-rose-700">🔴</span> (-) Egresos Reales de Caja (Pagados)
                     </td>
-                  ))}
-                  <td className="p-2.5 text-right font-black bg-rose-100 text-rose-900">
-                    ${hybridCashFlow.totalRealOutflow.toLocaleString('es-CL')}
-                  </td>
-                </tr>
+                    {hybridCashFlow.monthlyRealOutflows.map((v, i) => (
+                      <td key={i} className="p-2 text-right border-r border-slate-200">
+                        {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                      </td>
+                    ))}
+                    <td className="p-2.5 text-right font-black bg-rose-100 text-rose-900">
+                      ${hybridCashFlow.totalRealOutflow.toLocaleString('es-CL')}
+                    </td>
+                  </tr>
 
-                <tr className="bg-blue-50/40 hover:bg-blue-50 text-blue-950 italic">
-                  <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 font-semibold">
-                    <span className="text-blue-600">📈</span> (📌) Proyección de Ingresos (RCV + Manuales)
-                  </td>
-                  {hybridCashFlow.monthlyProjInflows.map((v, i) => (
-                    <td key={i} className="p-2 text-right border-r border-slate-200 text-blue-800">
-                      {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                  <tr className="bg-blue-50/40 hover:bg-blue-50 text-blue-950 italic">
+                    <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 font-semibold bg-blue-50 sticky left-0 z-10">
+                      <span className="text-blue-600">📈</span> (📌) Proyección de Ingresos (RCV + Manuales)
                     </td>
-                  ))}
-                  <td className="p-2.5 text-right font-bold bg-blue-100 text-blue-900">
-                    ${hybridCashFlow.totalProjInflow.toLocaleString('es-CL')}
-                  </td>
-                </tr>
+                    {hybridCashFlow.monthlyProjInflows.map((v, i) => (
+                      <td key={i} className="p-2 text-right border-r border-slate-200 text-blue-800">
+                        {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                      </td>
+                    ))}
+                    <td className="p-2.5 text-right font-bold bg-blue-100 text-blue-900">
+                      ${hybridCashFlow.totalProjInflow.toLocaleString('es-CL')}
+                    </td>
+                  </tr>
 
-                <tr className="bg-amber-50/40 hover:bg-amber-50 text-amber-950 italic">
-                  <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 font-semibold">
-                    <span className="text-amber-600">📉</span> (📌) Proyección de Egresos (RCV + Manuales)
-                  </td>
-                  {hybridCashFlow.monthlyProjOutflows.map((v, i) => (
-                    <td key={i} className="p-2 text-right border-r border-slate-200 text-amber-800">
-                      {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                  <tr className="bg-amber-50/40 hover:bg-amber-50 text-amber-950 italic">
+                    <td className="p-2.5 font-sans border-r border-slate-200 uppercase flex items-center gap-1.5 font-semibold bg-amber-50 sticky left-0 z-10">
+                      <span className="text-amber-600">📉</span> (📌) Proyección de Egresos (RCV + Manuales)
                     </td>
-                  ))}
-                  <td className="p-2.5 text-right font-bold bg-amber-100 text-amber-900">
-                    ${hybridCashFlow.totalProjOutflow.toLocaleString('es-CL')}
-                  </td>
-                </tr>
+                    {hybridCashFlow.monthlyProjOutflows.map((v, i) => (
+                      <td key={i} className="p-2 text-right border-r border-slate-200 text-amber-800">
+                        {v > 0 ? `$${v.toLocaleString('es-CL')}` : '-'}
+                      </td>
+                    ))}
+                    <td className="p-2.5 text-right font-bold bg-amber-100 text-amber-900">
+                      ${hybridCashFlow.totalProjOutflow.toLocaleString('es-CL')}
+                    </td>
+                  </tr>
 
-                <tr className="bg-indigo-900 text-white font-black">
-                  <td className="p-2.5 font-sans border-r border-indigo-800 uppercase text-[11px] flex items-center gap-1.5">
-                    <span>🏁</span> (=) Posición Acumulada Híbrida (Real + Proy)
-                  </td>
-                  {hybridCashFlow.accumulatedTrajectory.map((v, i) => (
-                    <td key={i} className="p-2 text-right border-r border-indigo-800 text-indigo-100 font-mono">
-                      ${v.toLocaleString('es-CL')}
+                  <tr className="bg-indigo-900 text-white font-black">
+                    <td className="p-2.5 font-sans border-r border-indigo-800 uppercase text-[11px] flex items-center gap-1.5 bg-indigo-900 sticky left-0 z-10">
+                      <span>🏁</span> (=) Posición Acumulada Híbrida (Real + Proy)
                     </td>
-                  ))}
-                  <td className="p-2.5 text-right bg-indigo-950 text-emerald-300 font-black">
-                    ${hybridCashFlow.accumulatedTrajectory[11].toLocaleString('es-CL')}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    {hybridCashFlow.accumulatedTrajectory.map((v, i) => (
+                      <td key={i} className="p-2 text-right border-r border-indigo-800 text-indigo-100 font-mono">
+                        ${v.toLocaleString('es-CL')}
+                      </td>
+                    ))}
+                    <td className="p-2.5 text-right bg-indigo-950 text-emerald-300 font-black">
+                      ${hybridCashFlow.accumulatedTrajectory[11].toLocaleString('es-CL')}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -612,10 +614,10 @@ export default function FlujoDeCajaView({
               <p className="text-slate-500 text-xs italic">No hay proyecciones presupuestarias manuales registradas.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[500px] border border-slate-200 rounded-lg relative shadow-2xs">
               <table className="w-full text-xs text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[11px] border-b border-slate-200">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700 font-bold uppercase text-[11px] border-b border-slate-200 shadow-2xs">
+                  <tr>
                     <th className="p-2.5">Tipo</th>
                     <th className="p-2.5">Concepto</th>
                     <th className="p-2.5 text-right font-mono">Monto ($)</th>
@@ -680,10 +682,10 @@ export default function FlujoDeCajaView({
             <p className="text-xs text-slate-500">Evaluación del desempeño financiero real frente a las estimaciones presupuestarias mensuales.</p>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[500px] border border-slate-200 rounded-lg relative shadow-2xs">
             <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-900 text-white font-bold uppercase text-[11px] tracking-wider">
+              <thead className="sticky top-0 z-10 bg-slate-900 text-white font-bold uppercase text-[11px] tracking-wider shadow-2xs">
+                <tr>
                   <th className="p-2.5 border-r border-slate-700">Mes</th>
                   <th className="p-2.5 text-right border-r border-slate-700 font-mono">Neto Real (Cobrado - Pagado)</th>
                   <th className="p-2.5 text-right border-r border-slate-700 font-mono">Neto Proyectado</th>

@@ -57,11 +57,21 @@ export default function IndicadoresFinancierosView({
 
         let targetAcc = accountMap.get(l.accountId) || accountMap.get(l.accountCode);
         if (!targetAcc) {
+          const accCodeStr = l.accountCode || 'S/C';
+          const prefix = accCodeStr.trim().charAt(0);
+          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Activo';
+          if (prefix === '1') inferredType = 'Activo';
+          else if (prefix === '2') {
+            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3') || accCodeStr.startsWith('2-3')) ? 'Patrimonio' : 'Pasivo';
+          }
+          else if (prefix === '3') inferredType = 'Ingreso';
+          else if (prefix === '4' || prefix === '5') inferredType = 'Gasto';
+
           targetAcc = {
             id: l.accountId || l.accountCode || 'unknown',
-            code: l.accountCode || 'S/C',
+            code: accCodeStr,
             name: l.accountName || 'Cuenta S/C',
-            type: 'Gasto',
+            type: inferredType,
             requiereCentroCosto: false,
             requiereAuxiliarRUT: false,
             requiereConciliacionBancaria: false,
@@ -99,12 +109,38 @@ export default function IndicadoresFinancierosView({
     let otrosGastos = 0;
 
     accSums.forEach(({ debit, credit, account }) => {
-      const code = account.code || '';
+      const code = (account.code || '').trim();
+      const codePrefix = code.charAt(0);
       const name = (account.name || '').toLowerCase();
       const normType = (account.type || '').toLowerCase();
 
-      // Activos
-      if (normType.includes('activo') || code.startsWith('1')) {
+      // Criterios de Clasificación: 1 = Activos, 2 = Pasivos (23 = Patrimonio), 3 = Ingresos, 4 / 5 = Gastos
+      const isPatrimonio = 
+        code.startsWith('23') || 
+        code.startsWith('2.3') || 
+        code.startsWith('2-3') || 
+        normType.includes('patrimonio') || 
+        normType.includes('capital');
+
+      const isActivo = 
+        codePrefix === '1' || 
+        (!['2', '3', '4', '5'].includes(codePrefix) && normType.includes('activo'));
+
+      const isPasivo = 
+        !isPatrimonio && 
+        (codePrefix === '2' || (!['1', '3', '4', '5'].includes(codePrefix) && normType.includes('pasivo')));
+
+      const isIngreso = 
+        codePrefix === '3' || 
+        (!['1', '2', '4', '5'].includes(codePrefix) && (normType.includes('ingreso') || normType.includes('ganancia') || normType.includes('venta')));
+
+      const isGasto = 
+        codePrefix === '4' || 
+        codePrefix === '5' || 
+        (!['1', '2', '3'].includes(codePrefix) && (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida')));
+
+      // Activos (1)
+      if (isActivo) {
         const balance = debit - credit;
         const isNoCorriente = 
           code.startsWith('1.2') || code.startsWith('1-2') || code.startsWith('12') ||
@@ -125,8 +161,8 @@ export default function IndicadoresFinancierosView({
           }
         }
       }
-      // Pasivos
-      else if (normType.includes('pasivo') || code.startsWith('2')) {
+      // Pasivos (2 excepto 23)
+      else if (isPasivo) {
         const balance = credit - debit;
         const isNoCorriente = 
           code.startsWith('2.2') || code.startsWith('2-2') || code.startsWith('22') ||
@@ -138,28 +174,28 @@ export default function IndicadoresFinancierosView({
           pasivoCorriente += balance;
         }
       }
-      // Patrimonio
-      else if (normType.includes('patrimonio') || code.startsWith('3')) {
+      // Patrimonio (23 / 2.3)
+      else if (isPatrimonio) {
         patrimonio += (credit - debit);
       }
-      // Ingresos
-      else if (normType.includes('ingreso') || normType.includes('ganancia') || code.startsWith('4')) {
+      // Ingresos (3)
+      else if (isIngreso) {
         const balance = credit - debit;
-        if (name.includes('no operacional') || name.includes('financiero') || name.includes('fuera de explotacion')) {
+        if (name.includes('no operacional') || name.includes('financiero') || name.includes('fuera de explotacion') || code.startsWith('3.2') || code.startsWith('3.3')) {
           otrosIngresos += balance;
         } else {
           ventasTotales += balance;
         }
       }
-      // Gastos y Costos
-      else if (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida') || code.startsWith('5')) {
+      // Gastos y Costos (4 / 5)
+      else if (isGasto) {
         const balance = debit - credit;
-        if (name.includes('costo de venta') || name.includes('costo directo') || name.includes('costo explotacion') || code.startsWith('5-1') || code.startsWith('5.1') || code.startsWith('4-2')) {
+        if (name.includes('costo de venta') || name.includes('costo directo') || name.includes('costo explotacion') || code.startsWith('4.1') || code.startsWith('41') || code.startsWith('5-1') || code.startsWith('5.1')) {
           costoVentas += balance;
-        } else if (name.includes('depreciaci') || name.includes('amortizaci')) {
+        } else if (name.includes('depreciaci') || name.includes('amortizaci') || code.startsWith('4.2.02') || code.startsWith('4202')) {
           depreciacionAmortizacion += balance;
           gastosOperacionales += balance;
-        } else if (name.includes('interes') || name.includes('financiero') || name.includes('gasto bancario')) {
+        } else if (name.includes('interes') || name.includes('financiero') || name.includes('gasto bancario') || code.startsWith('4.3') || code.startsWith('43') || code.startsWith('5.3')) {
           gastosFinancieros += balance;
           otrosGastos += balance;
         } else {

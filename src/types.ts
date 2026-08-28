@@ -2,6 +2,18 @@ export enum UserRole {
   SUPER_USER = 'SUPER_USER',
   STUDY_ADMIN = 'STUDY_ADMIN',
   ACCOUNTANT = 'ACCOUNTANT',
+  ANALYST = 'ANALYST',
+}
+
+export interface SuperUser {
+  id?: string;
+  email: string;
+  name: string;
+  password?: string;
+  phone?: string;
+  rut?: string;
+  estado: 'Activo' | 'Inactivo' | 'Vigente' | 'Sin Vigencia';
+  createdAt?: string;
 }
 
 export interface Plan {
@@ -56,6 +68,76 @@ export interface User {
   estado?: 'Activo' | 'Inactivo' | 'Vigente' | 'Sin Vigencia';
 }
 
+export interface DTEConfig {
+  rutEmisor: string;
+  rutRepresentante: string;
+  nombreRepresentante?: string;
+  claveSiiMasked?: string;
+  hasCertificadoDigital?: boolean;
+  certificadoNombre?: string;
+  certificadoFechaVencimiento?: string;
+  defaultCiudadEmisor: string;
+  defaultComunaEmisor: string;
+  ambiente: 'Producción' | 'Certificación';
+  resolutionNumber?: string;
+  resolutionDate?: string;
+}
+
+export interface DTEDocumentItem {
+  id: string;
+  nombre: string;
+  cantidad: number;
+  precioUnitario: number;
+  esExento?: boolean;
+  descuentoPct?: number;
+  subtotal: number;
+}
+
+export interface DTEDocument {
+  id: string;
+  tipoDTE: '33' | '34' | '39' | '56' | '61'; // 33: Factura, 34: Exenta, 39: Boleta, 56: ND, 61: NC
+  tipoDTELabel: string;
+  folio: number;
+  fechaEmision: string; // YYYY-MM-DD
+  period: string; // YYYY-MM
+  emisor: {
+    rut: string;
+    razonSocial: string;
+    giro: string;
+    direccion: string;
+    comuna: string;
+    ciudad: string; // CRITICAL: Never blank
+    acteco?: string;
+  };
+  receptor: {
+    rut: string;
+    razonSocial: string;
+    giro: string;
+    direccion: string;
+    comuna: string;
+    ciudad: string; // CRITICAL: Never blank
+    contacto?: string;
+    email?: string;
+  };
+  representanteLegal?: {
+    rut: string;
+    nombre?: string;
+  };
+  items: DTEDocumentItem[];
+  formaPago: 'Contado' | 'Crédito 30 días' | 'Crédito 60 días' | 'Transferencia';
+  montoNeto: number;
+  montoIva: number;
+  montoExento: number;
+  montoTotal: number;
+  estadoSII: 'Enviado_SII' | 'Aceptado_SII' | 'Rechazado_SII' | 'Borrador';
+  trackIdSII?: string;
+  voucherId?: string;
+  voucherNumber?: number;
+  createdAt: string;
+  refDocumentoOrigId?: string; // Para NC / ND
+  refFolioOrig?: string;
+}
+
 export interface Company {
   id: string;
   studyId: string;
@@ -65,6 +147,7 @@ export interface Company {
   giro?: string; // Giro / Actividad Económica
   address?: string; // Dirección Tributaria
   comuna?: string; // Comuna
+  ciudad?: string; // Ciudad
   email?: string; // Email de la Empresa
   phone?: string; // Teléfono
   legalRepName?: string; // Rep. Legal Nombre
@@ -73,6 +156,13 @@ export interface Company {
   contactName?: string; // Contacto Operativo Nombre
   contactPhone?: string; // Contacto Operativo Teléfono
   estado?: 'Activo' | 'Inactivo';
+  f29CodeSettings?: { [key: string]: boolean };
+  f29AccountParams?: F29AccountingParams;
+  customF29Codes?: CustomF29Code[];
+  dteModuleEnabled?: boolean;
+  dteConfig?: DTEConfig;
+  assignedAccountantIds?: string[];
+  assignedAccountantEmails?: string[];
 }
 
 export interface Assignment {
@@ -97,6 +187,12 @@ export interface ChartOfAccount {
   // Atributos dinámicos / escalables adicionales (clave-valor o tags)
   customAttributes?: { [key: string]: any };
   estado: 'Activo' | 'Inactivo';
+  createdBy?: string;
+  createdByUserEmail?: string;
+  creationMode?: 'MANUAL' | 'IMPORTACION_RCV' | 'IMPORTACION_MASIVA' | 'SISTEMA' | 'AUTOMATICO';
+  createdAt?: string;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
 }
 
 export interface ManualCashProjection {
@@ -134,6 +230,12 @@ export interface Auxiliary {
   estado: 'Activo' | 'Inactivo';
   email?: string;
   phone?: string;
+  createdBy?: string;
+  createdByUserEmail?: string;
+  creationMode?: 'MANUAL' | 'IMPORTACION_RCV' | 'IMPORTACION_MASIVA' | 'SISTEMA' | 'AUTOMATICO';
+  createdAt?: string;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
 }
 
 export interface ExchangeRate {
@@ -162,6 +264,8 @@ export interface RCVDocument {
   period: string; // YYYY-MM
   rutEmisor: string;
   razonSocialEmisor: string;
+  rutReceptor?: string;
+  razonSocialReceptor?: string;
   tipoDoc: string; // ej: '33', '34', '39', '41', '46', '56', '61', '110', 'BHE'
   folio: string;
   fechaEmision: string; // YYYY-MM-DD
@@ -173,12 +277,19 @@ export interface RCVDocument {
   montoRetencion?: number;
   montoLiquido?: number;
   montoOtrosImpuestos?: number; // Impuestos adicionales (ILA, diesel, carnes, licores, etc.)
+  refFolioOrig?: string; // Folio de referencia para NC / ND
   estadoContabilizado: boolean;
   voucherId?: string;
   auxiliaryId?: string;
   cuentaGastoId?: string;
   cuentaIvaId?: string;
   cuentaContrapartidaId?: string;
+  createdBy?: string;
+  createdByUserEmail?: string;
+  createdAt?: string;
+  creationMode?: 'MANUAL' | 'IMPORTACION_RCV' | 'IMPORTACION_MASIVA' | 'SISTEMA' | 'AUTOMATICO';
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
 }
 
 export interface VoucherLine {
@@ -212,6 +323,27 @@ export interface Voucher {
   createdFromRcvId?: string;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
+  createdByUserEmail?: string;
+  creationMode?: 'MANUAL' | 'IMPORTACION_RCV' | 'IMPORTACION_MASIVA' | 'SISTEMA' | 'AUTOMATICO';
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
+}
+
+export interface AuditLog {
+  id?: string;
+  timestamp: string; // ISO string e.g. 2026-08-25T11:03:39-07:00
+  userId: string;
+  userEmail: string;
+  userRole?: string;
+  studyId?: string;
+  studyName?: string;
+  companyId?: string;
+  companyName?: string;
+  action: 'LOGIN' | 'LOGOUT' | 'CREAR' | 'MODIFICAR' | 'ELIMINAR' | 'CONTABILIZAR' | 'ANULAR' | 'IMPORTACION_MASIVA' | 'PURGA' | 'EXPORTAR';
+  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV';
+  details: string;
+  metadata?: { [key: string]: any };
 }
 
 export interface RCVAccountingParams {
@@ -296,6 +428,7 @@ export interface BankStatementLine {
   balance: number;
   matchedVoucherId?: string;
   matchedVoucherNumber?: number;
+  matchedVoucherPeriod?: string; // Período del comprobante contable vinculado (ej: 2026-02)
   matchedStatus: 'Pendiente' | 'Conciliado' | 'No_Corresponde';
 }
 
@@ -306,7 +439,8 @@ export interface BankReconciliation {
   bankAccountCode: string;
   bankAccountName: string;
   statementDate: string;
-  bankFinalBalance: number; // Saldo según Cartola
+  bankInitialBalance?: number; // Saldo Inicial según Cartola (Mes Anterior)
+  bankFinalBalance: number; // Saldo Final según Cartola
   bookFinalBalance: number; // Saldo según Libro Mayor
   unmatchedCharges: number;
   unmatchedDeposits: number;
@@ -320,6 +454,28 @@ export interface BankReconciliation {
   updatedAt: string;
 }
 
+export interface CustomF29Code {
+  id: string;
+  code: string; // ej: '542', '586'
+  name: string; // ej: 'Retención Harinas 12%', 'ILA Licores 31.5%'
+  section: 'Debito' | 'Credito' | 'Retencion' | 'ImpuestoAdicional';
+  amount: number;
+  active: boolean;
+}
+
+export interface F29AccountingParams {
+  ivaDebitoAccountId?: string;
+  ivaCreditoAccountId?: string;
+  ivaPagarAccountId?: string;
+  remanenteAccountId?: string;
+  correccionMonetariaAccountId?: string; // Cuenta Ganancia/Pérdida por Corrección Monetaria / Reajuste Remanente
+  ivaPostergadoAccountId?: string; // Cuenta IVA Postergado por Pagar (ej: 2-1-03-05)
+  ppmAccountId?: string;
+  retencionHonorariosAccountId?: string;
+  impuestoUnicoAccountId?: string;
+  impuestosPorPagarAccountId?: string;
+}
+
 export interface F29TaxSettings {
   regimenTributario: '14_D3_PROPYME_GENERAL' | '14_D8_PROPYME_TRANSPARENTE' | '14_A_SEMI_INTEGRADO' | 'RENTA_PRESUNTA';
   ppmRate: number; // Porcentaje, ej: 0.25, 0.5, 1.0, 1.25
@@ -330,6 +486,8 @@ export interface F29TaxSettings {
   ivaUsoComunFactor: number; // 0.0 a 1.0 (1.0 = 100% recuperable)
   retencionCambioSujeto: number;
   prestamoSolidarioRetencion?: number;
+  ivaPostergadoActivo?: boolean;
+  ivaPostergadoMonto?: number; // Cód. 756
 }
 
 export interface F29DebitoFiscal {
@@ -356,6 +514,8 @@ export interface F29CreditoFiscal {
   ivaUsoComunRecuperable: number;
   remanenteMesAnteriorUTM: number; // Cód 504
   remanenteMesAnteriorPesos: number; // Cód 563
+  remanenteHistoricoPesos?: number;
+  reajusteCorreccionMonetariaRemanente?: number; // Reajuste Art. 27 DL 825
   totalCreditoFiscal: number; // Cód 537 / 528
   docsCount: number;
 }
@@ -378,11 +538,15 @@ export interface F29PPM {
 
 export interface F29ResumenTotal {
   ivaPagar: number;
+  ivaPostergado?: number; // Cód. 756
+  ivaPagarNetoPostergacion?: number; // Saldo a pagar tras postergación
   remanenteParaSiguienteMes: number;
   remanenteParaSiguienteMesUTM: number;
+  reajusteCorreccionMonetaria?: number;
   retencionesPagar: number;
   ppmPagar: number;
   otrosImpuestos: number;
+  customCodesTotal?: number;
   totalPagarF29: number; // Cód 91
 }
 
@@ -391,6 +555,10 @@ export interface F29Declaration {
   period: string; // YYYY-MM
   status: 'Borrador' | 'Validado' | 'Declarado' | 'Pagado';
   folioSII?: string;
+  pdfResumenUrl?: string;
+  f29CodeSettings?: { [key: string]: boolean };
+  customCodes?: CustomF29Code[];
+  f29AccountParams?: F29AccountingParams;
   declarationDate?: string;
   paymentDate?: string;
   settings: F29TaxSettings;

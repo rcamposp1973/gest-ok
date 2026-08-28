@@ -26,8 +26,19 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   public override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('Uncaught error caught by ErrorBoundary:', error, errorInfo);
+    console.error('Error capturado por ErrorBoundary:', error, errorInfo);
     this.setState({ errorInfo });
+
+    // Auto-recuperación si el navegador o una extensión manipuló los nodos del DOM de React (removeChild)
+    const errString = (error?.message || '') + (error?.name || '');
+    if (errString.includes('removeChild') || errString.includes('NotFoundError')) {
+      console.warn('Detectado error de manipulación de nodos DOM externa. Reintentando render...');
+      setTimeout(() => {
+        if (this.state.hasError) {
+          this.setState({ hasError: false, error: null, errorInfo: null });
+        }
+      }, 50);
+    }
   }
 
   private handleRetry = () => {
@@ -45,6 +56,9 @@ export default class ErrorBoundary extends React.Component<Props, State> {
                            this.state.error?.message?.toLowerCase().includes('resource-exhausted') ||
                            this.state.error?.message?.toLowerCase().includes('rate limit');
 
+      const isDomNotFoundError = this.state.error?.message?.includes('removeChild') ||
+                                 this.state.error?.name?.includes('NotFoundError');
+
       return (
         <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6 text-slate-800">
           <div className="bg-white max-w-lg w-full rounded-2xl shadow-xl border border-slate-200 p-8 text-center space-y-6">
@@ -56,12 +70,18 @@ export default class ErrorBoundary extends React.Component<Props, State> {
 
             <div>
               <h2 className="text-xl font-bold text-slate-900">
-                {isQuotaError ? 'Límite de Consultas o Red Temporal' : (this.props.fallbackTitle || 'Ocurrió un error inesperado')}
+                {isQuotaError 
+                  ? 'Límite de Consultas o Red Temporal' 
+                  : isDomNotFoundError
+                  ? 'Sincronización de Interfaz en Progreso'
+                  : (this.props.fallbackTitle || 'Ocurrió un error inesperado')}
               </h2>
               <p className="text-sm text-slate-600 mt-2">
                 {isQuotaError
                   ? 'Se ha detectado una pausa temporal por límite de peticiones en la base de datos o conexión de red. Puedes reintentar la carga ahora.'
-                  : 'El sistema interceptó una excepción de ejecución y evitó la pantalla en blanco.'}
+                  : isDomNotFoundError
+                  ? 'La interfaz detectó una transición de visualización. Haz clic en "Continuar" para sincronizar la pantalla.'
+                  : 'El sistema interceptó una excepción de ejecución y resguardó los datos contables.'}
               </p>
             </div>
 
@@ -76,7 +96,7 @@ export default class ErrorBoundary extends React.Component<Props, State> {
                 onClick={this.handleResetState}
                 className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-sm transition-colors"
               >
-                Volver a intentar
+                Continuar
               </button>
               <button
                 onClick={this.handleRetry}
@@ -93,3 +113,4 @@ export default class ErrorBoundary extends React.Component<Props, State> {
     return this.props.children;
   }
 }
+

@@ -102,11 +102,21 @@ export default function BalanceIFRSView({
 
         let targetAcc = accountMap.get(l.accountId) || accountMap.get(l.accountCode);
         if (!targetAcc) {
+          const accCodeStr = l.accountCode || 'S/C';
+          const prefix = accCodeStr.trim().charAt(0);
+          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Activo';
+          if (prefix === '1') inferredType = 'Activo';
+          else if (prefix === '2') {
+            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3') || accCodeStr.startsWith('2-3')) ? 'Patrimonio' : 'Pasivo';
+          }
+          else if (prefix === '3') inferredType = 'Ingreso';
+          else if (prefix === '4' || prefix === '5') inferredType = 'Gasto';
+
           targetAcc = {
             id: l.accountId || l.accountCode || 'unknown',
-            code: l.accountCode || 'S/C',
+            code: accCodeStr,
             name: l.accountName || 'Cuenta no clasificada',
-            type: 'Activo',
+            type: inferredType,
             requiereCentroCosto: false,
             requiereAuxiliarRUT: false,
             requiereConciliacionBancaria: false,
@@ -126,33 +136,112 @@ export default function BalanceIFRSView({
       });
     });
 
-    // Clasificación IFRS
-    const actCorr: IFRSAccountLine[] = [];
-    const actNoCorr: IFRSAccountLine[] = [];
-    const pasCorr: IFRSAccountLine[] = [];
-    const pasNoCorr: IFRSAccountLine[] = [];
-    const patri: IFRSAccountLine[] = [];
+    // Subclasificación NIC 1 IFRS
+    // 1. Activo Corriente
+    const efectivoYEquivalentes: IFRSAccountLine[] = [];
+    const deudoresComerciales: IFRSAccountLine[] = [];
+    const inventarios: IFRSAccountLine[] = [];
+    const activosFinancierosCorrientes: IFRSAccountLine[] = [];
+
+    // 2. Activo No Corriente
+    const propiedadesPlantaEquipo: IFRSAccountLine[] = [];
+    const activosIntangiblesPlusvalia: IFRSAccountLine[] = [];
+    const inversionesAsociadas: IFRSAccountLine[] = [];
+
+    // 3. Pasivo Corriente
+    const cuentasPorPagarComerciales: IFRSAccountLine[] = [];
+    const prestamosCortoPlazo: IFRSAccountLine[] = [];
+    const provisionesImpuestosCorrientes: IFRSAccountLine[] = [];
+
+    // 4. Pasivo No Corriente
+    const deudasLargoPlazo: IFRSAccountLine[] = [];
+    const impuestosDiferidos: IFRSAccountLine[] = [];
+
+    // 5. Patrimonio Neto
+    const capitalEmitido: IFRSAccountLine[] = [];
+    const reservas: IFRSAccountLine[] = [];
+    const gananciasAcumuladas: IFRSAccountLine[] = [];
 
     let totalIngresos = 0;
     let totalGastos = 0;
 
     accSums.forEach(({ debit, credit, account }) => {
-      const code = account.code || '';
+      const code = (account.code || '').trim();
       const name = (account.name || '').toLowerCase();
       const normType = (account.type || '').toLowerCase();
+      const codePrefix = code.charAt(0);
 
-      // 1. ACTIVOS (Código 1 o Type Activo)
-      if (normType.includes('activo') || code.startsWith('1')) {
+      // Criterios de Clasificación:
+      // 1 = Activos, 2 = Pasivo (salvedad: 23 = Patrimonio), 3 = Ingresos, 4 / 5 = Gastos
+      const isPatrimonio = 
+        code.startsWith('23') || 
+        code.startsWith('2.3') || 
+        code.startsWith('2-3') || 
+        normType.includes('patrimonio') || 
+        normType.includes('capital');
+
+      const isActivo = 
+        codePrefix === '1' || 
+        (!['2', '3', '4', '5'].includes(codePrefix) && normType.includes('activo'));
+
+      const isPasivo = 
+        !isPatrimonio && 
+        (codePrefix === '2' || (!['1', '3', '4', '5'].includes(codePrefix) && normType.includes('pasivo')));
+
+      const isIngreso = 
+        codePrefix === '3' || 
+        (!['1', '2', '4', '5'].includes(codePrefix) && (normType.includes('ingreso') || normType.includes('ganancia') || normType.includes('venta')));
+
+      const isGasto = 
+        codePrefix === '4' || 
+        codePrefix === '5' || 
+        (!['1', '2', '3'].includes(codePrefix) && (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida')));
+
+      // 1. ACTIVOS (Código 1)
+      if (isActivo) {
         const balance = debit - credit;
         if (!showZeroBalances && balance === 0) return;
 
+        const item: IFRSAccountLine = {
+          id: account.id,
+          code: account.code,
+          name: account.name,
+          debit,
+          credit,
+          balance
+        };
+
         // Criterio Corriente vs No Corriente
-        // No corriente: activo fijo, propiedades planta equipo, intangibles, depreciacion acumulada, l/plazo
         const isNoCorriente = 
           code.startsWith('1.2') || code.startsWith('1-2') || code.startsWith('12') ||
           name.includes('fijo') || name.includes('propiedad') || name.includes('planta') || 
           name.includes('equipo') || name.includes('intangible') || name.includes('largo plazo') ||
-          name.includes('depreciaci') || name.includes('terreno') || name.includes('vehiculo') || name.includes('maquinaria');
+          name.includes('depreciaci') || name.includes('terreno') || name.includes('vehiculo') || name.includes('maquinaria') || name.includes('plusvalia');
+
+        if (isNoCorriente) {
+          if (name.includes('intangible') || name.includes('plusvalia') || name.includes('software') || name.includes('marca') || code.startsWith('1.2.02')) {
+            activosIntangiblesPlusvalia.push(item);
+          } else if (name.includes('asociada') || name.includes('inversion') || name.includes('filial') || code.startsWith('1.2.03')) {
+            inversionesAsociadas.push(item);
+          } else {
+            propiedadesPlantaEquipo.push(item);
+          }
+        } else {
+          if (name.includes('caja') || name.includes('banco') || name.includes('efectivo') || name.includes('equivalente') || name.includes('tesoreria') || code.startsWith('1.1.01')) {
+            efectivoYEquivalentes.push(item);
+          } else if (name.includes('cliente') || name.includes('deudor') || name.includes('cobrar') || name.includes('anticipo') || code.startsWith('1.1.02')) {
+            deudoresComerciales.push(item);
+          } else if (name.includes('inventario') || name.includes('mercaderia') || name.includes('materia prima') || name.includes('existencia') || code.startsWith('1.1.03')) {
+            inventarios.push(item);
+          } else {
+            activosFinancierosCorrientes.push(item);
+          }
+        }
+      }
+      // 2. PASIVOS (Código 2 excepto 23)
+      else if (isPasivo) {
+        const balance = credit - debit;
+        if (!showZeroBalances && balance === 0) return;
 
         const item: IFRSAccountLine = {
           id: account.id,
@@ -163,21 +252,30 @@ export default function BalanceIFRSView({
           balance
         };
 
-        if (isNoCorriente) {
-          actNoCorr.push(item);
-        } else {
-          actCorr.push(item);
-        }
-      }
-      // 2. PASIVOS (Código 2 o Type Pasivo)
-      else if (normType.includes('pasivo') || code.startsWith('2')) {
-        const balance = credit - debit;
-        if (!showZeroBalances && balance === 0) return;
-
-        // Criterio Corriente vs No Corriente
         const isNoCorriente = 
           code.startsWith('2.2') || code.startsWith('2-2') || code.startsWith('22') ||
-          name.includes('largo plazo') || name.includes('l/p') || name.includes('hipotecario') || name.includes('bonos por pagar');
+          name.includes('largo plazo') || name.includes('l/p') || name.includes('hipotecario') || name.includes('bonos por pagar') || name.includes('diferido');
+
+        if (isNoCorriente) {
+          if (name.includes('diferido') || name.includes('impuesto diferido') || code.startsWith('2.2.02')) {
+            impuestosDiferidos.push(item);
+          } else {
+            deudasLargoPlazo.push(item);
+          }
+        } else {
+          if (name.includes('proveedor') || name.includes('pagar comercial') || name.includes('factura por pagar') || code.startsWith('2.1.01')) {
+            cuentasPorPagarComerciales.push(item);
+          } else if (name.includes('prestamo') || name.includes('credito') || name.includes('linea de credito') || name.includes('deuda financiera') || code.startsWith('2.1.02')) {
+            prestamosCortoPlazo.push(item);
+          } else {
+            provisionesImpuestosCorrientes.push(item);
+          }
+        }
+      }
+      // 3. PATRIMONIO (Código 23 / 2.3 o Tipo Patrimonio)
+      else if (isPatrimonio) {
+        const balance = credit - debit;
+        if (!showZeroBalances && balance === 0) return;
 
         const item: IFRSAccountLine = {
           id: account.id,
@@ -188,35 +286,31 @@ export default function BalanceIFRSView({
           balance
         };
 
-        if (isNoCorriente) {
-          pasNoCorr.push(item);
+        if (name.includes('capital') || code.startsWith('2.3.01') || code.startsWith('2301') || code.startsWith('3.1.01')) {
+          capitalEmitido.push(item);
+        } else if (name.includes('reserva') || code.startsWith('2.3.02') || code.startsWith('2302') || code.startsWith('3.1.02')) {
+          reservas.push(item);
         } else {
-          pasCorr.push(item);
+          gananciasAcumuladas.push(item);
         }
       }
-      // 3. PATRIMONIO (Código 3 o Type Patrimonio)
-      else if (normType.includes('patrimonio') || code.startsWith('3')) {
-        const balance = credit - debit;
-        if (!showZeroBalances && balance === 0) return;
-
-        patri.push({
-          id: account.id,
-          code: account.code,
-          name: account.name,
-          debit,
-          credit,
-          balance
-        });
-      }
-      // 4. INGRESOS (Código 4 o Type Ingreso)
-      else if (normType.includes('ingreso') || normType.includes('ganancia') || code.startsWith('4')) {
+      // 4. INGRESOS (Código 3 o Tipo Ingreso)
+      else if (isIngreso) {
         totalIngresos += (credit - debit);
       }
-      // 5. GASTOS / COSTOS (Código 5 o Type Gasto)
-      else if (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida') || code.startsWith('5')) {
+      // 5. GASTOS / COSTOS (Código 4 / 5 o Tipo Gasto)
+      else if (isGasto) {
         totalGastos += (debit - credit);
       }
     });
+
+    const actCorr = [...efectivoYEquivalentes, ...deudoresComerciales, ...inventarios, ...activosFinancierosCorrientes];
+    const actNoCorr = [...propiedadesPlantaEquipo, ...activosIntangiblesPlusvalia, ...inversionesAsociadas];
+
+    const pasCorr = [...cuentasPorPagarComerciales, ...prestamosCortoPlazo, ...provisionesImpuestosCorrientes];
+    const pasNoCorr = [...deudasLargoPlazo, ...impuestosDiferidos];
+
+    const patri = [...capitalEmitido, ...reservas, ...gananciasAcumuladas];
 
     const totalActivosCorrientes = actCorr.reduce((s, a) => s + a.balance, 0);
     const totalActivosNoCorrientes = actNoCorr.reduce((s, a) => s + a.balance, 0);
@@ -235,17 +329,42 @@ export default function BalanceIFRSView({
     const isBalanced = diferenciaCuadratura < 1;
 
     return {
+      // Activos NIC 1
+      efectivoYEquivalentes,
+      deudoresComerciales,
+      inventarios,
+      activosFinancierosCorrientes,
       activosCorrientes: actCorr,
+      
+      propiedadesPlantaEquipo,
+      activosIntangiblesPlusvalia,
+      inversionesAsociadas,
       activosNoCorrientes: actNoCorr,
+
       totalActivosCorrientes,
       totalActivosNoCorrientes,
       totalActivos,
+
+      // Pasivos NIC 1
+      cuentasPorPagarComerciales,
+      prestamosCortoPlazo,
+      provisionesImpuestosCorrientes,
       pasivosCorrientes: pasCorr,
+
+      deudasLargoPlazo,
+      impuestosDiferidos,
       pasivosNoCorrientes: pasNoCorr,
+
       totalPasivosCorrientes,
       totalPasivosNoCorrientes,
       totalPasivos,
+
+      // Patrimonio NIC 1
+      capitalEmitido,
+      reservas,
+      gananciasAcumuladas,
       patrimonio: patri,
+      
       resultadoEjercicio,
       totalPatrimonioNeto,
       totalPasivoMasPatrimonio,

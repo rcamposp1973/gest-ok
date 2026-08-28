@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Company, ChartOfAccount, Auxiliary, RCVDocument, Voucher, PaymentBatch, PaymentItem, FiscalPeriodYear } from '../types';
+import { checkIsPeriodClosed } from '../utils/periodUtils';
+import { logAuditEvent } from '../utils/auditLogger';
 
 interface NominasPagoViewProps {
   studyId: string;
@@ -13,6 +15,12 @@ interface NominasPagoViewProps {
   fiscalYears: FiscalPeriodYear[];
   onVouchersUpdated?: () => void;
 }
+
+
+const isNotaCredito = (tipoDoc: string | number) => {
+  const str = String(tipoDoc).toLowerCase();
+  return str === '61' || str.includes('61') || str.includes('crédito') || str.includes('credito');
+};
 
 export default function NominasPagoView({
   studyId,
@@ -30,6 +38,14 @@ export default function NominasPagoView({
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [periodFilter, setPeriodFilter] = useState<string>('Todos');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Column search filters for pending invoices
+  const [colFilterEmision, setColFilterEmision] = useState<string>('');
+  const [colFilterTipo, setColFilterTipo] = useState<string>('Todos');
+  const [colFilterFolio, setColFilterFolio] = useState<string>('');
+  const [colFilterRut, setColFilterRut] = useState<string>('');
+  const [colFilterRazon, setColFilterRazon] = useState<string>('');
+  const [colFilterMontoDoc, setColFilterMontoDoc] = useState<string>('');
 
   // New Batch Form State
   const [batchDate, setBatchDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -54,18 +70,29 @@ export default function NominasPagoView({
 
   const companyRef = doc(db, 'studies', studyId, 'companies', company.id);
 
-  // Bank accounts available from chart of accounts
+  // Bank accounts available from chart of accounts (prioritizing accounts with requiereConciliacionBancaria = true)
   const bankAccounts = useMemo(() => {
-    return accounts.filter(acc => {
-      const code = acc.code || '';
+    const list = accounts.filter(acc => {
+      if (acc.estado === 'Inactivo') return false;
+      const code = (acc.code || '').replace(/-/g, '.');
       const name = (acc.name || '').toLowerCase();
-      const type = (acc.type || '').toLowerCase();
+
       return (
-        acc.estado !== 'Inactivo' &&
-        (type.includes('activo') || code.startsWith('1')) &&
-        (name.includes('banco') || name.includes('caja') || name.includes('cuenta corriente') || name.includes('tesoreria') || code.startsWith('1-1-01'))
+        acc.requiereConciliacionBancaria ||
+        (code.startsWith('1.1.01') && (name.includes('banco') || name.includes('cuenta corriente') || name.includes('caja') || name.includes('tesoreria')))
       );
     });
+
+    if (list.length === 0) {
+      return accounts.filter(acc => {
+        if (acc.estado === 'Inactivo') return false;
+        const code = (acc.code || '').replace(/-/g, '.');
+        const name = (acc.name || '').toLowerCase();
+        return code.startsWith('1.1.01') || name.includes('banco') || name.includes('caja');
+      });
+    }
+
+    return list;
   }, [accounts]);
 
   // Set default bank account if available
@@ -115,8 +142,53 @@ export default function NominasPagoView({
       }
     });
 
+    // Build set of RUTs and Folios paid or canceled via NCs or Vouchers
+    const canceledOrPaidDocKeys = new Set<string>();
+
+    // A) Check RCV Credit Notes (tipoDoc 61)
+    rcvDocuments.forEach(d => {
+      if (String(d.tipoDoc) === '61' || String(d.tipoDoc).includes('61')) {
+        const rut = (d.rutEmisor || '').toUpperCase().replace(/\./g, '').trim();
+        const folio = String(d.folio || '').trim();
+        const refFolio = String(d.refFolioOrig || '').trim();
+        if (folio) canceledOrPaidDocKeys.add(`${rut}__${folio}`);
+        if (refFolio) canceledOrPaidDocKeys.add(`${rut}__${refFolio}`);
+      }
+    });
+
+    // B) Check Vouchers for payments on Proveedores (2.1.01 / Proveedores)
+    vouchers.forEach(v => {
+      if (v.status === 'Anulado') return;
+      v.lines.forEach(line => {
+        if (!line.auxiliaryRut) return;
+        const lineCode = (line.accountCode || '').trim();
+        const lineName = (line.accountName || '').toLowerCase();
+        const isSupplierAcc = lineCode.startsWith('2.1.01') || lineName.includes('proveedor');
+        const debit = Number(line.debit) || 0;
+
+        if (isSupplierAcc && debit > 0) {
+          const rut = line.auxiliaryRut.toUpperCase().replace(/\./g, '').trim();
+          const refStr = (line.documentRef || line.gloss || '').trim();
+          const numMatch = refStr.match(/\b(\d+)\b/);
+          if (numMatch) {
+            canceledOrPaidDocKeys.add(`${rut}__${numMatch[1]}`);
+          }
+        }
+      });
+    });
+
     return rcvDocuments
-      .filter(doc => (doc.tipoRegistro === 'Compra' || doc.tipoRegistro === 'Honorarios') && !paidRcvDocIds.has(doc.id))
+      .filter(doc => {
+        if (doc.tipoRegistro !== 'Compra' && doc.tipoRegistro !== 'Honorarios') return false;
+        if (paidRcvDocIds.has(doc.id)) return false;
+        if (String(doc.tipoDoc) === '61') return false;
+
+        const cleanRut = (doc.rutEmisor || '').toUpperCase().replace(/\./g, '').trim();
+        const folio = String(doc.folio || '').trim();
+        if (canceledOrPaidDocKeys.has(`${cleanRut}__${folio}`)) return false;
+
+        return true;
+      })
       .map(doc => {
         const cleanRut = (doc.rutEmisor || '').toUpperCase().replace(/\./g, '').trim();
         const aux = auxMap.get(cleanRut);
@@ -125,7 +197,33 @@ export default function NominasPagoView({
           auxiliaryData: aux
         };
       });
-  }, [rcvDocuments, paymentBatches, auxMap]);
+  }, [rcvDocuments, paymentBatches, vouchers, auxMap]);
+
+  // Filtered Pending Invoices based on column headers
+  const filteredPendingInvoices = useMemo(() => {
+    return pendingInvoices.filter(inv => {
+      if (colFilterEmision.trim() && !inv.fechaEmision.toLowerCase().includes(colFilterEmision.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterTipo !== 'Todos') {
+        if (colFilterTipo === '61' && !isNotaCredito(inv.tipoDoc)) return false;
+        if (colFilterTipo !== '61' && String(inv.tipoDoc) !== colFilterTipo) return false;
+      }
+      if (colFilterFolio.trim() && !String(inv.folio).toLowerCase().includes(colFilterFolio.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterRut.trim() && !inv.rutEmisor.toLowerCase().includes(colFilterRut.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterRazon.trim() && !inv.razonSocialEmisor.toLowerCase().includes(colFilterRazon.toLowerCase().trim())) {
+        return false;
+      }
+      if (colFilterMontoDoc.trim() && !String(inv.montoTotal).includes(colFilterMontoDoc.trim())) {
+        return false;
+      }
+      return true;
+    });
+  }, [pendingInvoices, colFilterEmision, colFilterTipo, colFilterFolio, colFilterRut, colFilterRazon, colFilterMontoDoc]);
 
   // Handle toggle selection for an invoice
   const toggleSelectInvoice = (id: string, total: number) => {
@@ -198,7 +296,10 @@ export default function NominasPagoView({
     // Custom items
     items.push(...customPayItems);
 
-    const total = items.reduce((sum, it) => sum + it.montoPagar, 0);
+    const total = items.reduce((sum, it) => {
+      const isNC = isNotaCredito(it.tipoDoc);
+      return sum + (isNC ? -Math.abs(it.montoPagar) : Math.abs(it.montoPagar));
+    }, 0);
     return {
       totalBatchAmount: total,
       totalItemsCount: items.length,
@@ -212,6 +313,13 @@ export default function NominasPagoView({
       alert('Debe seleccionar al menos una factura o agregar un ítem a la nómina de pago.');
       return;
     }
+
+    const periodCheck = checkIsPeriodClosed(batchPeriod, fiscalYears);
+    if (periodCheck.isClosed) {
+      alert(periodCheck.errorMsg);
+      return;
+    }
+
     if (!selectedBankAccountId) {
       alert('Seleccione la cuenta bancaria de origen para el pago.');
       return;
@@ -228,38 +336,46 @@ export default function NominasPagoView({
       const nextBatchNumber = (paymentBatches.length > 0 ? Math.max(...paymentBatches.map(b => b.batchNumber || 0)) : 0) + 1;
       const nextVoucherNumber = (vouchers.length > 0 ? Math.max(...vouchers.map(v => v.voucherNumber || 0)) : 0) + 1;
 
-      // 1. Prepare Voucher Lines for Egreso
-      // Default accounts for supplier liability
-      const supplierAcc = accounts.find(a => a.code.startsWith('2-1-01') || a.name.toLowerCase().includes('proveedor')) || {
+      // 1. Prepare Voucher Lines for Egreso (Individual lines per document with RUT, Name and DocumentRef)
+      const supplierAcc = accounts.find(a => a.code.startsWith('2.1.01') || a.code.startsWith('2-1-01') || a.name.toLowerCase().includes('proveedor')) || {
         id: 'acc_prov_default',
-        code: '2-1-01-01',
+        code: '2.1.01.001',
         name: 'Proveedores por Pagar'
       };
 
-      const voucherLines = [
-        // Línea 1: Proveedores por Pagar al DEBE (Disminuye el Pasivo)
-        {
-          id: 'line_1',
+      const supplierLines = combinedItems.map((it, idx) => {
+        const isNC = isNotaCredito(it.tipoDoc);
+        const amount = Math.abs(it.montoPagar);
+        const docRefStr = `${it.tipoDoc} N° ${it.folio}`;
+
+        return {
+          id: `line_supp_${idx + 1}`,
           accountId: supplierAcc.id,
           accountCode: supplierAcc.code,
           accountName: supplierAcc.name,
-          debit: totalBatchAmount,
-          credit: 0,
-          documentRef: `Nómina N° ${nextBatchNumber}`,
-          gloss: `Pago a ${combinedItems.length} proveedores según Nómina N° ${nextBatchNumber}`
-        },
-        // Línea 2: Banco de Origen al HABER (Disminuye el Activo)
-        {
-          id: 'line_2',
-          accountId: selectedBankAcc.id,
-          accountCode: selectedBankAcc.code,
-          accountName: selectedBankAcc.name,
-          debit: 0,
-          credit: totalBatchAmount,
-          documentRef: `Nómina N° ${nextBatchNumber}`,
-          gloss: `Egreso Bancario Nómina N° ${nextBatchNumber}`
-        }
-      ];
+          auxiliaryRut: it.rut,
+          auxiliaryName: it.razonSocial,
+          debit: isNC ? 0 : amount,
+          credit: isNC ? amount : 0,
+          documentRef: docRefStr,
+          gloss: `Pago ${isNC ? 'NC' : 'Factura'} ${docRefStr} (${it.razonSocial})`
+        };
+      });
+
+      const bankLine = {
+        id: `line_bank_${supplierLines.length + 1}`,
+        accountId: selectedBankAcc.id,
+        accountCode: selectedBankAcc.code,
+        accountName: selectedBankAcc.name,
+        debit: 0,
+        credit: totalBatchAmount,
+        documentRef: `Nómina N° ${nextBatchNumber}`,
+        gloss: `Egreso Bancario Nómina N° ${nextBatchNumber}`
+      };
+
+      const voucherLines = [...supplierLines, bankLine];
+      const totalDebitVal = voucherLines.reduce((s, l) => s + (l.debit || 0), 0);
+      const totalCreditVal = voucherLines.reduce((s, l) => s + (l.credit || 0), 0);
 
       // 2. Create Voucher in Firestore
       const newVoucherData = {
@@ -269,8 +385,8 @@ export default function NominasPagoView({
         type: 'Egreso',
         gloss: `Nómina de Pago N° ${nextBatchNumber} - ${batchGloss}`,
         lines: voucherLines,
-        totalDebit: totalBatchAmount,
-        totalCredit: totalBatchAmount,
+        totalDebit: totalDebitVal,
+        totalCredit: totalCreditVal,
         status: 'Valido',
         createdAt: new Date().toISOString()
       };
@@ -314,15 +430,23 @@ export default function NominasPagoView({
 
   // Void / Anular Batch
   const handleVoidBatch = async (batch: PaymentBatch) => {
-    if (!confirm(`¿Está seguro de anular la Nómina de Pago N° ${batch.batchNumber}? Esto también anulará el comprobante contable asociado.`)) {
+    const periodCheck = checkIsPeriodClosed(batch.period || batch.date, fiscalYears);
+    if (periodCheck.isClosed) {
+      alert(periodCheck.errorMsg);
+      return;
+    }
+
+    if (!confirm(`¿Está seguro de anular la Nómina de Pago N° ${batch.batchNumber}? Esto anulará el comprobante contable asociado y liberará las facturas a pendientes.`)) {
       return;
     }
 
     try {
+      // 1. Update Payment Batch status
       await updateDoc(doc(companyRef, 'paymentBatches', batch.id), {
         status: 'Anulado'
       });
 
+      // 2. Void voucher if exists
       if (batch.voucherId) {
         await updateDoc(doc(companyRef, 'vouchers', batch.voucherId), {
           status: 'Anulado',
@@ -331,13 +455,42 @@ export default function NominasPagoView({
         });
       }
 
-      alert('Nómina y comprobante contable anulados correctamente.');
+      // 3. Register Audit Log
+      await logAuditEvent({
+        userId: auth.currentUser?.uid || 'anonymous',
+        userEmail: auth.currentUser?.email || 'sistema',
+        action: 'ANULAR',
+        module: 'PAGOS_COBRANZAS',
+        studyId: studyId,
+        companyId: company.id,
+        companyName: company.name,
+        details: `Anulación de Nómina de Pago N° ${batch.batchNumber} por $${batch.totalAmount.toLocaleString('es-CL')}. Descontabilizado comprobante ${batch.voucherId || 'N/A'}. Documentos liberados a pendientes.`,
+        metadata: {
+          action: 'CANCEL',
+          documentType: 'NOMINA_PAGO',
+          documentId: batch.id,
+          batchNumber: batch.batchNumber,
+          voucherId: batch.voucherId,
+          motivo: `Anulación de Nómina de Pago N° ${batch.batchNumber}`,
+          totalAmount: batch.totalAmount,
+          itemsCount: batch.itemsCount,
+          date: batch.date,
+          period: batch.period
+        }
+      });
+
+      alert(`✅ Nómina N° ${batch.batchNumber} y su comprobante contable fueron anulados con éxito.\nLas facturas asociadas han retornado a estado pendiente.`);
       fetchBatches();
       if (onVouchersUpdated) onVouchersUpdated();
     } catch (err: any) {
       console.error('Error voiding batch:', err);
       alert('Error al anular nómina: ' + err.message);
     }
+  };
+
+  // Delete / Eliminar Batch
+  const handleDeleteBatch = async (batch: PaymentBatch) => {
+    alert('La eliminación permanente está desactivada por normativas de auditoría. Por favor, utilice la opción de "Anular" para revertir esta operación.');
   };
 
   // Export Bank Transfer File (Standard Chilean formats)
@@ -625,35 +778,116 @@ export default function NominasPagoView({
               </div>
             )}
 
-            <div className="overflow-x-auto max-h-96">
+            <div className="overflow-auto max-h-[500px] border border-slate-200 rounded-lg relative shadow-2xs">
               <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 border-b border-slate-200">
+                <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-20 border-b border-slate-200 shadow-2xs">
                   <tr>
-                    <th className="py-2 px-3 w-10 text-center">Sel.</th>
-                    <th className="py-2 px-2.5">Emisión</th>
-                    <th className="py-2 px-2.5">Tipo</th>
-                    <th className="py-2 px-2.5">Folio</th>
-                    <th className="py-2 px-3">RUT Proveedor</th>
-                    <th className="py-2 px-3">Razón Social</th>
-                    <th className="py-2 px-3">Banco / Cta Destino</th>
-                    <th className="py-2 px-3 text-right">Total Doc ($)</th>
-                    <th className="py-2 px-3 text-right">Monto a Pagar ($)</th>
+                    <th className="py-2 px-3 w-10 text-center bg-slate-100">Sel.</th>
+                    <th className="py-2 px-2.5 bg-slate-100">Emisión</th>
+                    <th className="py-2 px-2.5 bg-slate-100">Tipo</th>
+                    <th className="py-2 px-2.5 bg-slate-100">Folio</th>
+                    <th className="py-2 px-3 bg-slate-100">RUT Proveedor</th>
+                    <th className="py-2 px-3 bg-slate-100">Razón Social</th>
+                    <th className="py-2 px-3 text-right bg-slate-100">Total Doc ($)</th>
+                    <th className="py-2 px-3 text-right bg-slate-100">Monto a Pagar ($)</th>
+                  </tr>
+                  {/* Column Filters */}
+                  <tr className="bg-slate-50 border-b border-slate-200 text-xs normal-case sticky top-[33px] z-10 shadow-2xs font-normal">
+                    <th className="p-1 text-center">
+                      {(colFilterEmision || colFilterTipo !== 'Todos' || colFilterFolio || colFilterRut || colFilterRazon || colFilterMontoDoc) && (
+                        <button
+                          onClick={() => {
+                            setColFilterEmision('');
+                            setColFilterTipo('Todos');
+                            setColFilterFolio('');
+                            setColFilterRut('');
+                            setColFilterRazon('');
+                            setColFilterMontoDoc('');
+                          }}
+                          className="text-[10px] text-rose-600 hover:text-rose-800 font-bold"
+                          title="Limpiar filtros"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </th>
+                    <th className="p-1">
+                      <input
+                        type="text"
+                        placeholder="Fecha..."
+                        value={colFilterEmision}
+                        onChange={e => setColFilterEmision(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white font-mono text-[11px]"
+                      />
+                    </th>
+                    <th className="p-1">
+                      <select
+                        value={colFilterTipo}
+                        onChange={e => setColFilterTipo(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                      >
+                        <option value="Todos">Todos</option>
+                        <option value="33">33 - Factura</option>
+                        <option value="34">34 - Exenta</option>
+                        <option value="61">61 - NC</option>
+                      </select>
+                    </th>
+                    <th className="p-1">
+                      <input
+                        type="text"
+                        placeholder="Folio..."
+                        value={colFilterFolio}
+                        onChange={e => setColFilterFolio(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white font-mono text-[11px]"
+                      />
+                    </th>
+                    <th className="p-1">
+                      <input
+                        type="text"
+                        placeholder="RUT..."
+                        value={colFilterRut}
+                        onChange={e => setColFilterRut(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                      />
+                    </th>
+                    <th className="p-1">
+                      <input
+                        type="text"
+                        placeholder="Razón Social..."
+                        value={colFilterRazon}
+                        onChange={e => setColFilterRazon(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white text-[11px]"
+                      />
+                    </th>
+                    <th className="p-1">
+                      <input
+                        type="text"
+                        placeholder="Monto..."
+                        value={colFilterMontoDoc}
+                        onChange={e => setColFilterMontoDoc(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1 bg-white text-[11px] font-mono text-right"
+                      />
+                    </th>
+                    <th className="p-1 text-right text-slate-400 font-sans text-[10px]">
+                      Ajuste Pago
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
-                  {pendingInvoices.length === 0 && customPayItems.length === 0 ? (
+                  {filteredPendingInvoices.length === 0 && customPayItems.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-8 text-center text-slate-400 font-sans italic">
-                        No hay facturas o documentos pendientes de pago en el RCV.
+                      <td colSpan={8} className="py-8 text-center text-slate-400 font-sans italic">
+                        No hay facturas o documentos pendientes de pago que coincidan con los filtros.
                       </td>
                     </tr>
                   ) : (
                     <>
-                      {pendingInvoices.map(inv => {
+                      {filteredPendingInvoices.map(inv => {
                         const isSelected = selectedPendingIds[inv.id] !== undefined;
                         const payVal = selectedPendingIds[inv.id] || inv.montoTotal;
+                        const isNC = isNotaCredito(inv.tipoDoc);
                         return (
-                          <tr key={inv.id} className={isSelected ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}>
+                          <tr key={inv.id} className={isSelected ? (isNC ? 'bg-amber-50/70' : 'bg-indigo-50/50') : 'hover:bg-slate-50'}>
                             <td className="py-2 px-3 text-center">
                               <input
                                 type="checkbox"
@@ -663,35 +897,41 @@ export default function NominasPagoView({
                               />
                             </td>
                             <td className="py-2 px-2.5 text-slate-700">{inv.fechaEmision}</td>
-                            <td className="py-2 px-2.5 font-sans font-semibold text-slate-800">
-                              {inv.tipoDoc === '33' ? 'Factura Electrónica' : inv.tipoDoc === '34' ? 'Factura Exenta' : inv.tipoDoc}
+                            <td className="py-2 px-2.5 font-sans font-semibold">
+                              {isNC ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px]">
+                                  <span>📜</span> NC {inv.tipoDoc}
+                                </span>
+                              ) : (
+                                <span className="text-slate-800">
+                                  {inv.tipoDoc === '33' ? 'Factura Electrónica' : inv.tipoDoc === '34' ? 'Factura Exenta' : inv.tipoDoc}
+                                </span>
+                              )}
                             </td>
                             <td className="py-2 px-2.5 font-bold text-indigo-700">{inv.folio}</td>
                             <td className="py-2 px-3 font-semibold text-slate-800">{inv.rutEmisor}</td>
                             <td className="py-2 px-3 font-sans truncate max-w-xs text-slate-900 font-medium">
                               {inv.razonSocialEmisor}
                             </td>
-                            <td className="py-2 px-3 font-sans text-slate-600 text-[10px]">
-                              {inv.auxiliaryData ? (
-                                <span>{inv.auxiliaryData.banco || 'Bco Chile'} - N° {inv.auxiliaryData.numeroCuenta || 'S/N'}</span>
-                              ) : (
-                                <span className="text-amber-600">Sin datos bancarios</span>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 text-right font-bold text-slate-900">
-                              ${inv.montoTotal.toLocaleString('es-CL')}
+                            <td className={`py-2 px-3 text-right font-bold ${isNC ? 'text-amber-700' : 'text-slate-900'}`}>
+                              {isNC ? '-' : ''}${inv.montoTotal.toLocaleString('es-CL')}
                             </td>
                             <td className="py-2 px-3 text-right">
                               {isSelected ? (
-                                <input
-                                  type="number"
-                                  value={payVal}
-                                  onChange={(e) => {
-                                    const val = Number(e.target.value);
-                                    setSelectedPendingIds(prev => ({ ...prev, [inv.id]: val }));
-                                  }}
-                                  className="w-24 bg-white border border-indigo-300 rounded px-1.5 py-0.5 text-right font-bold text-indigo-900"
-                                />
+                                <div className="flex items-center justify-end gap-1">
+                                  {isNC && <span className="text-amber-700 font-bold">-</span>}
+                                  <input
+                                    type="number"
+                                    value={payVal}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value);
+                                      setSelectedPendingIds(prev => ({ ...prev, [inv.id]: val }));
+                                    }}
+                                    className={`w-24 bg-white border rounded px-1.5 py-0.5 text-right font-bold ${
+                                      isNC ? 'border-amber-400 text-amber-900' : 'border-indigo-300 text-indigo-900'
+                                    }`}
+                                  />
+                                </div>
                               ) : (
                                 <span className="text-slate-400">-</span>
                               )}
@@ -711,9 +951,6 @@ export default function NominasPagoView({
                           <td className="py-2 px-2.5 font-bold text-emerald-700">{c.folio}</td>
                           <td className="py-2 px-3 font-semibold text-slate-800">{c.rut}</td>
                           <td className="py-2 px-3 font-sans text-slate-900 font-medium">{c.razonSocial}</td>
-                          <td className="py-2 px-3 font-sans text-slate-600 text-[10px]">
-                            {c.bancoDestino} - N° {c.numeroCuentaDestino}
-                          </td>
                           <td className="py-2 px-3 text-right font-bold text-slate-900">
                             ${c.montoTotal.toLocaleString('es-CL')}
                           </td>
@@ -882,13 +1119,21 @@ export default function NominasPagoView({
                                 </button>
                                 <button
                                   onClick={() => handleVoidBatch(b)}
-                                  className="px-1.5 py-1 bg-slate-100 hover:bg-rose-100 text-rose-700 text-[10px] font-bold rounded border border-slate-300"
-                                  title="Anular Nómina"
+                                  className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold rounded border border-amber-200"
+                                  title="Anular Nómina y Descontabilizar"
                                 >
-                                  ✕
+                                  Anular
                                 </button>
                               </>
                             )}
+
+                            <button
+                              onClick={() => handleDeleteBatch(b)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-bold rounded border border-rose-200"
+                              title="Eliminar Nómina permanentemente"
+                            >
+                              🗑️
+                            </button>
                           </div>
                         </td>
                       </tr>
