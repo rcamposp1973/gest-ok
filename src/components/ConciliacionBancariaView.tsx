@@ -1,9 +1,25 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, doc, setDoc } from 'firebase/firestore';
-import { Company, ChartOfAccount, Voucher, BankStatementLine, BankReconciliation, FiscalPeriodYear } from '../types';
+import { collection, getDocs, addDoc, doc, setDoc, query, where } from 'firebase/firestore';
+import {
+  Company,
+  ChartOfAccount,
+  Voucher,
+  VoucherLine,
+  BankStatementLine,
+  BankReconciliation,
+  FiscalPeriodYear,
+  Auxiliary,
+  RCVDocument,
+  CostCenterMaster,
+  ExpenseItemMaster,
+  ProjectMaster,
+  ProductMaster,
+  CustomAnalysisTableItem
+} from '../types';
 import { checkIsPeriodClosed, getLatestOpenPeriod } from '../utils/periodUtils';
 import { logAuditEvent } from '../utils/auditLogger';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 import {
   getPreviousPeriod,
   getNextPeriod,
@@ -13,6 +29,7 @@ import {
   getDuplicateVouchersMap
 } from '../utils/bankReconciliationUtils';
 import { ImportCSVModal, ManualMatchModal, QuickVoucherModal } from './BankReconciliationModals';
+import AutoRutMatchModal from './AutoRutMatchModal';
 
 interface ConciliacionBancariaViewProps {
   studyId: string;
@@ -20,6 +37,13 @@ interface ConciliacionBancariaViewProps {
   accounts: ChartOfAccount[];
   vouchers: Voucher[];
   fiscalYears: FiscalPeriodYear[];
+  auxiliaries?: Auxiliary[];
+  rcvDocuments?: RCVDocument[];
+  costCenters?: CostCenterMaster[];
+  expenseItems?: ExpenseItemMaster[];
+  projects?: ProjectMaster[];
+  products?: ProductMaster[];
+  customAnalysisItems?: CustomAnalysisTableItem[];
   onVouchersUpdated?: () => void;
 }
 
@@ -29,10 +53,27 @@ export default function ConciliacionBancariaView({
   accounts,
   vouchers,
   fiscalYears,
+  auxiliaries = [],
+  rcvDocuments = [],
+  costCenters = [],
+  expenseItems = [],
+  projects = [],
+  products = [],
+  customAnalysisItems = [],
   onVouchersUpdated
 }: ConciliacionBancariaViewProps) {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('');
   const [selectedPeriod, setSelectedPeriod] = useState<string>(() => getLatestOpenPeriod(fiscalYears));
+
+  // Default selectedPeriod to latest open accounting period whenever fiscalYears loads or updates
+  useEffect(() => {
+    if (fiscalYears && fiscalYears.length > 0) {
+      const latestOpen = getLatestOpenPeriod(fiscalYears);
+      if (latestOpen && (!selectedPeriod || selectedPeriod === new Date().toISOString().slice(0, 7))) {
+        setSelectedPeriod(latestOpen);
+      }
+    }
+  }, [fiscalYears]);
   const [statementLines, setStatementLines] = useState<BankStatementLine[]>([]);
   const [bankInitialBalanceInput, setBankInitialBalanceInput] = useState<number>(0);
   const [bankFinalBalanceInput, setBankFinalBalanceInput] = useState<number>(0);
@@ -54,6 +95,7 @@ export default function ConciliacionBancariaView({
 
   // Modals
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
+  const [showAutoRutModal, setShowAutoRutModal] = useState<boolean>(false);
   const [pastedCSV, setPastedCSV] = useState<string>('');
   const [importInitialBalance, setImportInitialBalance] = useState<number>(0);
 
@@ -239,12 +281,12 @@ export default function ConciliacionBancariaView({
     if (voucherSearchQuery.trim()) {
       const q = voucherSearchQuery.toLowerCase().trim();
       list = list.filter(bv =>
-        String(bv.voucher.voucherNumber).includes(q) ||
-        bv.gloss.toLowerCase().includes(q) ||
-        bv.date.includes(q) ||
-        bv.period.includes(q) ||
-        String(bv.debit).includes(q) ||
-        String(bv.credit).includes(q)
+        String(bv.voucher.voucherNumber || '').includes(q) ||
+        (bv.gloss || '').toLowerCase().includes(q) ||
+        (bv.date || '').includes(q) ||
+        (bv.period || '').includes(q) ||
+        String(bv.debit || 0).includes(q) ||
+        String(bv.credit || 0).includes(q)
       );
     }
 
@@ -274,17 +316,49 @@ export default function ConciliacionBancariaView({
     return totalDebit - totalCredit;
   }, [vouchers, selectedBankAccount, selectedPeriod]);
 
+  // All Statement Lines across all saved periods plus active period
+  const allStatementLines = useMemo(() => {
+    if (!selectedBankAccount) return [];
+
+    const map = new Map<string, (BankStatementLine & { period: string })[]>();
+
+    savedReconciliations.forEach(r => {
+      if (r.bankAccountId === selectedBankAccountId && r.lines) {
+        const lineList = r.lines.map(l => ({
+          ...l,
+          period: l.date ? l.date.slice(0, 7) : r.period
+        }));
+        map.set(r.period, lineList);
+      }
+    });
+
+    if (statementLines) {
+      const activeList = statementLines.map(l => ({
+        ...l,
+        period: l.date ? l.date.slice(0, 7) : selectedPeriod
+      }));
+      map.set(selectedPeriod, activeList);
+    }
+
+    const list: (BankStatementLine & { period: string })[] = [];
+    map.forEach(lines => {
+      list.push(...lines);
+    });
+
+    return list;
+  }, [savedReconciliations, selectedBankAccountId, selectedPeriod, statementLines, selectedBankAccount]);
+
   // Math Reconciliation Summary
   const reconciliationSummary = useMemo(() => {
     return calculateReconciliationMath(
-      statementLines,
+      allStatementLines,
       allBankVouchers,
       bankInitialBalanceInput,
       bankFinalBalanceInput,
       bookFinalBalance,
       selectedPeriod
     );
-  }, [statementLines, allBankVouchers, bankInitialBalanceInput, bankFinalBalanceInput, bookFinalBalance, selectedPeriod]);
+  }, [allStatementLines, allBankVouchers, bankInitialBalanceInput, bankFinalBalanceInput, bookFinalBalance, selectedPeriod]);
 
   // Unified Multi-Period Cartola (All months chained consecutively)
   const unifiedHistoricalCartola = useMemo(() => {
@@ -314,6 +388,8 @@ export default function ConciliacionBancariaView({
         outstandingChecks: reconciliationSummary.outstandingChecks,
         depositsInTransit: reconciliationSummary.depositsInTransit,
         reconciledBalance: reconciliationSummary.reconciledStatementBalance,
+        calculatedBookBalance: reconciliationSummary.calculatedBookBalance,
+        calculatedBankBalance: reconciliationSummary.calculatedBankBalance,
         difference: reconciliationSummary.difference,
         status: reconciliationSummary.isBalanced ? 'Cuadrado' : 'Descuadrado',
         lines: statementLines,
@@ -378,8 +454,28 @@ export default function ConciliacionBancariaView({
       setAutoSaveStatus('SAVING');
       try {
         const recId = `${selectedBankAccount.code}_${period}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+        
+        // Build combined statement lines across all historical periods for math calculation
+        const combinedAllLines: (BankStatementLine & { period: string })[] = [];
+        savedReconciliations.forEach(r => {
+          if (r.bankAccountId === selectedBankAccount.id && r.period !== period && r.lines) {
+            r.lines.forEach(l => {
+              combinedAllLines.push({
+                ...l,
+                period: l.date ? l.date.slice(0, 7) : r.period
+              });
+            });
+          }
+        });
+        lines.forEach(l => {
+          combinedAllLines.push({
+            ...l,
+            period: l.date ? l.date.slice(0, 7) : period
+          });
+        });
+
         const summary = calculateReconciliationMath(
-          lines,
+          combinedAllLines,
           allBankVouchers,
           initialBal,
           finalBal,
@@ -402,6 +498,8 @@ export default function ConciliacionBancariaView({
           outstandingChecks: summary.outstandingChecks,
           depositsInTransit: summary.depositsInTransit,
           reconciledBalance: summary.reconciledStatementBalance,
+          calculatedBookBalance: summary.calculatedBookBalance,
+          calculatedBankBalance: summary.calculatedBankBalance,
           difference: summary.difference,
           status: summary.isBalanced ? 'Cuadrado' : 'Descuadrado',
           notes: customNotes !== undefined ? customNotes : notes,
@@ -764,129 +862,218 @@ export default function ConciliacionBancariaView({
 
   // 4. Toggle manual match / unmatch + Immediate Auto-Save
   const handleToggleManualMatch = async (lineId: string) => {
-    const updated = statementLines.map(l => {
-      if (l.id === lineId) {
-        return {
-          ...l,
-          matchedStatus: 'Pendiente' as const,
-          matchedVoucherId: undefined,
-          matchedVoucherNumber: undefined,
-          matchedVoucherPeriod: undefined
-        };
+    const inCurrent = statementLines.some(l => l.id === lineId);
+    if (inCurrent) {
+      const updated = statementLines.map(l => {
+        if (l.id === lineId) {
+          return {
+            ...l,
+            matchedStatus: 'Pendiente' as const,
+            matchedVoucherId: undefined,
+            matchedVoucherNumber: undefined,
+            matchedVoucherPeriod: undefined
+          };
+        }
+        return l;
+      });
+      setStatementLines(updated);
+      await persistReconciliation(selectedPeriod, updated, bankInitialBalanceInput, bankFinalBalanceInput);
+      return;
+    }
+
+    // Check prior periods in savedReconciliations
+    for (const rec of savedReconciliations) {
+      if (rec.bankAccountId === selectedBankAccountId && rec.lines) {
+        const lineIdx = rec.lines.findIndex(l => l.id === lineId);
+        if (lineIdx >= 0) {
+          const updatedLines = rec.lines.map(l => {
+            if (l.id === lineId) {
+              return {
+                ...l,
+                matchedStatus: 'Pendiente' as const,
+                matchedVoucherId: undefined,
+                matchedVoucherNumber: undefined,
+                matchedVoucherPeriod: undefined
+              };
+            }
+            return l;
+          });
+          await persistReconciliation(rec.period, updatedLines, rec.bankInitialBalance, rec.bankFinalBalance);
+          await persistReconciliation(selectedPeriod, statementLines, bankInitialBalanceInput, bankFinalBalanceInput);
+          break;
+        }
       }
-      return l;
-    });
-    setStatementLines(updated);
-    await persistReconciliation(selectedPeriod, updated, bankInitialBalanceInput, bankFinalBalanceInput);
+    }
   };
 
   // 5. Perform manual cross-period match + Immediate Auto-Save
   const handleManualMatch = async (voucherId: string, voucherNumber: number, voucherPeriod: string) => {
     if (!manualMatchLine) return;
 
-    const updated = statementLines.map(l => {
-      if (l.id === manualMatchLine.id) {
-        return {
-          ...l,
-          matchedStatus: 'Conciliado' as const,
-          matchedVoucherId: voucherId,
-          matchedVoucherNumber: voucherNumber,
-          matchedVoucherPeriod: voucherPeriod
-        };
-      }
-      return l;
-    });
+    const targetLineId = manualMatchLine.id;
+    const inCurrent = statementLines.some(l => l.id === targetLineId);
 
-    setStatementLines(updated);
-    setManualMatchLine(null);
-    await persistReconciliation(selectedPeriod, updated, bankInitialBalanceInput, bankFinalBalanceInput);
+    if (inCurrent) {
+      const updated = statementLines.map(l => {
+        if (l.id === targetLineId) {
+          return {
+            ...l,
+            matchedStatus: 'Conciliado' as const,
+            matchedVoucherId: voucherId,
+            matchedVoucherNumber: voucherNumber,
+            matchedVoucherPeriod: voucherPeriod
+          };
+        }
+        return l;
+      });
+      setStatementLines(updated);
+      setManualMatchLine(null);
+      await persistReconciliation(selectedPeriod, updated, bankInitialBalanceInput, bankFinalBalanceInput);
+      return;
+    }
+
+    // Prior period line
+    for (const rec of savedReconciliations) {
+      if (rec.bankAccountId === selectedBankAccountId && rec.lines) {
+        const lineIdx = rec.lines.findIndex(l => l.id === targetLineId);
+        if (lineIdx >= 0) {
+          const updatedLines = rec.lines.map(l => {
+            if (l.id === targetLineId) {
+              return {
+                ...l,
+                matchedStatus: 'Conciliado' as const,
+                matchedVoucherId: voucherId,
+                matchedVoucherNumber: voucherNumber,
+                matchedVoucherPeriod: voucherPeriod
+              };
+            }
+            return l;
+          });
+          setManualMatchLine(null);
+          await persistReconciliation(rec.period, updatedLines, rec.bankInitialBalance, rec.bankFinalBalance);
+          await persistReconciliation(selectedPeriod, statementLines, bankInitialBalanceInput, bankFinalBalanceInput);
+          break;
+        }
+      }
+    }
   };
 
   // 6. Quick Post Unaccounted Bank Fee or Income + Auto-Match + Immediate Auto-Save
-  const handleQuickPostVoucher = async () => {
-    if (!quickVoucherLine || !selectedBankAccount || !quickExpenseAccountId) {
+  const handleQuickPostVoucher = async (customData?: {
+    period: string;
+    gloss: string;
+    counterAccountId: string;
+    lines: VoucherLine[];
+    newAuxiliaryToSave?: Auxiliary;
+  }) => {
+    if (!quickVoucherLine || !selectedBankAccount) {
+      alert('Información del movimiento bancario no disponible.');
+      return;
+    }
+
+    const counterAccId = customData?.counterAccountId || quickExpenseAccountId;
+    const counterAcc = accounts.find(a => a.id === counterAccId);
+    if (!counterAcc && (!customData?.lines || customData.lines.length === 0)) {
       alert('Seleccione la cuenta de contrapartida (Gasto Bancario / Ingreso).');
       return;
     }
 
-    const targetPeriod = quickVoucherPeriod || selectedPeriod;
+    const targetPeriod = customData?.period || quickVoucherPeriod || selectedPeriod;
     const periodCheck = checkIsPeriodClosed(targetPeriod, fiscalYears);
     if (periodCheck.isClosed) {
       alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes registrar comprobantes en un período cerrado.`);
       return;
     }
 
-    const counterAcc = accounts.find(a => a.id === quickExpenseAccountId);
-    if (!counterAcc) return;
+    // Save new auxiliary on-the-fly if provided
+    if (customData?.newAuxiliaryToSave) {
+      try {
+        const auxSnap = await getDocs(query(collection(companyRef, 'auxiliaries'), where('rut', '==', customData.newAuxiliaryToSave.rut)));
+        if (auxSnap.empty) {
+          await addDoc(collection(companyRef, 'auxiliaries'), sanitizeForFirestore(customData.newAuxiliaryToSave));
+        }
+      } catch (e) {
+        console.warn('No se pudo guardar automáticamente el nuevo auxiliar:', e);
+      }
+    }
 
     try {
       const nextVoucherNumber = (vouchers.length > 0 ? Math.max(...vouchers.map(v => v.voucherNumber || 0)) : 0) + 1;
       const isCharge = quickVoucherLine.charge > 0;
       const amount = isCharge ? quickVoucherLine.charge : quickVoucherLine.deposit;
 
-      let voucherLines = [];
-      if (isCharge) {
-        voucherLines = [
-          {
-            id: 'l1',
-            accountId: counterAcc.id,
-            accountCode: counterAcc.code,
-            accountName: counterAcc.name,
-            debit: amount,
-            credit: 0,
-            documentRef: quickVoucherLine.documentNumber || 'BANCO',
-            gloss: quickGloss || quickVoucherLine.description
-          },
-          {
-            id: 'l2',
-            accountId: selectedBankAccount.id,
-            accountCode: selectedBankAccount.code,
-            accountName: selectedBankAccount.name,
-            debit: 0,
-            credit: amount,
-            documentRef: quickVoucherLine.documentNumber || 'BANCO',
-            gloss: quickGloss || quickVoucherLine.description
-          }
-        ];
-      } else {
-        voucherLines = [
-          {
-            id: 'l1',
-            accountId: selectedBankAccount.id,
-            accountCode: selectedBankAccount.code,
-            accountName: selectedBankAccount.name,
-            debit: amount,
-            credit: 0,
-            documentRef: quickVoucherLine.documentNumber || 'BANCO',
-            gloss: quickGloss || quickVoucherLine.description
-          },
-          {
-            id: 'l2',
-            accountId: counterAcc.id,
-            accountCode: counterAcc.code,
-            accountName: counterAcc.name,
-            debit: 0,
-            credit: amount,
-            documentRef: quickVoucherLine.documentNumber || 'BANCO',
-            gloss: quickGloss || quickVoucherLine.description
-          }
-        ];
+      let voucherLines: VoucherLine[] = [];
+      if (customData?.lines && customData.lines.length > 0) {
+        voucherLines = customData.lines;
+      } else if (counterAcc) {
+        if (isCharge) {
+          voucherLines = [
+            {
+              id: 'l1',
+              accountId: counterAcc.id,
+              accountCode: counterAcc.code,
+              accountName: counterAcc.name,
+              debit: amount,
+              credit: 0,
+              documentRef: quickVoucherLine.documentNumber || 'BANCO',
+              gloss: customData?.gloss || quickGloss || quickVoucherLine.description
+            },
+            {
+              id: 'l2',
+              accountId: selectedBankAccount.id,
+              accountCode: selectedBankAccount.code,
+              accountName: selectedBankAccount.name,
+              debit: 0,
+              credit: amount,
+              documentRef: quickVoucherLine.documentNumber || 'BANCO',
+              gloss: customData?.gloss || quickGloss || quickVoucherLine.description
+            }
+          ];
+        } else {
+          voucherLines = [
+            {
+              id: 'l1',
+              accountId: selectedBankAccount.id,
+              accountCode: selectedBankAccount.code,
+              accountName: selectedBankAccount.name,
+              debit: amount,
+              credit: 0,
+              documentRef: quickVoucherLine.documentNumber || 'BANCO',
+              gloss: customData?.gloss || quickGloss || quickVoucherLine.description
+            },
+            {
+              id: 'l2',
+              accountId: counterAcc.id,
+              accountCode: counterAcc.code,
+              accountName: counterAcc.name,
+              debit: 0,
+              credit: amount,
+              documentRef: quickVoucherLine.documentNumber || 'BANCO',
+              gloss: customData?.gloss || quickGloss || quickVoucherLine.description
+            }
+          ];
+        }
       }
+
+      const cleanedVoucherLines = sanitizeVoucherLines(voucherLines, accounts);
+      const totalDebit = cleanedVoucherLines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
+      const totalCredit = cleanedVoucherLines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
 
       const newVoucherData = {
         voucherNumber: nextVoucherNumber,
         date: quickVoucherLine.date,
         period: targetPeriod,
         type: isCharge ? 'Egreso' : 'Ingreso',
-        gloss: `Ajuste Conciliación Bancaria - ${quickGloss || quickVoucherLine.description}`,
-        lines: voucherLines,
-        totalDebit: amount,
-        totalCredit: amount,
+        gloss: `Ajuste Conciliación Bancaria - ${customData?.gloss || quickGloss || quickVoucherLine.description}`,
+        lines: cleanedVoucherLines,
+        totalDebit,
+        totalCredit,
         status: 'Valido',
         createdAt: new Date().toISOString()
       };
 
-      const docRef = await addDoc(collection(companyRef, 'vouchers'), newVoucherData);
+      const sanitizedVoucher = sanitizeForFirestore(newVoucherData);
+      const docRef = await addDoc(collection(companyRef, 'vouchers'), sanitizedVoucher);
 
       const updated = statementLines.map(l => {
         if (l.id === quickVoucherLine.id) {
@@ -920,23 +1107,48 @@ export default function ConciliacionBancariaView({
 
   // Filtered Cartola Lines
   const displayLines = useMemo(() => {
-    const source = cartolaViewMode === 'CARTOLA_HISTORICA_UNIDA' ? unifiedHistoricalCartola : statementLines;
+    let source: (BankStatementLine & { period?: string })[] = [];
+
+    if (cartolaViewMode === 'CARTOLA_HISTORICA_UNIDA') {
+      source = unifiedHistoricalCartola;
+    } else {
+      const voucherPeriodMap = new Map<string, string>();
+      allBankVouchers.forEach(bv => {
+        if (bv.voucher && bv.voucher.id) {
+          voucherPeriodMap.set(bv.voucher.id, bv.period);
+        }
+      });
+
+      const activeLines = statementLines.map(l => ({ ...l, period: selectedPeriod }));
+
+      const priorPendingLines = allStatementLines.filter(l => {
+        const p = l.period || (l.date ? l.date.slice(0, 7) : selectedPeriod);
+        if (p >= selectedPeriod) return false;
+        if (l.matchedStatus === 'No_Corresponde') return false;
+        if (l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return true;
+        const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+        return vPeriod > selectedPeriod;
+      });
+
+      source = [...priorPendingLines, ...activeLines];
+    }
+
     return source.filter(l => {
       if (filterStatement === 'Conciliados' && l.matchedStatus !== 'Conciliado') return false;
       if (filterStatement === 'Pendiente' && l.matchedStatus !== 'Pendiente') return false;
       if (statementSearchQuery.trim()) {
         const q = statementSearchQuery.toLowerCase().trim();
-        const matchesDesc = l.description.toLowerCase().includes(q);
+        const matchesDesc = (l.description || '').toLowerCase().includes(q);
         const matchesDoc = (l.documentNumber || '').toLowerCase().includes(q);
-        const matchesDate = l.date.includes(q);
-        const matchesCharge = String(l.charge).includes(q);
-        const matchesDep = String(l.deposit).includes(q);
+        const matchesDate = (l.date || '').includes(q);
+        const matchesCharge = String(l.charge || 0).includes(q);
+        const matchesDep = String(l.deposit || 0).includes(q);
         const matchesVoucher = l.matchedVoucherNumber ? String(l.matchedVoucherNumber).includes(q) : false;
         if (!matchesDesc && !matchesDoc && !matchesDate && !matchesCharge && !matchesDep && !matchesVoucher) return false;
       }
       return true;
     });
-  }, [cartolaViewMode, unifiedHistoricalCartola, statementLines, filterStatement, statementSearchQuery]);
+  }, [cartolaViewMode, unifiedHistoricalCartola, statementLines, allStatementLines, allBankVouchers, filterStatement, statementSearchQuery, selectedPeriod]);
 
   // Vouchers available in the Manual Match Modal
   const modalAvailableVouchers = useMemo(() => {
@@ -965,12 +1177,12 @@ export default function ConciliacionBancariaView({
     if (modalSearch.trim()) {
       const q = modalSearch.toLowerCase().trim();
       list = list.filter(bv =>
-        String(bv.voucher.voucherNumber).includes(q) ||
-        bv.gloss.toLowerCase().includes(q) ||
-        bv.date.includes(q) ||
-        bv.period.includes(q) ||
-        String(bv.debit).includes(q) ||
-        String(bv.credit).includes(q)
+        String(bv.voucher.voucherNumber || '').includes(q) ||
+        (bv.gloss || '').toLowerCase().includes(q) ||
+        (bv.date || '').includes(q) ||
+        (bv.period || '').includes(q) ||
+        String(bv.debit || 0).includes(q) ||
+        String(bv.credit || 0).includes(q)
       );
     }
 
@@ -1013,6 +1225,12 @@ export default function ConciliacionBancariaView({
                 </>
               )}
             </div>
+
+            {/* Persistence & state retention badge */}
+            <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200" title="Su progreso de conciliación, filtros y cartola activa se mantienen intactos al cambiar de pestaña dentro del sistema.">
+              <span>⚡</span>
+              <span>Estado Retenido en Navegación</span>
+            </div>
           </div>
         </div>
 
@@ -1045,6 +1263,26 @@ export default function ConciliacionBancariaView({
           >
             <span>📥</span>
             <span>Importar Cartola CSV</span>
+          </button>
+
+          {/* NUEZ MARIPOSA / CEREBRO AUTO RUT MATCH BUTTON */}
+          <button
+            onClick={() => setShowAutoRutModal(true)}
+            className="relative group px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center gap-1.5 border-2 border-amber-300 overflow-hidden"
+            title="Match y Contabilización Automática por RUT en Cartola (Nuez Mariposa / Mazinger-Z)"
+          >
+            {/* Glowing aura */}
+            <span className="absolute -inset-1 bg-amber-400/50 rounded-xl blur-xs opacity-75 group-hover:opacity-100 transition animate-pulse"></span>
+            <span className="relative flex items-center gap-1.5">
+              <svg className="w-4 h-4 text-slate-950 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2C8 2 5 4.5 5 8c0 2 1 3.5 2.5 4.5C6 13.5 5 15 5 17c0 3 3 5 7 5s7-2 7-5c0-2-1-3.5-2.5-4.5C18 11.5 19 10 19 8c0-3.5-3-6-7-6z" fill="currentColor" opacity="0.25" />
+                <path d="M12 2v20" strokeDasharray="2 2" />
+                <path d="M7.5 8c1-.5 2.5 0 3 1s0 2.5-1 3" />
+                <path d="M16.5 8c-1-.5-2.5 0-3 1s0 2.5 1 3" />
+              </svg>
+              <span className="uppercase tracking-tight">🧠 Nuez Mariposa RUT Match</span>
+              <span className="bg-amber-950 text-amber-300 text-[9px] px-1.5 py-0.2 rounded font-mono font-black">AUTO</span>
+            </span>
           </button>
 
           <button
@@ -1209,93 +1447,136 @@ export default function ConciliacionBancariaView({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
-          {/* Lado 1: Saldo Cartola Acumulado */}
-          <div className="space-y-1.5 bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs">
-            <div className="font-bold text-slate-900 font-sans border-b pb-1 text-[11px] uppercase flex justify-between items-center">
-              <span>1. Enfoque Saldo según Cartola Banco</span>
-              <span className="text-[10px] text-slate-400 font-mono font-normal">Acumulativo</span>
+          {/* Lado 1: ENFOQUE SALDO SEGÚN CARTOLA BANCO */}
+          <div className="space-y-1.5 bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="font-bold text-slate-900 font-sans border-b pb-1 text-[11px] uppercase flex justify-between items-center mb-2">
+                <span className="text-indigo-950 font-black">ENFOQUE SALDO SEGÚN CARTOLA BANCO</span>
+                <span className="text-[10px] text-indigo-700 bg-indigo-50 font-bold px-1.5 py-0.5 rounded border border-indigo-100">
+                  Banco → Contabilidad
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between font-bold text-slate-900 bg-slate-100/80 px-2 py-1 rounded border border-slate-200">
+                  <span className="font-sans">SALDO CARTOLA:</span>
+                  <span className="font-mono text-slate-950">${bankFinalBalanceInput.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-indigo-800 px-2">
+                  <span className="font-sans">Más (+) CARGOS BANCARIOS NO CONTABILIZADOS:</span>
+                  <span className="font-bold">+${reconciliationSummary.unmatchedCharges.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-rose-700 px-2">
+                  <span className="font-sans">Menos (-) ABONOS BANCARIOS NO CONTABILIZADOS:</span>
+                  <span className="font-bold">-${reconciliationSummary.unmatchedDeposits.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-rose-700 px-2">
+                  <span className="font-sans">Menos (-) CHEQUE / EGRESOS EN TRANSITO:</span>
+                  <span className="font-bold">-${reconciliationSummary.outstandingChecks.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-indigo-800 px-2">
+                  <span className="font-sans">Más (+) DEPOSITOS EN TRANSITO:</span>
+                  <span className="font-bold">+${reconciliationSummary.depositsInTransit.toLocaleString('es-CL')}</span>
+                </div>
+
+                {/* Cross-period adjustments */}
+                {reconciliationSummary.futureMatchedCharges > 0 && (
+                  <div className="flex justify-between text-amber-800 text-[11px] bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200">
+                    <span className="font-sans">Menos (-) Cargos regularizados en meses posteriores:</span>
+                    <span className="font-bold">-${reconciliationSummary.futureMatchedCharges.toLocaleString('es-CL')}</span>
+                  </div>
+                )}
+                {reconciliationSummary.futureMatchedDeposits > 0 && (
+                  <div className="flex justify-between text-amber-800 text-[11px] bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200">
+                    <span className="font-sans">Más (+) Abonos regularizados en meses posteriores:</span>
+                    <span className="font-bold">+${reconciliationSummary.futureMatchedDeposits.toLocaleString('es-CL')}</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex justify-between text-slate-600">
-              <span className="font-sans">Saldo Inicial Cartola (Mes Anterior):</span>
-              <span className="font-bold text-slate-800">${bankInitialBalanceInput.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="flex justify-between text-emerald-700 text-[11px]">
-              <span className="font-sans">(+) Abonos / Depósitos del Mes:</span>
-              <span className="font-bold">
-                +${reconciliationSummary.totalDepositsMonth.toLocaleString('es-CL')}
-              </span>
-            </div>
-            <div className="flex justify-between text-rose-700 text-[11px]">
-              <span className="font-sans">(-) Cargos / Giros del Mes:</span>
-              <span className="font-bold">
-                -${reconciliationSummary.totalChargesMonth.toLocaleString('es-CL')}
-              </span>
-            </div>
-            <div className="border-t pt-1 flex justify-between font-bold text-slate-900 bg-slate-50 px-2 py-0.5 rounded">
-              <span className="font-sans">(=) Saldo Final según Cartola Bancaria:</span>
-              <span className="font-mono text-indigo-900 font-black">${bankFinalBalanceInput.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="flex justify-between text-emerald-700 pt-1">
-              <span className="font-sans">(+) Depósitos en Tránsito (en Libros):</span>
-              <span className="font-bold">+${reconciliationSummary.depositsInTransit.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="flex justify-between text-rose-700">
-              <span className="font-sans">(-) Cheques / Egresos en Tránsito:</span>
-              <span className="font-bold">-${reconciliationSummary.outstandingChecks.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="border-t pt-1.5 flex justify-between font-black text-slate-900 bg-indigo-50/80 px-2.5 py-1 rounded border border-indigo-100">
-              <span className="font-sans text-indigo-950">(=) Saldo Banco Ajustado:</span>
-              <span className="text-indigo-800 text-sm font-black">
-                ${reconciliationSummary.reconciledStatementBalance.toLocaleString('es-CL')}
-              </span>
+
+            <div className="pt-2 border-t mt-2">
+              <div className="flex justify-between font-black text-slate-900 bg-amber-200/90 px-2.5 py-1.5 rounded border border-amber-400/60 shadow-2xs">
+                <span className="font-sans text-slate-950 uppercase text-[11px]">SALDO CONTABILIDAD CALCULADO:</span>
+                <span className="text-slate-950 text-sm font-black">
+                  ${reconciliationSummary.calculatedBookBalance.toLocaleString('es-CL')}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] text-slate-600 px-2 pt-1">
+                <span className="font-sans">Saldo Contabilidad Real (Libro Mayor):</span>
+                <span className="font-bold font-mono text-slate-900">${bookFinalBalance.toLocaleString('es-CL')}</span>
+              </div>
             </div>
           </div>
 
-          {/* Lado 2: Saldo Libros y Regularizaciones Multimes */}
-          <div className="space-y-1.5 bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs">
-            <div className="font-bold text-slate-900 font-sans border-b pb-1 text-[11px] uppercase flex justify-between items-center">
-              <span>2. Enfoque Saldo según Libro Mayor</span>
-              <span className="text-[10px] text-slate-400 font-mono font-normal">Contabilidad</span>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span className="font-sans">Saldo según Libro Mayor ({selectedPeriod}):</span>
-              <span className="font-bold text-slate-900">${bookFinalBalance.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="flex justify-between text-emerald-700">
-              <span className="font-sans">(+) Abonos Banco no en Libros:</span>
-              <span className="font-bold">+${reconciliationSummary.unmatchedDeposits.toLocaleString('es-CL')}</span>
-            </div>
-            <div className="flex justify-between text-rose-700">
-              <span className="font-sans">(-) Cargos Banco no en Libros:</span>
-              <span className="font-bold">-${reconciliationSummary.unmatchedCharges.toLocaleString('es-CL')}</span>
+          {/* Lado 2: ENFOQUE SALDO SEGÚN LIBRO MAYOR */}
+          <div className="space-y-1.5 bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="font-bold text-slate-900 font-sans border-b pb-1 text-[11px] uppercase flex justify-between items-center mb-2">
+                <span className="text-indigo-950 font-black">ENFOQUE SALDO SEGÚN LIBRO MAYOR</span>
+                <span className="text-[10px] text-emerald-700 bg-emerald-50 font-bold px-1.5 py-0.5 rounded border border-emerald-100">
+                  Contabilidad → Banco
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between font-bold text-slate-900 bg-slate-100/80 px-2 py-1 rounded border border-slate-200">
+                  <span className="font-sans">SALDO CONTABILIDAD:</span>
+                  <span className="font-mono text-slate-950">${bookFinalBalance.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-indigo-800 px-2">
+                  <span className="font-sans">Más (+) CHEQUE / EGRESOS EN TRANSITO:</span>
+                  <span className="font-bold">+${reconciliationSummary.outstandingChecks.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-rose-700 px-2">
+                  <span className="font-sans">Menos (-) DEPOSITOS EN TRANSITO:</span>
+                  <span className="font-bold">-${reconciliationSummary.depositsInTransit.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-rose-700 px-2">
+                  <span className="font-sans">Menos (-) CARGOS BANCARIOS NO CONTABILIZADOS:</span>
+                  <span className="font-bold">-${reconciliationSummary.unmatchedCharges.toLocaleString('es-CL')}</span>
+                </div>
+
+                <div className="flex justify-between text-indigo-800 px-2">
+                  <span className="font-sans">Más (+) ABONOS BANCARIOS NO CONTABILIZADOS:</span>
+                  <span className="font-bold">+${reconciliationSummary.unmatchedDeposits.toLocaleString('es-CL')}</span>
+                </div>
+
+                {/* Cross-period adjustments */}
+                {reconciliationSummary.futureMatchedCharges > 0 && (
+                  <div className="flex justify-between text-amber-800 text-[11px] bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200">
+                    <span className="font-sans">Más (+) Cargos regularizados en meses posteriores:</span>
+                    <span className="font-bold">+${reconciliationSummary.futureMatchedCharges.toLocaleString('es-CL')}</span>
+                  </div>
+                )}
+                {reconciliationSummary.futureMatchedDeposits > 0 && (
+                  <div className="flex justify-between text-amber-800 text-[11px] bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200">
+                    <span className="font-sans">Menos (-) Abonos regularizados en meses posteriores:</span>
+                    <span className="font-bold">-${reconciliationSummary.futureMatchedDeposits.toLocaleString('es-CL')}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Cross-period breakdown if any */}
-            {reconciliationSummary.futureMatchedCharges > 0 && (
-              <div className="flex justify-between text-amber-700 text-[11px] bg-amber-50/60 px-1.5 py-0.5 rounded">
-                <span className="font-sans">(-) Cargos regularizados en meses posteriores:</span>
-                <span className="font-bold">-${reconciliationSummary.futureMatchedCharges.toLocaleString('es-CL')}</span>
+            <div className="pt-2 border-t mt-2">
+              <div className="flex justify-between font-black text-slate-900 bg-amber-200/90 px-2.5 py-1.5 rounded border border-amber-400/60 shadow-2xs">
+                <span className="font-sans text-slate-950 uppercase text-[11px]">SALDO CARTOLA CALCULADO:</span>
+                <span className="text-slate-950 text-sm font-black">
+                  ${reconciliationSummary.calculatedBankBalance.toLocaleString('es-CL')}
+                </span>
               </div>
-            )}
-            {reconciliationSummary.futureMatchedDeposits > 0 && (
-              <div className="flex justify-between text-amber-700 text-[11px] bg-amber-50/60 px-1.5 py-0.5 rounded">
-                <span className="font-sans">(+) Abonos regularizados en meses posteriores:</span>
-                <span className="font-bold">+${reconciliationSummary.futureMatchedDeposits.toLocaleString('es-CL')}</span>
+              <div className="flex justify-between items-center text-[11px] text-slate-600 px-2 pt-1">
+                <span className="font-sans">Saldo Cartola Real (Banco):</span>
+                <span className="font-bold font-mono text-slate-900">${bankFinalBalanceInput.toLocaleString('es-CL')}</span>
               </div>
-            )}
-
-            <div className="border-t pt-1.5 mt-2 flex justify-between font-black text-slate-900 bg-indigo-50/80 px-2.5 py-1 rounded border border-indigo-100">
-              <span className="font-sans text-indigo-950">(=) Saldo Libros Ajustado:</span>
-              <span className="text-indigo-800 text-sm font-black">
-                ${reconciliationSummary.adjustedBookBalance.toLocaleString('es-CL')}
-              </span>
             </div>
-
-            {reconciliationSummary.crossPeriodLines.length > 0 && (
-              <div className="text-[10px] text-slate-500 font-sans pt-1 italic">
-                * {reconciliationSummary.crossPeriodLines.length} partida(s) de la cartola fueron regularizadas con comprobantes de otros meses.
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1386,9 +1667,15 @@ export default function ConciliacionBancariaView({
                     >
                       <td className="py-2 px-2 text-slate-600 text-[10px]">
                         <div>{l.date}</div>
-                        {cartolaViewMode === 'CARTOLA_HISTORICA_UNIDA' && (l as any).period && (
-                          <span className="text-[9px] text-indigo-600 font-sans font-bold">
-                            {(l as any).period}
+                        {(l as any).period && ((l as any).period !== selectedPeriod || cartolaViewMode === 'CARTOLA_HISTORICA_UNIDA') && (
+                          <span
+                            className={`text-[9px] font-sans font-bold px-1 py-0.2 rounded border block w-max mt-0.5 ${
+                              (l as any).period < selectedPeriod
+                                ? 'bg-amber-50 text-amber-900 border-amber-300'
+                                : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            }`}
+                          >
+                            {(l as any).period < selectedPeriod ? `Arrastre: ${(l as any).period}` : (l as any).period}
                           </span>
                         )}
                       </td>
@@ -1472,9 +1759,9 @@ export default function ConciliacionBancariaView({
                                   setQuickVoucherPeriod(selectedPeriod);
                                   const defaultExpense = accounts.find(
                                     a =>
-                                      a.code.startsWith('4-2-01') ||
-                                      a.name.toLowerCase().includes('comision') ||
-                                      a.name.toLowerCase().includes('bancari')
+                                      (a.code || '').startsWith('4-2-01') ||
+                                      (a.name || '').toLowerCase().includes('comision') ||
+                                      (a.name || '').toLowerCase().includes('bancari')
                                   );
                                   if (defaultExpense) setQuickExpenseAccountId(defaultExpense.id);
                                 }}
@@ -1653,13 +1940,43 @@ export default function ConciliacionBancariaView({
         quickVoucherLine={quickVoucherLine}
         onClose={() => setQuickVoucherLine(null)}
         accounts={accounts}
+        auxiliaries={auxiliaries}
+        vouchers={vouchers}
+        rcvDocuments={rcvDocuments}
+        costCenters={costCenters}
+        expenseItems={expenseItems}
+        projects={projects}
+        products={products}
+        customAnalysisItems={customAnalysisItems}
+        customColumns={company.customAccountColumns || []}
+        selectedBankAccount={selectedBankAccount}
         quickExpenseAccountId={quickExpenseAccountId}
         setQuickExpenseAccountId={setQuickExpenseAccountId}
         quickGloss={quickGloss}
         setQuickGloss={setQuickGloss}
         quickVoucherPeriod={quickVoucherPeriod}
         setQuickVoucherPeriod={setQuickVoucherPeriod}
+        onPostVoucherWithLines={handleQuickPostVoucher}
         onPost={handleQuickPostVoucher}
+      />
+
+      <AutoRutMatchModal
+        isOpen={showAutoRutModal}
+        onClose={() => setShowAutoRutModal(false)}
+        studyId={studyId}
+        company={company}
+        statementLines={statementLines}
+        accounts={accounts}
+        vouchers={vouchers}
+        auxiliaries={auxiliaries}
+        rcvDocuments={rcvDocuments}
+        selectedBankAccountId={selectedBankAccountId}
+        selectedPeriod={selectedPeriod}
+        onApplyMatches={async (updatedLines, count) => {
+          setStatementLines(updatedLines);
+          await persistReconciliation(selectedPeriod, updatedLines, bankInitialBalanceInput, bankFinalBalanceInput);
+        }}
+        onVouchersUpdated={onVouchersUpdated}
       />
     </div>
   );

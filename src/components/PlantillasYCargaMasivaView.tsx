@@ -31,6 +31,9 @@ export default function PlantillasYCargaMasivaView({
 
   // 1. DESCARGA DE PLANTILLA: PLAN DE CUENTAS
   const downloadPlanCuentasTemplate = () => {
+    const customCols = company.customAccountColumns || [];
+    const customHeaders = customCols.map(c => `Requiere_${c}`);
+
     const headers = [
       'CodigoCuenta',
       'NombreCuenta',
@@ -39,21 +42,26 @@ export default function PlantillasYCargaMasivaView({
       'RequiereCentroCosto',
       'RequiereAuxiliarRUT',
       'RequiereConciliacionBancaria',
-      'RequiereDocumento'
+      'RequiereDocumento',
+      'RequiereVencimiento',
+      'RequiereItemGasto',
+      'RequiereProyecto',
+      'RequiereProducto',
+      ...customHeaders
     ];
 
     const sampleRows = [
-      ['1.1.01.001', 'Caja Central Moneda Nacional', 'Activo', '1.1.01', 'NO', 'NO', 'NO', 'NO'],
-      ['1.1.02.001', 'Banco de Chile Cta Cte 991823-01', 'Activo', '1.1.02', 'NO', 'NO', 'SI', 'NO'],
-      ['1.1.03.001', 'Clientes por Cobrar Nacionales', 'Activo', '1.1.03', 'NO', 'SI', 'NO', 'SI'],
-      ['1.1.07.001', 'IVA Credito Fiscal 19%', 'Activo', '1.1.07', 'NO', 'NO', 'NO', 'SI'],
-      ['2.1.01.001', 'Proveedores por Pagar Nacionales', 'Pasivo', '2.1.01', 'NO', 'SI', 'NO', 'SI'],
-      ['2.1.03.001', 'IVA Debito Fiscal 19%', 'Pasivo', '2.1.03', 'NO', 'NO', 'NO', 'SI'],
-      ['2.1.03.003', 'Retencion Honorarios 2da Categoria', 'Pasivo', '2.1.03', 'NO', 'SI', 'NO', 'SI'],
-      ['3.1.01.001', 'Capital Social Aportado', 'Patrimonio', '3.1.01', 'NO', 'NO', 'NO', 'NO'],
-      ['4.1.01.001', 'Ingresos por Ventas del Giro', 'Ingreso', '4.1.01', 'SI', 'NO', 'NO', 'SI'],
-      ['5.1.01.001', 'Costo de Ventas y Mercaderias', 'Gasto', '5.1.01', 'SI', 'NO', 'NO', 'SI'],
-      ['5.2.01.001', 'Gastos Generales y Arriendos', 'Gasto', '5.2.01', 'SI', 'SI', 'NO', 'SI']
+      ['1.1.01.001', 'Caja Central Moneda Nacional', 'Activo', '1.1.01', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['1.1.02.001', 'Banco de Chile Cta Cte 991823-01', 'Activo', '1.1.02', 'NO', 'NO', 'SI', 'NO', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['1.1.03.001', 'Clientes por Cobrar Nacionales', 'Activo', '1.1.03', 'NO', 'SI', 'NO', 'SI', 'SI', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['1.1.07.001', 'IVA Credito Fiscal 19%', 'Activo', '1.1.07', 'NO', 'NO', 'NO', 'SI', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['2.1.01.001', 'Proveedores por Pagar Nacionales', 'Pasivo', '2.1.01', 'NO', 'SI', 'NO', 'SI', 'SI', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['2.1.03.001', 'IVA Debito Fiscal 19%', 'Pasivo', '2.1.03', 'NO', 'NO', 'NO', 'SI', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['2.1.03.003', 'Retencion Honorarios 2da Categoria', 'Pasivo', '2.1.03', 'NO', 'SI', 'NO', 'SI', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['3.1.01.001', 'Capital Social Aportado', 'Patrimonio', '3.1.01', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', 'NO', ...customCols.map(() => 'NO')],
+      ['4.1.01.001', 'Ingresos por Ventas del Giro', 'Ingreso', '4.1.01', 'SI', 'NO', 'NO', 'SI', 'NO', 'NO', 'SI', 'SI', ...customCols.map(() => 'NO')],
+      ['5.1.01.001', 'Costo de Ventas y Mercaderias', 'Gasto', '5.1.01', 'SI', 'NO', 'NO', 'SI', 'NO', 'SI', 'SI', 'SI', ...customCols.map(() => 'NO')],
+      ['5.2.01.001', 'Gastos Generales y Arriendos', 'Gasto', '5.2.01', 'SI', 'SI', 'NO', 'SI', 'SI', 'SI', 'SI', 'NO', ...customCols.map(() => 'NO')]
     ];
 
     const csvContent = '\uFEFF' + [headers.join(';'), ...sampleRows.map(r => r.join(';'))].join('\n');
@@ -156,6 +164,9 @@ export default function PlantillasYCargaMasivaView({
 
   // 3. DESCARGA DE PLANTILLA: COMPROBANTES CONTABLES MASIVOS
   const downloadComprobantesTemplate = () => {
+    const customCols = company.customAccountColumns || [];
+    const customHeaders = customCols.length > 0 ? customCols : [];
+
     const headers = [
       'NumeroComprobante',
       'Fecha',
@@ -170,14 +181,20 @@ export default function PlantillasYCargaMasivaView({
       'RazonSocialCliProv',
       'TipoDoc',
       'NumeroDoc',
-      'CentroCosto'
+      'CentroCosto',
+      'RefBancaria',
+      'FechaVencimiento',
+      'ItemGasto',
+      'Proyecto',
+      'Producto',
+      ...customHeaders
     ];
 
     const sampleRows = [
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.02.001', 'Banco de Chile Cta Cte', '15000000', '0', 'Saldo inicial banco', '', '', '', '', ''],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.03.001', 'Clientes por Cobrar', '5000000', '0', 'Facturas pendientes', '76.123.456-7', 'Comercial Sur', 'Factura', '450', ''],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '2.1.01.001', 'Proveedores por Pagar', '0', '4000000', 'Deuda inicial compras', '77.987.654-3', 'Industrial SpA', 'Factura', '9812', ''],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '3.1.01.001', 'Capital Social Aportado', '0', '16000000', 'Aporte de socios', '', '', '', '', '']
+      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.02.001', 'Banco de Chile Cta Cte', '15000000', '0', 'Saldo inicial banco', '', '', '', '', '', 'Cartola 001', '', '', '', '', ...customCols.map(() => '')],
+      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.03.001', 'Clientes por Cobrar', '5000000', '0', 'Facturas pendientes', '76.123.456-7', 'Comercial Sur', 'Factura', '450', '', '', '2026-02-15', '', '', '', ...customCols.map(() => '')],
+      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '2.1.01.001', 'Proveedores por Pagar', '0', '4000000', 'Deuda inicial compras', '77.987.654-3', 'Industrial SpA', 'Factura', '9812', '', '', '2026-02-28', '', '', '', ...customCols.map(() => '')],
+      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '3.1.01.001', 'Capital Social Aportado', '0', '16000000', 'Aporte de socios', '', '', '', '', '', '', '', '', '', '', ...customCols.map(() => '')]
     ];
 
     const csvContent = '\uFEFF' + [headers.join(';'), ...sampleRows.map(r => r.join(';'))].join('\n');
@@ -204,10 +221,12 @@ export default function PlantillasYCargaMasivaView({
 
       // Check header
       let startIndex = 0;
-      if (rows[0][0]?.toLowerCase().includes('codigo') || rows[0][0]?.toLowerCase().includes('cuenta')) {
+      const headerRow = rows[0]?.map(h => h.toLowerCase()) || [];
+      if (headerRow.some(h => h.includes('codigo') || h.includes('cuenta'))) {
         startIndex = 1;
       }
 
+      const customCols = company.customAccountColumns || [];
       const errors: string[] = [];
       let successCount = 0;
       const batch = writeBatch(db);
@@ -229,10 +248,25 @@ export default function PlantillasYCargaMasivaView({
         else type = 'Activo';
 
         const parentCode = row[3] || '';
-        const reqCC = row[4]?.toUpperCase() === 'SI' || row[4]?.toUpperCase() === 'TRUE' || row[4] === '1';
-        const reqRUT = row[5]?.toUpperCase() === 'SI' || row[5]?.toUpperCase() === 'TRUE' || row[5] === '1';
-        const reqBanco = row[6]?.toUpperCase() === 'SI' || row[6]?.toUpperCase() === 'TRUE' || row[6] === '1';
-        const reqDoc = row[7]?.toUpperCase() === 'SI' || row[7]?.toUpperCase() === 'TRUE' || row[7] === '1';
+        const isYes = (val: string | undefined) => val?.toUpperCase() === 'SI' || val?.toUpperCase() === 'TRUE' || val === '1';
+
+        const reqCC = isYes(row[4]);
+        const reqRUT = isYes(row[5]);
+        const reqBanco = isYes(row[6]);
+        const reqDoc = isYes(row[7]);
+        const reqVto = isYes(row[8]);
+        const reqItemGasto = isYes(row[9]);
+        const reqProyecto = isYes(row[10]);
+        const reqProducto = isYes(row[11]);
+
+        // Custom columns
+        const customRequirements: { [key: string]: boolean } = {};
+        customCols.forEach((col, cIdx) => {
+          const cellVal = row[12 + cIdx];
+          if (isYes(cellVal)) {
+            customRequirements[col] = true;
+          }
+        });
 
         if (!code || !name) {
           errors.push(`Fila ${i + 1}: Código o Nombre de cuenta vacío.`);
@@ -251,6 +285,11 @@ export default function PlantillasYCargaMasivaView({
           requiereAuxiliarRUT: reqRUT,
           requiereConciliacionBancaria: reqBanco,
           requiereDocumento: reqDoc,
+          requiereVencimiento: reqVto,
+          requiereItemGasto: reqItemGasto,
+          requiereProyecto: reqProyecto,
+          requiereProducto: reqProducto,
+          customAnalysesRequirements: customRequirements,
           createdAt: new Date().toISOString()
         };
 
@@ -267,7 +306,7 @@ export default function PlantillasYCargaMasivaView({
         errors
       });
 
-      alert(`✅ Plan de Cuentas importado con éxito: ${successCount} cuentas registradas/actualizadas.`);
+      alert(`✅ Plan de Cuentas importado con éxito: ${successCount} cuentas registradas/actualizadas con exigibilidad de análisis.`);
     } catch (err: any) {
       console.error('Error importing chart of accounts:', err);
       alert('Error en la importación: ' + err.message);

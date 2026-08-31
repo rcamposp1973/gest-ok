@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
 import { Company, Auxiliary, ChartOfAccount, DTEDocument, DTEConfig, DTEDocumentItem, Voucher, VoucherLine, RCVDocument } from '../types';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface EmisionDteViewProps {
   studyId: string;
@@ -325,6 +326,18 @@ export default function EmisionDteView({
       if (!isNotaCredito) {
         // Normal Sale (Factura/Boleta)
         // Debe: Clientes por Cobrar (Total)
+        let clientDueDate: string | undefined = undefined;
+        if ('requiereVencimiento' in cuentaClientes && cuentaClientes.requiereVencimiento && dateStr) {
+          try {
+            const parts = dateStr.split('-');
+            if (parts.length === 3) {
+              const dt = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+              dt.setDate(dt.getDate() + 30);
+              clientDueDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+            }
+          } catch {}
+        }
+
         lines.push({
           accountId: cuentaClientes.id,
           accountCode: cuentaClientes.code,
@@ -334,6 +347,7 @@ export default function EmisionDteView({
           auxiliaryRut: receptorRut,
           auxiliaryName: receptorRazonSocial,
           documentRef: `${labelMap[tipoDTE]} N° ${nextFolio}`,
+          ...(clientDueDate ? { dueDate: clientDueDate } : {}),
           gloss: `Venta ${labelMap[tipoDTE]} N° ${nextFolio} - ${receptorRazonSocial}`,
         });
 
@@ -417,6 +431,7 @@ export default function EmisionDteView({
       // Calculate max voucher number
       const maxVoucherNum = vouchers.length > 0 ? Math.max(...vouchers.map(v => v.voucherNumber || 0)) : 0;
       const nextVoucherNum = maxVoucherNum + 1;
+      const sanitizedLines = sanitizeVoucherLines(lines, accounts);
 
       const newVoucher: Voucher = {
         id: '',
@@ -425,7 +440,7 @@ export default function EmisionDteView({
         period: periodStr,
         type: isNotaCredito ? 'Traspaso' : 'Ingreso',
         gloss: `Contabilización Automática DTE ${labelMap[tipoDTE]} N° ${nextFolio} - ${receptorRazonSocial}`,
-        lines,
+        lines: sanitizedLines,
         totalDebit: montoTotal,
         totalCredit: montoTotal,
         status: 'Valido',

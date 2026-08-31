@@ -44,6 +44,14 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1); // 1-12
   const [viewMode, setViewMode] = useState<'monthly_table' | 'annual_summary' | 'calculator'>('monthly_table');
   const [searchTerm, setSearchTerm] = useState('');
+  const [columnFilters, setColumnFilters] = useState({
+    date: '',
+    uf: '',
+    dolar: '',
+    euro: '',
+    utm: '',
+    ipc: ''
+  });
 
   // Calculadora de Conversión y Corrección Monetaria
   const [calcAmount, setCalcAmount] = useState<number>(1000000);
@@ -457,44 +465,123 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
 
       {/* VISTA 1: TABLA MENSUAL DÍA A DÍA */}
       {viewMode === 'monthly_table' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-slate-900 text-sm">
                 Valores Diarios — {MONTH_NAMES[selectedMonth - 1]} {currentYear}
               </h3>
-              <span className="text-[11px] font-medium text-slate-500">
-                ({monthlyRates.length} días registrados)
+              <span className="text-[11px] font-semibold text-slate-600 bg-slate-200 px-2 py-0.5 rounded">
+                {monthlyRates.length} días registrados
               </span>
             </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar fecha (ej: 15)..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-              />
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar fecha (ej: 15)..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              {Object.values(columnFilters).some(v => v !== '') && (
+                <button
+                  onClick={() => setColumnFilters({ date: '', uf: '', dolar: '', euro: '', utm: '', ipc: '' })}
+                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-lg border border-rose-200 whitespace-nowrap"
+                >
+                  Limpiar Filtros
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-slate-100/75 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-4">Fecha</th>
-                  <th className="py-3 px-4 text-right">UF (Unidad de Fomento)</th>
-                  <th className="py-3 px-4 text-right">Dólar Observado (USD)</th>
-                  <th className="py-3 px-4 text-right">Euro (EUR)</th>
-                  <th className="py-3 px-4 text-right">UTM (Mensual)</th>
-                  <th className="py-3 px-4 text-right">IPC (%)</th>
+          <div className="overflow-x-auto max-h-[550px]">
+            <table className="w-full text-xs text-left border-collapse select-none">
+              <thead>
+                {/* TÍTULOS DE ATRIBUTOS EN ENCABEZADO OSCURO SLATE-800 */}
+                <tr className="bg-slate-800 text-white text-[11px] font-bold tracking-tight border-b border-slate-900 sticky top-0 z-10 shadow-xs">
+                  <th className="py-2.5 px-4 border-r border-slate-700 font-mono">FECHA (YYYY-MM-DD)</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">UF (UNIDAD DE FOMENTO)</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">DÓLAR OBSERVADO (USD)</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">EURO (EUR)</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">UTM (MENSUAL)</th>
+                  <th className="py-2.5 px-4 text-right bg-slate-900">IPC (%)</th>
+                </tr>
+
+                {/* FILA DE FILTROS EN TITULOS */}
+                <tr className="bg-slate-900 text-slate-200 text-[10px] border-b-2 border-slate-900 sticky top-[33px] z-10 shadow-xs">
+                  <th className="p-1 border-r border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Filtrar fecha..."
+                      value={columnFilters.date}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, date: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-emerald-400 placeholder-slate-500 px-1.5 py-0.5 rounded text-[10px] font-mono outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
+                  <th className="p-1 border-r border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Filtrar UF..."
+                      value={columnFilters.uf}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, uf: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 px-1 py-0.5 rounded text-[10px] text-right outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
+                  <th className="p-1 border-r border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Filtrar Dólar..."
+                      value={columnFilters.dolar}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, dolar: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 px-1 py-0.5 rounded text-[10px] text-right outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
+                  <th className="p-1 border-r border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Filtrar Euro..."
+                      value={columnFilters.euro}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, euro: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 px-1 py-0.5 rounded text-[10px] text-right outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
+                  <th className="p-1 border-r border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Filtrar UTM..."
+                      value={columnFilters.utm}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, utm: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 px-1 py-0.5 rounded text-[10px] text-right outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
+                  <th className="p-1 bg-slate-950 text-right">
+                    <input
+                      type="text"
+                      placeholder="IPC..."
+                      value={columnFilters.ipc}
+                      onChange={e => setColumnFilters(prev => ({ ...prev, ipc: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-700 text-emerald-400 placeholder-slate-500 px-1 py-0.5 rounded text-[10px] text-right outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-200">
                 {monthlyRates
-                  .filter(r => !searchTerm || r.date.includes(searchTerm))
+                  .filter(r => {
+                    if (searchTerm && !r.date.includes(searchTerm)) return false;
+                    if (columnFilters.date && !r.date.includes(columnFilters.date)) return false;
+                    if (columnFilters.uf && !String(r.uf).includes(columnFilters.uf)) return false;
+                    if (columnFilters.dolar && !String(r.dolar).includes(columnFilters.dolar)) return false;
+                    if (columnFilters.euro && !String(r.euro).includes(columnFilters.euro)) return false;
+                    if (columnFilters.utm && !String(r.utm).includes(columnFilters.utm)) return false;
+                    if (columnFilters.ipc && !String(r.ipc ?? '').includes(columnFilters.ipc)) return false;
+                    return true;
+                  })
                   .map((rate) => {
                     const day = rate.date.split('-')[2];
                     const dateObj = new Date(`${rate.date}T12:00:00Z`);
@@ -503,28 +590,28 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
                     return (
                       <tr 
                         key={rate.date} 
-                        className={`hover:bg-slate-50/80 transition-colors ${
-                          isWeekend ? 'bg-slate-50/30' : ''
+                        className={`hover:bg-amber-50/40 transition-colors ${
+                          isWeekend ? 'bg-slate-50/60' : 'bg-white'
                         }`}
                       >
-                        <td className="py-2.5 px-4 font-mono font-medium text-slate-900">
+                        <td className="py-2 px-4 font-mono font-medium text-slate-900 border-r border-slate-200">
                           <span className="font-bold text-indigo-700 mr-2">{day}</span>
-                          <span className="text-slate-400">{rate.date}</span>
+                          <span className="text-slate-500">{rate.date}</span>
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                        <td className="py-2 px-4 text-right font-mono font-bold text-slate-900 border-r border-slate-200">
                           {formatCLP(rate.uf, 2)}
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-800">
+                        <td className="py-2 px-4 text-right font-mono font-semibold text-slate-800 border-r border-slate-200">
                           {formatCLP(rate.dolar, 2)}
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono text-slate-700">
+                        <td className="py-2 px-4 text-right font-mono text-slate-700 border-r border-slate-200">
                           {formatCLP(rate.euro, 2)}
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono text-slate-700">
+                        <td className="py-2 px-4 text-right font-mono text-slate-700 border-r border-slate-200">
                           {formatCLP(rate.utm, 0)}
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-semibold">
-                          <span className={rate.ipc && rate.ipc > 0 ? 'text-emerald-700' : 'text-slate-600'}>
+                        <td className="py-2 px-4 text-right font-mono font-semibold">
+                          <span className={rate.ipc && rate.ipc > 0 ? 'text-emerald-700 font-bold' : 'text-slate-600'}>
                             {rate.ipc !== undefined ? `${rate.ipc}%` : '-'}
                           </span>
                         </td>
@@ -547,8 +634,8 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
 
       {/* VISTA 2: RESUMEN ANUAL DE LOS 12 MESES */}
       {viewMode === 'annual_summary' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50/80 border-b border-slate-200">
+        <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200">
             <h3 className="font-bold text-slate-900 text-sm">
               Tabla Anual Consolidada — Ejercicio {currentYear}
             </h3>
@@ -558,19 +645,19 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-slate-100/75 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
+            <table className="w-full text-xs text-left border-collapse select-none">
+              <thead className="bg-slate-800 text-white text-[11px] font-bold tracking-tight border-b-2 border-slate-900 sticky top-0 z-10 shadow-xs">
                 <tr>
-                  <th className="py-3 px-4">Mes</th>
-                  <th className="py-3 px-4 text-right">UF (Fin de Mes)</th>
-                  <th className="py-3 px-4 text-right">Dólar Observado Promedio</th>
-                  <th className="py-3 px-4 text-right">Euro Promedio</th>
-                  <th className="py-3 px-4 text-right">UTM Mensual</th>
-                  <th className="py-3 px-4 text-right">IPC Mes (%)</th>
-                  <th className="py-3 px-4 text-center">Acción</th>
+                  <th className="py-2.5 px-4 border-r border-slate-700">MES CALENDARIO</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">UF (FIN DE MES)</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">DÓLAR OBSERVADO PROMEDIO</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">EURO PROMEDIO</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">UTM MENSUAL</th>
+                  <th className="py-2.5 px-4 text-right border-r border-slate-700">IPC MES (%)</th>
+                  <th className="py-2.5 px-4 text-center bg-slate-900">ACCIÓN</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-200">
                 {MONTH_NAMES.map((mName, mIdx) => {
                   const mNum = mIdx + 1;
                   const prefix = `${currentYear}-${String(mNum).padStart(2, '0')}`;
@@ -581,26 +668,26 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
                   const avgE = mRates.length > 0 ? (mRates.reduce((a, b) => a + (b.euro || 0), 0) / mRates.length) : 0;
 
                   return (
-                    <tr key={mNum} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-4 font-bold text-slate-900">
+                    <tr key={mNum} className="hover:bg-amber-50/40 transition-colors bg-white">
+                      <td className="py-2.5 px-4 font-bold text-slate-900 border-r border-slate-200">
                         {mName} {currentYear}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-indigo-700">
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-indigo-700 border-r border-slate-200">
                         {lastR ? formatCLP(lastR.uf, 2) : '-'}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-semibold text-slate-800">
+                      <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-800 border-r border-slate-200">
                         {avgD > 0 ? formatCLP(avgD, 2) : '-'}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-700">
+                      <td className="py-2.5 px-4 text-right font-mono text-slate-700 border-r border-slate-200">
                         {avgE > 0 ? formatCLP(avgE, 2) : '-'}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-semibold text-slate-800">
+                      <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-800 border-r border-slate-200">
                         {firstR ? formatCLP(firstR.utm, 0) : '-'}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-700 border-r border-slate-200">
                         {firstR?.ipc !== undefined ? `${firstR.ipc}%` : '-'}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-2.5 px-4 text-center">
                         <button
                           onClick={() => {
                             setSelectedMonth(mNum);

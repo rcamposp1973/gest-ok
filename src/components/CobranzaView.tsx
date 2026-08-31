@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase
 import { Company, ChartOfAccount, Auxiliary, RCVDocument, Voucher, CollectionRecord, CollectionItem, FiscalPeriodYear } from '../types';
 import { checkIsPeriodClosed } from '../utils/periodUtils';
 import { logAuditEvent } from '../utils/auditLogger';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface CobranzaViewProps {
   studyId: string;
@@ -389,7 +390,8 @@ export default function CobranzaView({
         gloss: `Ingreso Bancario Recaudación N° ${nextRecordNumber} (${paymentMethod})`
       };
 
-      const voucherLines = [bankLine, ...customerLines];
+      const rawVoucherLines = [bankLine, ...customerLines];
+      const voucherLines = sanitizeVoucherLines(rawVoucherLines, accounts);
       const totalDebitVal = voucherLines.reduce((s, l) => s + (l.debit || 0), 0);
       const totalCreditVal = voucherLines.reduce((s, l) => s + (l.credit || 0), 0);
 

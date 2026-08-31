@@ -21,8 +21,9 @@ import SuperUsersManager from './components/SuperUsersManager';
 import AuditLogsViewer from './components/AuditLogsViewer';
 import ExecutiveHeader from './components/ExecutiveHeader';
 import IndicadoresEconomicosView from './components/IndicadoresEconomicosView';
+import PresentationView from './components/PresentationView';
 import { logAuditEvent } from './utils/auditLogger';
-import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History } from 'lucide-react';
+import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles } from 'lucide-react';
 
 function Dashboard() {
   const { currentUser } = useAuth();
@@ -31,7 +32,7 @@ function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [studies, setStudies] = useState<Study[]>([]);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
-  const [superAdminTab, setSuperAdminTab] = useState<'studies' | 'create_study' | 'plans' | 'super_users' | 'audit_logs'>('studies');
+  const [superAdminTab, setSuperAdminTab] = useState<'studies' | 'create_study' | 'plans' | 'super_users' | 'audit_logs' | 'presentation'>('studies');
   const [role, setRole] = useState<UserRole | null>(null);
   const [activeCompany, setActiveCompany] = useState<Company | null>(null);
   const [showGlobalIndicatorsModal, setShowGlobalIndicatorsModal] = useState(false);
@@ -67,11 +68,11 @@ function Dashboard() {
       console.log("Fetching data for:", currentUser.email);
       const userEmail = currentUser.email?.toLowerCase();
 
-      // 1. Root Super Admin Global Bootstrap (Only rcampos@pulsocontable.cl)
-      if (userEmail === 'rcampos@pulsocontable.cl') {
+      // 1. Root Super Admin Global Bootstrap (rcampos@pulsocontable.cl or campos.ramon@gmail.com)
+      if (userEmail === 'rcampos@pulsocontable.cl' || userEmail === 'campos.ramon@gmail.com') {
         console.log("User is root bootstrap Super Admin Global:", userEmail);
         setRole(UserRole.SUPER_USER);
-        setUserData({ email: userEmail, name: 'Super Administrador Global', isSuperUser: true });
+        setUserData({ email: userEmail, name: 'Ramón Campos', isSuperUser: true });
         return;
       }
 
@@ -326,18 +327,6 @@ function Dashboard() {
               </button>
 
               <button
-                onClick={() => setSuperAdminTab('plans')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'plans'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <CreditCard className="w-4 h-4" />
-                <span>Gestionar Planes</span>
-              </button>
-
-              <button
                 onClick={() => setSuperAdminTab('super_users')}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
                   superAdminTab === 'super_users'
@@ -360,19 +349,31 @@ function Dashboard() {
                 <History className="w-4 h-4 text-indigo-400" />
                 <span>Bitácora de Sistema (Audit Logs)</span>
               </button>
+
+              <button
+                onClick={() => setSuperAdminTab('presentation')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  superAdminTab === 'presentation'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span>Pitch Deck Comercial 📊</span>
+              </button>
             </div>
 
             {/* TAB CONTENTS */}
+            {superAdminTab === 'presentation' && (
+              <PresentationView />
+            )}
+
             {superAdminTab === 'audit_logs' && (
               <AuditLogsViewer studies={studies} />
             )}
 
             {superAdminTab === 'super_users' && (
               <SuperUsersManager />
-            )}
-
-            {superAdminTab === 'plans' && (
-              <PlanManager />
             )}
 
             {superAdminTab === 'create_study' && (

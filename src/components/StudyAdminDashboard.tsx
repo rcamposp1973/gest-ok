@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { User, Company, UserRole, Assignment } from '../types';
+import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { User, Company, UserRole, Assignment, Study } from '../types';
 import CompanyAccountingDashboard from './CompanyAccountingDashboard';
 import { ShieldAlert, Users, Building2, UserCheck, Shield } from 'lucide-react';
 
@@ -34,6 +34,12 @@ export default function StudyAdminDashboard({
   const [users, setUsers] = useState<User[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [studyData, setStudyData] = useState<Study | null>(null);
+
+  // In-flight saving guards (Anti-Double Click Protection)
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [isSavingCompany, setIsSavingCompany] = useState(false);
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
 
   // Editing states
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -96,6 +102,12 @@ export default function StudyAdminDashboard({
     setLoading(true);
     setFetchError(null);
     try {
+      // 1. Fetch study document
+      const studySnap = await getDoc(studyRef);
+      if (studySnap.exists()) {
+        setStudyData({ id: studySnap.id, ...studySnap.data() } as Study);
+      }
+
       const usersSnap = await getDocs(collection(studyRef, 'users'));
       const fetchedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as User));
       setUsers(fetchedUsers);
@@ -184,6 +196,8 @@ export default function StudyAdminDashboard({
   // User CRUD
   const handleSaveUser = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSavingUser) return; // Anti-double click protection
+
     if (isRestrictedWorker) {
       alert('🔒 Acceso Denegado: Los perfiles Contador y Analista no tienen permisos para administrar usuarios.');
       return;
@@ -197,6 +211,13 @@ export default function StudyAdminDashboard({
 
     if (!name || !email) {
       alert('Por favor completa los campos obligatorios.');
+      return;
+    }
+
+    // Limit check
+    const userLimit = studyData?.maxUsers || 5;
+    if (!editingUser && users.length >= userLimit) {
+      alert(`⚠️ Límite Alcanzado: El estudio ha completado el cupo máximo de ${userLimit} usuarios. Para aumentar el cupo, contacta al Administrador de Sistema.`);
       return;
     }
 
@@ -215,6 +236,7 @@ export default function StudyAdminDashboard({
       return;
     }
 
+    setIsSavingUser(true);
     try {
       if (editingUser) {
         const updateData: any = { name, email, role, estado };
@@ -239,6 +261,8 @@ export default function StudyAdminDashboard({
     } catch (err: any) {
       console.error("Error saving user:", err);
       alert('Error al guardar usuario: ' + (err.message || err));
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -276,6 +300,8 @@ export default function StudyAdminDashboard({
   // Company CRUD
   const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingCompany) return; // Anti-double click protection
+
     if (isRestrictedWorker) {
       alert('🔒 Acceso Denegado: Los usuarios con perfil Contador o Analista no tienen permisos para crear ni modificar empresas.');
       return;
@@ -308,11 +334,19 @@ export default function StudyAdminDashboard({
       return;
     }
 
+    // Limit check for new companies
+    const companyLimit = studyData?.maxCompanies || 10;
+    if (!editingCompany && companies.length >= companyLimit) {
+      alert(`⚠️ Límite Alcanzado: El estudio ha completado el cupo máximo de ${companyLimit} empresas permitidas. Para ampliar el cupo, contacta al Administrador de Sistema.`);
+      return;
+    }
+
     if (!editingCompany && companies.some(c => c.rut === rut || c.name.toLowerCase() === name.toLowerCase())) {
       alert('Ya existe una empresa con este RUT o Razón Social en este estudio.');
       return;
     }
 
+    setIsSavingCompany(true);
     try {
       const companyPayload = {
         studyId,
@@ -381,6 +415,8 @@ export default function StudyAdminDashboard({
     } catch (err: any) {
       console.error("Error saving company:", err);
       alert('Error al guardar empresa: ' + (err.message || err));
+    } finally {
+      setIsSavingCompany(false);
     }
   };
 

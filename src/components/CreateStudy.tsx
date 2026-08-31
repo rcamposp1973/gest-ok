@@ -16,7 +16,8 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [giro, setGiro] = useState('');
-  const [planId, setPlanId] = useState('');
+  const [maxCompanies, setMaxCompanies] = useState<number>(10);
+  const [maxUsers, setMaxUsers] = useState<number>(5);
   const [estado, setEstado] = useState<'Vigente' | 'Sin Vigencia'>('Vigente');
 
   // Datos del Administrador del Estudio
@@ -28,23 +29,13 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
   const [adminEstado, setAdminEstado] = useState<'Vigente' | 'Sin Vigencia'>('Vigente');
   const [showPassword, setShowPassword] = useState(false);
 
-  const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  useEffect(() => {
-    getDocs(collection(db, 'plans')).then(snapshot => {
-      const pList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Plan));
-      setPlans(pList);
-      if (pList.length > 0 && !planId) {
-        setPlanId(pList[0].id);
-      }
-    }).catch(err => console.warn("Error leyendo planes:", err));
-  }, []);
-
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Anti-double-click guard
     setError('');
     setSuccessMsg('');
 
@@ -52,7 +43,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
     const cleanStudyRut = rut.trim();
     const cleanAdminEmail = adminEmail.trim().toLowerCase();
 
-    if (!cleanStudyName || !cleanStudyRut || !planId || !cleanAdminEmail || !adminPassword) {
+    if (!cleanStudyName || !cleanStudyRut || !cleanAdminEmail || !adminPassword) {
       setError('Por favor complete todos los campos obligatorios del estudio y del administrador.');
       return;
     }
@@ -88,7 +79,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
         isPrimary: true
       };
 
-      // 2. Crear documento de Estudio
+      // 2. Crear documento de Estudio con límites directos de empresas y usuarios
       const newStudyRef = await addDoc(collection(db, 'studies'), {
         name: cleanStudyName,
         rut: cleanStudyRut,
@@ -96,7 +87,8 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
         phone: phone.trim(),
         email: email.trim() || cleanAdminEmail,
         giro: giro.trim(),
-        planId,
+        maxCompanies: Math.max(1, Number(maxCompanies) || 10),
+        maxUsers: Math.max(1, Number(maxUsers) || 5),
         estado,
         adminId: auth.currentUser?.uid || 'superadmin',
         adminName: initialAdmin.name,
@@ -134,6 +126,8 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
       setPhone('');
       setEmail('');
       setGiro('');
+      setMaxCompanies(10);
+      setMaxUsers(5);
       setAdminName('');
       setAdminRut('');
       setAdminEmail('');
@@ -243,20 +237,31 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Plan de Suscripción Asignado *</label>
-              <select
-                value={planId}
-                onChange={e => setPlanId(e.target.value)}
-                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+              <label className="block font-semibold text-slate-700 mb-1">Cantidad Máxima de Empresas *</label>
+              <input
+                type="number"
+                min="1"
+                max="9999"
+                value={maxCompanies}
+                onChange={(e) => setMaxCompanies(parseInt(e.target.value, 10) || 1)}
+                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                 required
-              >
-                <option value="">Seleccionar Plan...</option>
-                {plans.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} (Máx: {p.maxCompanies} empresas, {p.maxUsers} usuarios)
-                  </option>
-                ))}
-              </select>
+              />
+              <p className="text-[11px] text-slate-500 mt-0.5">Cupo de sociedades/empresas que puede crear el estudio</p>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Cantidad Máxima de Usuarios *</label>
+              <input
+                type="number"
+                min="1"
+                max="9999"
+                value={maxUsers}
+                onChange={(e) => setMaxUsers(parseInt(e.target.value, 10) || 1)}
+                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
+                required
+              />
+              <p className="text-[11px] text-slate-500 mt-0.5">Cupo de contadores/analistas permitidos</p>
             </div>
 
             <div>

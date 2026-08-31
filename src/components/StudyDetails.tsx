@@ -91,8 +91,12 @@ export default function StudyDetails({ study: initialStudy, onBack }: StudyDetai
     };
   }, [study.id]);
 
+  const [isSavingStudy, setIsSavingStudy] = useState(false);
+
   // Guardar cambios en los datos del Estudio
   const handleSaveStudy = async () => {
+    if (isSavingStudy) return; // Anti-double-click guard
+    setIsSavingStudy(true);
     setActionError('');
     setActionSuccess('');
     try {
@@ -104,14 +108,17 @@ export default function StudyDetails({ study: initialStudy, onBack }: StudyDetai
         address: dataToSave.address || '',
         phone: dataToSave.phone || '',
         email: dataToSave.email || '',
-        planId: dataToSave.planId || '',
+        maxCompanies: Math.max(1, Number(dataToSave.maxCompanies) || 10),
+        maxUsers: Math.max(1, Number(dataToSave.maxUsers) || 5),
         estado: dataToSave.estado || 'Vigente'
       });
       setIsEditingStudy(false);
-      setActionSuccess('Datos del estudio actualizados correctamente.');
+      setActionSuccess('Datos y límites del estudio actualizados correctamente.');
     } catch (err: any) {
       console.error("Error updating study:", err);
       setActionError("Error al actualizar estudio: " + (err.message || err));
+    } finally {
+      setIsSavingStudy(false);
     }
   };
 
@@ -464,15 +471,26 @@ export default function StudyDetails({ study: initialStudy, onBack }: StudyDetai
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Plan de Suscripción</label>
-              <select
-                value={studyForm.planId || ''}
-                onChange={e => setStudyForm({...studyForm, planId: e.target.value})}
-                className="p-2 border border-slate-300 rounded-lg w-full bg-white font-medium text-slate-800"
-              >
-                <option value="">Seleccionar Plan</option>
-                {plans.map(p => <option key={p.id} value={p.id}>{p.name} (Máx {p.maxCompanies} emp, {p.maxUsers} usr)</option>)}
-              </select>
+              <label className="block font-semibold text-slate-700 mb-1">Límite Máx. Empresas</label>
+              <input
+                type="number"
+                min="1"
+                max="9999"
+                value={studyForm.maxCompanies || 10}
+                onChange={e => setStudyForm({...studyForm, maxCompanies: parseInt(e.target.value, 10) || 1})}
+                className="p-2 border border-slate-300 rounded-lg w-full bg-white font-bold text-slate-900"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Límite Máx. Usuarios</label>
+              <input
+                type="number"
+                min="1"
+                max="9999"
+                value={studyForm.maxUsers || 5}
+                onChange={e => setStudyForm({...studyForm, maxUsers: parseInt(e.target.value, 10) || 1})}
+                className="p-2 border border-slate-300 rounded-lg w-full bg-white font-bold text-slate-900"
+              />
             </div>
             <div>
               <label className="block font-semibold text-slate-700 mb-1">Estado de Vigencia del Estudio</label>
@@ -511,8 +529,12 @@ export default function StudyDetails({ study: initialStudy, onBack }: StudyDetai
               <p className="text-slate-900">{study.email || 'No informado'}</p>
             </div>
             <div>
-              <p className="text-slate-500 font-semibold">Plan:</p>
-              <p className="font-bold text-indigo-700">{plans.find(p => p.id === study.planId)?.name || 'Plan Estándar'}</p>
+              <p className="text-slate-500 font-semibold">Cupo Empresas:</p>
+              <p className="font-bold text-indigo-700">{companies.length} de {study.maxCompanies || 10} permitidas</p>
+            </div>
+            <div>
+              <p className="text-slate-500 font-semibold">Cupo Usuarios:</p>
+              <p className="font-bold text-indigo-700">{users.length} de {study.maxUsers || 5} permitidos</p>
             </div>
             <div>
               <p className="text-slate-500 font-semibold">Vigencia Estudio:</p>

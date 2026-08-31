@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Company, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole } from '../types';
+import { Company, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole, CostCenterMaster, ExpenseItemMaster, NonSiiDocTypeMaster, ProjectMaster, ProductMaster, CustomAnalysisTableItem } from '../types';
 import { syncOnlineChileanIndicators, generateOfficialChileanIndicators } from '../utils/chileanEconomicIndicators';
 import { logAuditEvent } from '../utils/auditLogger';
 import LibroDiarioView from './LibroDiarioView';
@@ -14,6 +14,7 @@ import FlujoDeCajaView from './FlujoDeCajaView';
 import NominasPagoView from './NominasPagoView';
 import CobranzaView from './CobranzaView';
 import AnalisisAuxiliaresView from './AnalisisAuxiliaresView';
+import AnalisisCuentasView from './AnalisisCuentasView';
 import ConciliacionBancariaView from './ConciliacionBancariaView';
 import CargaMasivaComprobantesView from './CargaMasivaComprobantesView';
 import Formulario29View from './Formulario29View';
@@ -21,7 +22,14 @@ import PlantillasYCargaMasivaView from './PlantillasYCargaMasivaView';
 import ExcelImportCenterModal from './ExcelImportCenterModal';
 import IndicadoresEconomicosView from './IndicadoresEconomicosView';
 import EmisionDteView from './EmisionDteView';
+import PlanDeCuentasGrid from './PlanDeCuentasGrid';
+import AuxiliariesGrid from './AuxiliariesGrid';
+import AuxiliaryModal from './AuxiliaryModal';
+import PeriodsGrid from './PeriodsGrid';
+import TablasAnalisisMasterView from './TablasAnalisisMasterView';
+import VoucherLineDistributionModal from './VoucherLineDistributionModal';
 import { useProcess } from '../context/ProcessContext';
+import { validateVoucherLine, isCustomAnalysisRequired, sanitizeVoucherLine, sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface CompanyAccountingDashboardProps {
   studyId: string;
@@ -38,7 +46,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   const { withProcess } = useProcess();
   type RibbonGroup = 'FINANZAS' | 'TESORERIA' | 'IMPORTACIONES' | 'IMPUESTOS' | 'INDICADORES' | 'CONFIGURACIONES';
   const [activeRibbonGroup, setActiveRibbonGroup] = useState<RibbonGroup>('FINANZAS');
-  const [activeTab, setActiveTab] = useState<'accounts' | 'auxiliaries' | 'periods' | 'rcv' | 'exchange' | 'rcvParams' | 'f29Codes' | 'vouchers' | 'libroDiario' | 'libroMayor' | 'balance8' | 'balanceIFRS' | 'analisisAuxiliares' | 'estadoResultados' | 'indicadoresFinancieros' | 'flujoDeCaja' | 'nominasPago' | 'cobranza' | 'conciliacionBancaria' | 'cargaMasiva' | 'formulario29' | 'plantillasCarga' | 'emisionDte'>('vouchers');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'auxiliaries' | 'periods' | 'rcv' | 'exchange' | 'rcvParams' | 'f29Codes' | 'vouchers' | 'libroDiario' | 'libroMayor' | 'balance8' | 'balanceIFRS' | 'analisisAuxiliares' | 'analisisCuentas' | 'estadoResultados' | 'indicadoresFinancieros' | 'flujoDeCaja' | 'nominasPago' | 'cobranza' | 'conciliacionBancaria' | 'cargaMasiva' | 'formulario29' | 'plantillasCarga' | 'emisionDte' | 'tablasAnalisis'>('vouchers');
   const [auxSubTab, setAuxSubTab] = useState<'deudores' | 'acreedores'>('deudores');
   const [showExchangeBar, setShowExchangeBar] = useState<boolean>(true);
   const [rcvFilterType, setRcvFilterType] = useState<'Todos' | 'Compra' | 'Venta' | 'Honorarios'>('Compra');
@@ -61,6 +69,15 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [bankReconciliations, setBankReconciliations] = useState<BankReconciliation[]>([]);
   const [rcvParams, setRcvParams] = useState<RCVAccountingParams | null>(null);
+
+  // Master analysis tables data states
+  const [costCenters, setCostCenters] = useState<CostCenterMaster[]>([]);
+  const [expenseItems, setExpenseItems] = useState<ExpenseItemMaster[]>([]);
+  const [nonSiiDocTypes, setNonSiiDocTypes] = useState<NonSiiDocTypeMaster[]>([]);
+  const [projects, setProjects] = useState<ProjectMaster[]>([]);
+  const [products, setProducts] = useState<ProductMaster[]>([]);
+  const [customAnalysisItems, setCustomAnalysisItems] = useState<CustomAnalysisTableItem[]>([]);
+  const [distributingLineIdx, setDistributingLineIdx] = useState<number | null>(null);
 
   const [companyF29Codes, setCompanyF29Codes] = useState<{ [key: string]: boolean }>({
     debito: true,
@@ -132,10 +149,11 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     period: string;
     type: 'Ingreso' | 'Egreso' | 'Traspaso';
     gloss: string;
-    status: 'Valido' | 'Anulado' | 'Descuadrado';
+    status: 'Valido' | 'Anulado' | 'Descuadrado' | 'Pendiente';
     lines: VoucherLine[];
     createdFromRcvId?: string;
   } | null>(null);
+  const [editingAnalysisLineIdx, setEditingAnalysisLineIdx] = useState<number | null>(null);
 
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedRcvPeriod, setSelectedRcvPeriod] = useState<string>(() => {
@@ -178,6 +196,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   // Editing states
   const [editingAccount, setEditingAccount] = useState<ChartOfAccount | null>(null);
   const [editingAuxiliary, setEditingAuxiliary] = useState<Auxiliary | null>(null);
+  const [isAuxiliaryModalOpen, setIsAuxiliaryModalOpen] = useState<boolean>(false);
   const [editingRcvDoc, setEditingRcvDoc] = useState<RCVDocument | null>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState<string>('');
 
@@ -195,15 +214,212 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     setFetchError(null);
     try {
       const accSnap = await getDocs(collection(companyRef, 'chartOfAccounts'));
-      const fetchedAccounts = accSnap.docs.map(d => ({ id: d.id, ...d.data() } as ChartOfAccount));
+      const fetchedAccounts = accSnap.docs.map(d => ({ ...d.data(), id: d.id } as ChartOfAccount));
       fetchedAccounts.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
       setAccounts(fetchedAccounts);
 
       const auxSnap = await getDocs(collection(companyRef, 'auxiliaries'));
-      setAuxiliaries(auxSnap.docs.map(d => ({ id: d.id, ...d.data() } as Auxiliary)));
+      const rawAuxs = auxSnap.docs.map(d => ({ ...d.data(), id: d.id } as Auxiliary));
+
+      // Auto-curación, normalización de esquema y Unificación de Auxiliares por RUT Único
+      const rutMap = new Map<string, Auxiliary[]>();
+      const nonRutAuxs: Auxiliary[] = [];
+
+      rawAuxs.forEach(aux => {
+        const cleanKey = (aux.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        if (!cleanKey) {
+          nonRutAuxs.push(aux);
+          return;
+        }
+        if (!rutMap.has(cleanKey)) rutMap.set(cleanKey, []);
+        rutMap.get(cleanKey)!.push(aux);
+      });
+
+      const cleanAuxiliaries: Auxiliary[] = [...nonRutAuxs];
+      const clonesToDeleteIds: string[] = [];
+      const primaryUpdates: { id: string; data: any }[] = [];
+
+      rutMap.forEach((list) => {
+        if (list.length === 1) {
+          const item = list[0];
+          // Verificar si le faltan campos estándar para normalizar el documento en Firestore
+          const isMissingStandardFields = 
+            item.email === undefined ||
+            item.phone === undefined ||
+            item.banco === undefined ||
+            item.tipoCuenta === undefined ||
+            item.numeroCuenta === undefined ||
+            item.defaultDebtorAccountId === undefined ||
+            item.defaultCreditorAccountId === undefined ||
+            item.defaultExpenseOrIncomeAccountId === undefined ||
+            item.defaultCostCenter === undefined ||
+            item.defaultExpenseItem === undefined ||
+            item.defaultProject === undefined ||
+            item.defaultProduct === undefined ||
+            item.defaultCustomAnalyses === undefined;
+
+          if (isMissingStandardFields) {
+            const normalizedPayload: any = {
+              rut: item.rut || '',
+              name: item.name || '',
+              role: item.role || 'Deudor',
+              estado: item.estado || 'Activo',
+              email: item.email || '',
+              phone: item.phone || '',
+              banco: item.banco || '',
+              tipoCuenta: item.tipoCuenta || '',
+              numeroCuenta: item.numeroCuenta || '',
+              defaultDebtorAccountId: item.defaultDebtorAccountId || '',
+              defaultCreditorAccountId: item.defaultCreditorAccountId || '',
+              defaultExpenseOrIncomeAccountId: item.defaultExpenseOrIncomeAccountId || '',
+              defaultCostCenter: item.defaultCostCenter || '',
+              defaultExpenseItem: item.defaultExpenseItem || '',
+              defaultProject: item.defaultProject || '',
+              defaultProduct: item.defaultProduct || '',
+              defaultCustomAnalyses: item.defaultCustomAnalyses || {}
+            };
+            primaryUpdates.push({ id: item.id, data: normalizedPayload });
+            cleanAuxiliaries.push({ ...item, ...normalizedPayload });
+          } else {
+            cleanAuxiliaries.push(item);
+          }
+          return;
+        }
+
+        // Ordenar registros para conservar el más completo / configurado
+        const sorted = [...list].sort((a, b) => {
+          const scoreA = (a.defaultCreditorAccountId ? 10 : 0) + 
+                         (a.defaultDebtorAccountId ? 10 : 0) + 
+                         (a.defaultExpenseOrIncomeAccountId ? 8 : 0) + 
+                         (a.defaultCostCenter ? 4 : 0) + 
+                         (a.defaultExpenseItem ? 4 : 0) + 
+                         (a.defaultProject ? 4 : 0) + 
+                         (a.defaultProduct ? 4 : 0) + 
+                         (a.defaultCustomAnalyses && Object.keys(a.defaultCustomAnalyses).length > 0 ? 6 : 0) + 
+                         (a.email ? 3 : 0) + 
+                         (a.phone ? 2 : 0) + 
+                         (a.banco ? 3 : 0) + 
+                         (a.numeroCuenta ? 3 : 0) +
+                         (a.name && a.name.length > 5 ? 2 : 0);
+          const scoreB = (b.defaultCreditorAccountId ? 10 : 0) + 
+                         (b.defaultDebtorAccountId ? 10 : 0) + 
+                         (b.defaultExpenseOrIncomeAccountId ? 8 : 0) + 
+                         (b.defaultCostCenter ? 4 : 0) + 
+                         (b.defaultExpenseItem ? 4 : 0) + 
+                         (b.defaultProject ? 4 : 0) + 
+                         (b.defaultProduct ? 4 : 0) + 
+                         (b.defaultCustomAnalyses && Object.keys(b.defaultCustomAnalyses).length > 0 ? 6 : 0) + 
+                         (b.email ? 3 : 0) + 
+                         (b.phone ? 2 : 0) + 
+                         (b.banco ? 3 : 0) + 
+                         (b.numeroCuenta ? 3 : 0) +
+                         (b.name && b.name.length > 5 ? 2 : 0);
+          return scoreB - scoreA;
+        });
+
+        const primary = { ...sorted[0] };
+        const duplicates = sorted.slice(1);
+
+        let changed = false;
+        duplicates.forEach(d => {
+          clonesToDeleteIds.push(d.id);
+          if (!primary.name && d.name) { primary.name = d.name; changed = true; }
+          if (!primary.email && d.email) { primary.email = d.email; changed = true; }
+          if (!primary.phone && d.phone) { primary.phone = d.phone; changed = true; }
+          if (!primary.banco && d.banco) { primary.banco = d.banco; changed = true; }
+          if (!primary.numeroCuenta && d.numeroCuenta) {
+            primary.numeroCuenta = d.numeroCuenta;
+            primary.tipoCuenta = d.tipoCuenta || primary.tipoCuenta;
+            changed = true;
+          }
+          if (!primary.defaultDebtorAccountId && d.defaultDebtorAccountId) {
+            primary.defaultDebtorAccountId = d.defaultDebtorAccountId;
+            changed = true;
+          }
+          if (!primary.defaultCreditorAccountId && d.defaultCreditorAccountId) {
+            primary.defaultCreditorAccountId = d.defaultCreditorAccountId;
+            changed = true;
+          }
+          if (!primary.defaultExpenseOrIncomeAccountId && d.defaultExpenseOrIncomeAccountId) {
+            primary.defaultExpenseOrIncomeAccountId = d.defaultExpenseOrIncomeAccountId;
+            changed = true;
+          }
+          if (!primary.defaultCostCenter && d.defaultCostCenter) {
+            primary.defaultCostCenter = d.defaultCostCenter;
+            changed = true;
+          }
+          if (!primary.defaultExpenseItem && d.defaultExpenseItem) {
+            primary.defaultExpenseItem = d.defaultExpenseItem;
+            changed = true;
+          }
+          if (!primary.defaultProject && d.defaultProject) {
+            primary.defaultProject = d.defaultProject;
+            changed = true;
+          }
+          if (!primary.defaultProduct && d.defaultProduct) {
+            primary.defaultProduct = d.defaultProduct;
+            changed = true;
+          }
+          if (d.defaultCustomAnalyses && Object.keys(d.defaultCustomAnalyses).length > 0) {
+            primary.defaultCustomAnalyses = {
+              ...(d.defaultCustomAnalyses || {}),
+              ...(primary.defaultCustomAnalyses || {})
+            };
+            changed = true;
+          }
+          if ((primary.role === 'Deudor' && d.role === 'Acreedor') || (primary.role === 'Acreedor' && d.role === 'Deudor')) {
+            primary.role = 'Ambos';
+            changed = true;
+          }
+        });
+
+        // Asegurar que primary tenga todos los campos requeridos
+        const fullPrimaryPayload: any = {
+          rut: primary.rut || '',
+          name: primary.name || '',
+          role: primary.role || 'Deudor',
+          estado: primary.estado || 'Activo',
+          email: primary.email || '',
+          phone: primary.phone || '',
+          banco: primary.banco || '',
+          tipoCuenta: primary.tipoCuenta || '',
+          numeroCuenta: primary.numeroCuenta || '',
+          defaultDebtorAccountId: primary.defaultDebtorAccountId || '',
+          defaultCreditorAccountId: primary.defaultCreditorAccountId || '',
+          defaultExpenseOrIncomeAccountId: primary.defaultExpenseOrIncomeAccountId || '',
+          defaultCostCenter: primary.defaultCostCenter || '',
+          defaultExpenseItem: primary.defaultExpenseItem || '',
+          defaultProject: primary.defaultProject || '',
+          defaultProduct: primary.defaultProduct || '',
+          defaultCustomAnalyses: primary.defaultCustomAnalyses || {}
+        };
+
+        cleanAuxiliaries.push({ ...primary, ...fullPrimaryPayload });
+        primaryUpdates.push({ id: primary.id, data: fullPrimaryPayload });
+      });
+
+      // Ordenar alfabéticamente por nombre / razón social
+      cleanAuxiliaries.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setAuxiliaries(cleanAuxiliaries);
+
+      // Limpieza permanente de clones y normalización de esquema en segundo plano en Firestore
+      if (clonesToDeleteIds.length > 0 || primaryUpdates.length > 0) {
+        (async () => {
+          try {
+            for (const upd of primaryUpdates) {
+              await setDoc(doc(companyRef, 'auxiliaries', upd.id), upd.data, { merge: true });
+            }
+            for (const delId of clonesToDeleteIds) {
+              await deleteDoc(doc(companyRef, 'auxiliaries', delId));
+            }
+          } catch (cleanErr) {
+            console.warn("Deduplicación y normalización automática de auxiliares:", cleanErr);
+          }
+        })();
+      }
 
       const exSnap = await getDocs(collection(companyRef, 'exchangeRates'));
-      let fetchedRates = exSnap.docs.map(d => ({ id: d.id, ...d.data() } as ExchangeRate));
+      let fetchedRates = exSnap.docs.map(d => ({ ...d.data(), id: d.id } as ExchangeRate));
       fetchedRates.sort((a, b) => a.date.localeCompare(b.date));
 
       // Verificación de exactitud oficial: Si no hay registros o si los registros son de prueba/aleatorios (ej. UF 2026 fuera de rango)
@@ -256,18 +472,36 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       }, 100);
 
       const fySnap = await getDocs(collection(companyRef, 'fiscalPeriods'));
-      setFiscalYears(fySnap.docs.map(d => ({ id: d.id, ...d.data() } as FiscalPeriodYear)));
+      setFiscalYears(fySnap.docs.map(d => ({ ...d.data(), id: d.id } as FiscalPeriodYear)));
 
       const rcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
-      setRcvDocuments(rcvSnap.docs.map(d => ({ id: d.id, ...d.data() } as RCVDocument)));
+      setRcvDocuments(rcvSnap.docs.map(d => ({ ...d.data(), id: d.id } as RCVDocument)));
 
       const vouchSnap = await getDocs(collection(companyRef, 'vouchers'));
-      const fetchedVouchers = vouchSnap.docs.map(d => ({ id: d.id, ...d.data() } as Voucher));
+      const fetchedVouchers = vouchSnap.docs.map(d => ({ ...d.data(), id: d.id } as Voucher));
       fetchedVouchers.sort((a, b) => (b.voucherNumber || 0) - (a.voucherNumber || 0));
       setVouchers(fetchedVouchers);
 
       const bankRecSnap = await getDocs(collection(companyRef, 'bankReconciliations'));
-      setBankReconciliations(bankRecSnap.docs.map(d => ({ id: d.id, ...d.data() } as BankReconciliation)));
+      setBankReconciliations(bankRecSnap.docs.map(d => ({ ...d.data(), id: d.id } as BankReconciliation)));
+
+      const ccSnap = await getDocs(collection(companyRef, 'costCenters'));
+      setCostCenters(ccSnap.docs.map(d => ({ ...d.data(), id: d.id } as CostCenterMaster)));
+
+      const expSnap = await getDocs(collection(companyRef, 'expenseItems'));
+      setExpenseItems(expSnap.docs.map(d => ({ ...d.data(), id: d.id } as ExpenseItemMaster)));
+
+      const nonSiiSnap = await getDocs(collection(companyRef, 'nonSiiDocTypes'));
+      setNonSiiDocTypes(nonSiiSnap.docs.map(d => ({ ...d.data(), id: d.id } as NonSiiDocTypeMaster)));
+
+      const projSnap = await getDocs(collection(companyRef, 'projects'));
+      setProjects(projSnap.docs.map(d => ({ ...d.data(), id: d.id } as ProjectMaster)));
+
+      const prodSnap = await getDocs(collection(companyRef, 'products'));
+      setProducts(prodSnap.docs.map(d => ({ ...d.data(), id: d.id } as ProductMaster)));
+
+      const customItemsSnap = await getDocs(collection(companyRef, 'customAnalysisItems'));
+      setCustomAnalysisItems(customItemsSnap.docs.map(d => ({ ...d.data(), id: d.id } as CustomAnalysisTableItem)));
 
       const rcvParamsSnap = await getDoc(doc(companyRef, 'config', 'rcvParams'));
       if (rcvParamsSnap.exists()) {
@@ -287,24 +521,48 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
 
     // Suscripciones en tiempo real para reflejar inmediatamente cambios de cuentas, auxiliares, parámetros y comprobantes
     const unsubAccounts = onSnapshot(collection(companyRef, 'chartOfAccounts'), (accSnap) => {
-      const fetchedAccounts = accSnap.docs.map(d => ({ id: d.id, ...d.data() } as ChartOfAccount));
+      const fetchedAccounts = accSnap.docs.map(d => ({ ...d.data(), id: d.id } as ChartOfAccount));
       fetchedAccounts.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
       setAccounts(fetchedAccounts);
     }, (err) => console.warn("Realtime listener error accounts:", err));
 
     const unsubAux = onSnapshot(collection(companyRef, 'auxiliaries'), (auxSnap) => {
-      setAuxiliaries(auxSnap.docs.map(d => ({ id: d.id, ...d.data() } as Auxiliary)));
+      setAuxiliaries(auxSnap.docs.map(d => ({ ...d.data(), id: d.id } as Auxiliary)));
     }, (err) => console.warn("Realtime listener error auxiliaries:", err));
 
     const unsubVouchers = onSnapshot(collection(companyRef, 'vouchers'), (vouchSnap) => {
-      const fetchedVouchers = vouchSnap.docs.map(d => ({ id: d.id, ...d.data() } as Voucher));
+      const fetchedVouchers = vouchSnap.docs.map(d => ({ ...d.data(), id: d.id } as Voucher));
       fetchedVouchers.sort((a, b) => (b.voucherNumber || 0) - (a.voucherNumber || 0));
       setVouchers(fetchedVouchers);
     }, (err) => console.warn("Realtime listener error vouchers:", err));
 
     const unsubRcv = onSnapshot(collection(companyRef, 'rcvDocuments'), (rcvSnap) => {
-      setRcvDocuments(rcvSnap.docs.map(d => ({ id: d.id, ...d.data() } as RCVDocument)));
+      setRcvDocuments(rcvSnap.docs.map(d => ({ ...d.data(), id: d.id } as RCVDocument)));
     }, (err) => console.warn("Realtime listener error rcv:", err));
+
+    const unsubCC = onSnapshot(collection(companyRef, 'costCenters'), (snap) => {
+      setCostCenters(snap.docs.map(d => ({ ...d.data(), id: d.id } as CostCenterMaster)));
+    }, (err) => console.warn("Realtime listener error costCenters:", err));
+
+    const unsubExp = onSnapshot(collection(companyRef, 'expenseItems'), (snap) => {
+      setExpenseItems(snap.docs.map(d => ({ ...d.data(), id: d.id } as ExpenseItemMaster)));
+    }, (err) => console.warn("Realtime listener error expenseItems:", err));
+
+    const unsubNonSii = onSnapshot(collection(companyRef, 'nonSiiDocTypes'), (snap) => {
+      setNonSiiDocTypes(snap.docs.map(d => ({ ...d.data(), id: d.id } as NonSiiDocTypeMaster)));
+    }, (err) => console.warn("Realtime listener error nonSiiDocTypes:", err));
+
+    const unsubProj = onSnapshot(collection(companyRef, 'projects'), (snap) => {
+      setProjects(snap.docs.map(d => ({ ...d.data(), id: d.id } as ProjectMaster)));
+    }, (err) => console.warn("Realtime listener error projects:", err));
+
+    const unsubProd = onSnapshot(collection(companyRef, 'products'), (snap) => {
+      setProducts(snap.docs.map(d => ({ ...d.data(), id: d.id } as ProductMaster)));
+    }, (err) => console.warn("Realtime listener error products:", err));
+
+    const unsubCustomItems = onSnapshot(collection(companyRef, 'customAnalysisItems'), (snap) => {
+      setCustomAnalysisItems(snap.docs.map(d => ({ ...d.data(), id: d.id } as CustomAnalysisTableItem)));
+    }, (err) => console.warn("Realtime listener error customAnalysisItems:", err));
 
     const unsubParams = onSnapshot(doc(companyRef, 'config', 'rcvParams'), (rcvParamsSnap) => {
       if (rcvParamsSnap.exists()) {
@@ -313,7 +571,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }, (err) => console.warn("Realtime listener error params:", err));
 
     const unsubFiscal = onSnapshot(collection(companyRef, 'fiscalPeriods'), (fySnap) => {
-      setFiscalYears(fySnap.docs.map(d => ({ id: d.id, ...d.data() } as FiscalPeriodYear)));
+      setFiscalYears(fySnap.docs.map(d => ({ ...d.data(), id: d.id } as FiscalPeriodYear)));
     }, (err) => console.warn("Realtime listener error fiscal:", err));
 
     return () => {
@@ -321,6 +579,12 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       unsubAux();
       unsubVouchers();
       unsubRcv();
+      unsubCC();
+      unsubExp();
+      unsubNonSii();
+      unsubProj();
+      unsubProd();
+      unsubCustomItems();
       unsubParams();
       unsubFiscal();
     };
@@ -373,8 +637,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           continue;
         }
 
-        let aux = currentAuxs.find(a => a.rut === item.rutEmisor);
-        if (!aux) {
+        const cleanItemRut = (item.rutEmisor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+        let aux = currentAuxs.find(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanItemRut);
+        if (!aux && cleanItemRut) {
           const newAuxData = {
             rut: item.rutEmisor,
             name: item.razonSocialEmisor,
@@ -847,9 +1112,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             continue;
           }
 
-          let cleanRut = (item.rutEmisor || '').trim().toLowerCase();
-          let aux = currentAuxs.find(a => (a.rut || '').trim().toLowerCase() === cleanRut);
-          if (!aux) {
+          const cleanRut = (item.rutEmisor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+          let aux = currentAuxs.find(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanRut);
+          if (!aux && cleanRut) {
             const newAuxData = {
               rut: item.rutEmisor,
               name: item.razonSocialEmisor,
@@ -993,8 +1258,58 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     ): VoucherLine => {
       const realAcc = accounts.find(a => a.id === accObj.id || a.code === accObj.code);
       const isClientOrSupplierCode = accObj.code.startsWith('1.1.02') || accObj.code.startsWith('2.1.01') || accObj.code.startsWith('2.1.04');
-      const requiresRut = realAcc ? Boolean(realAcc.requiereAuxiliarRUT) : isClientOrSupplierCode;
-      const requiresDoc = realAcc ? Boolean(realAcc.requiereDocumento) : isClientOrSupplierCode;
+      const requiresRut = realAcc ? Boolean(realAcc.requiereAuxiliarRUT || isClientOrSupplierCode) : isClientOrSupplierCode;
+      const requiresDoc = realAcc ? Boolean(realAcc.requiereDocumento || isClientOrSupplierCode) : isClientOrSupplierCode;
+      const requiresCC = realAcc ? Boolean(realAcc.requiereCentroCosto) : false;
+      const requiresItem = realAcc ? Boolean(realAcc.requiereItemGasto) : false;
+      const requiresProj = realAcc ? Boolean(realAcc.requiereProyecto) : false;
+      const requiresProd = realAcc ? Boolean(realAcc.requiereProducto) : false;
+      const requiresDue = realAcc ? Boolean(realAcc.requiereVencimiento) : false;
+
+      // Fecha de Vencimiento: Si la cuenta exige vencimiento, se utiliza fechaVencimiento o por defecto 30 días desde la emisión
+      let dueDate: string | undefined = undefined;
+      if (requiresDue) {
+        if (docItem.fechaVencimiento) {
+          dueDate = docItem.fechaVencimiento;
+        } else if (docItem.fechaEmision) {
+          try {
+            const parts = docItem.fechaEmision.split('-');
+            if (parts.length === 3) {
+              const y = parseInt(parts[0], 10);
+              const m = parseInt(parts[1], 10) - 1;
+              const d = parseInt(parts[2], 10);
+              const dt = new Date(y, m, d);
+              dt.setDate(dt.getDate() + 30);
+              const resY = dt.getFullYear();
+              const resM = String(dt.getMonth() + 1).padStart(2, '0');
+              const resD = String(dt.getDate()).padStart(2, '0');
+              dueDate = `${resY}-${resM}-${resD}`;
+            }
+          } catch {
+            // fallback
+          }
+        }
+      }
+
+      // Obtener campos de análisis por defecto desde docItem o auxiliar ÚNICAMENTE si la cuenta contable de la línea los exige/permite
+      const costCenter = requiresCC ? ((docItem as any).costCenter || aux?.defaultCostCenter || undefined) : undefined;
+      const expenseItem = requiresItem ? ((docItem as any).expenseItem || aux?.defaultExpenseItem || undefined) : undefined;
+      const project = requiresProj ? ((docItem as any).project || aux?.defaultProject || undefined) : undefined;
+      const product = requiresProd ? ((docItem as any).product || aux?.defaultProduct || undefined) : undefined;
+
+      let customAnalyses: Record<string, string> | undefined = undefined;
+      const rawCustom = (docItem as any).customAnalyses || aux?.defaultCustomAnalyses || undefined;
+      if (rawCustom && typeof rawCustom === 'object') {
+        const filteredCustom: Record<string, string> = {};
+        let hasKeys = false;
+        Object.entries(rawCustom).forEach(([key, val]) => {
+          if (val && realAcc && isCustomAnalysisRequired(realAcc, key)) {
+            filteredCustom[key] = String(val);
+            hasKeys = true;
+          }
+        });
+        if (hasKeys) customAnalyses = filteredCustom;
+      }
 
       return {
         accountId: accObj.id,
@@ -1004,6 +1319,12 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         credit,
         ...(requiresRut && rut ? { auxiliaryRut: rut, auxiliaryName: razonSocial } : {}),
         ...(requiresDoc && docRef ? { documentRef: docRef } : {}),
+        ...(dueDate ? { dueDate } : {}),
+        ...(costCenter ? { costCenter } : {}),
+        ...(expenseItem ? { expenseItem } : {}),
+        ...(project ? { project } : {}),
+        ...(product ? { product } : {}),
+        ...(customAnalyses ? { customAnalyses } : {}),
         gloss
       };
     };
@@ -1244,50 +1565,22 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       );
 
       // Gasto Honorarios (Debe)
-      lines.push({
-        accountId: honorarioExpenseAcc.id,
-        accountCode: honorarioExpenseAcc.code,
-        accountName: honorarioExpenseAcc.name,
-        debit: docItem.montoTotal,
-        credit: 0,
-        auxiliaryRut: docItem.rutEmisor,
-        auxiliaryName: docItem.razonSocialEmisor,
-        documentRef: docRefStr,
-        gloss: `Gasto Honorarios BHE ${docRefStr} - ${docItem.razonSocialEmisor}`
-      });
+      lines.push(makeLine(honorarioExpenseAcc, docItem.montoTotal, 0, `Gasto Honorarios BHE ${docRefStr} - ${docItem.razonSocialEmisor}`, docItem.rutEmisor, docItem.razonSocialEmisor, docRefStr));
 
       // Retención BHE (Haber)
       if (docItem.montoIva > 0) {
-        lines.push({
-          accountId: retencionAcc.id,
-          accountCode: retencionAcc.code,
-          accountName: retencionAcc.name,
-          debit: 0,
-          credit: docItem.montoIva,
-          auxiliaryRut: docItem.rutEmisor,
-          auxiliaryName: docItem.razonSocialEmisor,
-          documentRef: docRefStr,
-          gloss: `Retención BHE ${docRefStr}`
-        });
+        lines.push(makeLine(retencionAcc, 0, docItem.montoIva, `Retención BHE ${docRefStr}`, docItem.rutEmisor, docItem.razonSocialEmisor, docRefStr));
       }
 
       // Líquido por Pagar (Haber)
       const liquido = docItem.montoNeto || (docItem.montoTotal - (docItem.montoIva || 0));
-      lines.push({
-        accountId: honorariosPayableAcc.id,
-        accountCode: honorariosPayableAcc.code,
-        accountName: honorariosPayableAcc.name,
-        debit: 0,
-        credit: liquido,
-        auxiliaryRut: docItem.rutEmisor,
-        auxiliaryName: docItem.razonSocialEmisor,
-        documentRef: docRefStr,
-        gloss: `Líquido por Pagar BHE ${docRefStr}`
-      });
+      lines.push(makeLine(honorariosPayableAcc, 0, liquido, `Líquido por Pagar BHE ${docRefStr}`, docItem.rutEmisor, docItem.razonSocialEmisor, docRefStr));
     }
 
-    const totalDebit = lines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
-    const totalCredit = lines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
+    const sanitizedLines = sanitizeVoucherLines(lines, accounts);
+
+    const totalDebit = sanitizedLines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
+    const totalCredit = sanitizedLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
     const isCuadrado = Math.abs(totalDebit - totalCredit) < 0.01;
 
     let accountingDate = docItem.fechaEmision || new Date().toISOString().split('T')[0];
@@ -1305,16 +1598,39 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     const userEmail = auth.currentUser?.email || '';
     const nowIso = new Date().toISOString();
 
+    // Evaluar si alguna línea requiere análisis y fue dejada en blanco
+    let isPendingAnalysis = false;
+    for (const l of sanitizedLines) {
+      const realAcc = accounts.find(a => a.id === l.accountId || a.code === l.accountCode);
+      if (realAcc) {
+        if (realAcc.requiereCentroCosto && !l.costCenter) isPendingAnalysis = true;
+        if (realAcc.requiereItemGasto && !l.expenseItem) isPendingAnalysis = true;
+        if (realAcc.requiereProyecto && !l.project) isPendingAnalysis = true;
+        if (realAcc.requiereProducto && !l.product) isPendingAnalysis = true;
+        if (realAcc.requiereAuxiliarRUT && !l.auxiliaryRut) isPendingAnalysis = true;
+        if (realAcc.requiereDocumento && !l.documentRef) isPendingAnalysis = true;
+        if (realAcc.requiereConciliacionBancaria && !l.bankDocRef) isPendingAnalysis = true;
+        if (realAcc.requiereVencimiento && !l.dueDate) isPendingAnalysis = true;
+      }
+    }
+
+    let finalStatus: 'Valido' | 'Descuadrado' | 'Pendiente' = 'Valido';
+    if (!isCuadrado) {
+      finalStatus = 'Descuadrado';
+    } else if (isPendingAnalysis) {
+      finalStatus = 'Pendiente';
+    }
+
     return {
       voucherNumber,
       date: accountingDate,
       period: docItem.period,
       type: 'Traspaso',
       gloss: `Centralización RCV ${docItem.tipoRegistro} Doc ${docItem.tipoDoc} N° ${docItem.folio} - ${docItem.razonSocialEmisor}`,
-      lines,
+      lines: sanitizedLines,
       totalDebit,
       totalCredit,
-      status: isCuadrado ? 'Valido' : 'Descuadrado',
+      status: finalStatus,
       isDescuadrado: !isCuadrado,
       descuadreDifference: isCuadrado ? 0 : totalDebit - totalCredit,
       createdFromRcvId: docItem.id,
@@ -1776,6 +2092,30 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     const totalDebit = validLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
     const totalCredit = validLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0);
 
+    // Validación estricta de análisis contables según Plan de Cuentas
+    const customCols = company.customAccountColumns || [];
+    const missingAnalysisErrors: string[] = [];
+
+    validLines.forEach((l, idx) => {
+      const lineAcc = accounts.find(a => a.id === l.accountId || (l.accountCode && a.code === l.accountCode));
+      const valResult = validateVoucherLine(l, lineAcc, customCols);
+      if (!valResult.isValid) {
+        valResult.errors.forEach(err => {
+          missingAnalysisErrors.push(`• Línea ${idx + 1} [${l.accountCode || 'Sin Código'} - ${l.accountName || lineAcc?.name || 'Cuenta'}]: ${err}`);
+        });
+      }
+    });
+
+    if (missingAnalysisErrors.length > 0) {
+      alert(
+        `⚠️ ANÁLISIS CONTABLES OBLIGATORIOS FALTANTES:\n\n` +
+        `El comprobante no puede ser guardado porque las siguientes cuentas exigen análisis según el Plan de Cuentas:\n\n` +
+        missingAnalysisErrors.join('\n') +
+        `\n\nPor favor haz clic en "Análisis" en las líneas correspondientes para ingresar la información requerida.`
+      );
+      return;
+    }
+
     if (totalDebit !== totalCredit) {
       const diff = Math.abs(totalDebit - totalCredit);
       const allowUnbalanced = window.confirm(
@@ -1795,6 +2135,8 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           const userEmail = auth.currentUser?.email || '';
           const nowIso = new Date().toISOString();
 
+          const sanitizedValidLines = sanitizeVoucherLines(validLines, accounts);
+
           const payload: any = {
             voucherNumber: Number(voucherForm.voucherNumber),
             date: voucherForm.date,
@@ -1802,7 +2144,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             type: voucherForm.type,
             gloss: voucherForm.gloss,
             status: voucherForm.status || 'Valido',
-            lines: validLines.map(l => ({
+            lines: sanitizedValidLines.map(l => ({
               accountId: l.accountId || '',
               accountCode: l.accountCode || '',
               accountName: l.accountName || '',
@@ -1811,6 +2153,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               auxiliaryRut: l.auxiliaryRut || '',
               auxiliaryName: l.auxiliaryName || '',
               documentRef: l.documentRef || '',
+              costCenter: l.costCenter || '',
+              bankDocRef: l.bankDocRef || '',
+              dueDate: l.dueDate || '',
+              expenseItem: l.expenseItem || '',
+              project: l.project || '',
+              product: l.product || '',
+              customAnalyses: l.customAnalyses || {},
               gloss: l.gloss || ''
             })),
             totalDebit,
@@ -2360,52 +2709,100 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }
   };
 
-  // Save Auxiliary
-  const handleSaveAuxiliary = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  // Save Auxiliary from Modal
+  const handleSaveAuxiliary = async (auxData: Partial<Auxiliary>) => {
     if (isReadOnly) {
       alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede crear ni modificar auxiliares.');
       return;
     }
-    const formData = new FormData(e.currentTarget);
-    const rut = (formData.get('rut') as string || '').toLowerCase().trim();
-    const name = formData.get('name') as string;
-    const role = formData.get('role') as any;
-    const email = formData.get('email') as string;
-    const phone = formData.get('phone') as string;
 
-    const defaultDebtorAccountId = formData.get('defaultDebtorAccountId') as string;
-    const defaultCreditorAccountId = formData.get('defaultCreditorAccountId') as string;
-    const defaultExpenseOrIncomeAccountId = formData.get('defaultExpenseOrIncomeAccountId') as string;
+    const rut = (auxData.rut || '').toLowerCase().trim();
+    const name = (auxData.name || '').trim();
+    const role = auxData.role || 'Deudor';
 
     if (!rut || !name || !role) {
-      alert('Complete los campos obligatorios (RUT, Nombre, Rol).');
-      return;
+      throw new Error('Complete los campos obligatorios (RUT, Nombre, Rol).');
     }
 
-    try {
-      const userUid = auth.currentUser?.uid || 'anon';
-      const userEmail = auth.currentUser?.email || '';
-      const nowIso = new Date().toISOString();
+    const userUid = auth.currentUser?.uid || 'anon';
+    const userEmail = auth.currentUser?.email || '';
+    const nowIso = new Date().toISOString();
+    const cleanRutKey = (auxData.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
-      const payload: any = {
-        rut,
-        name,
-        role,
-        email,
-        phone,
-        defaultDebtorAccountId,
-        defaultCreditorAccountId,
-        defaultExpenseOrIncomeAccountId,
-        estado: editingAuxiliary ? editingAuxiliary.estado : 'Activo',
-        lastModifiedBy: userUid,
-        lastModifiedAt: nowIso
-      };
+    // Consultar directamente los documentos actuales en Firestore con este RUT
+    const allAuxSnap = await getDocs(collection(companyRef, 'auxiliaries'));
+    const allMatchingDocs = allAuxSnap.docs
+      .map(d => ({ ...d.data(), id: d.id } as Auxiliary))
+      .filter(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanRutKey);
 
-      if (editingAuxiliary) {
-        await updateDoc(doc(companyRef, 'auxiliaries', editingAuxiliary.id), payload);
+    const payload: any = {
+      rut: (auxData.rut || '').trim(),
+      name: (auxData.name || '').trim(),
+      role: auxData.role || 'Deudor',
+      email: (auxData.email || '').trim(),
+      phone: (auxData.phone || '').trim(),
+      banco: (auxData.banco || '').trim(),
+      tipoCuenta: auxData.tipoCuenta || '',
+      numeroCuenta: (auxData.numeroCuenta || '').trim(),
+      defaultDebtorAccountId: auxData.defaultDebtorAccountId || '',
+      defaultCreditorAccountId: auxData.defaultCreditorAccountId || '',
+      defaultExpenseOrIncomeAccountId: auxData.defaultExpenseOrIncomeAccountId || '',
+      defaultCostCenter: auxData.defaultCostCenter || '',
+      defaultExpenseItem: auxData.defaultExpenseItem || '',
+      defaultProject: auxData.defaultProject || '',
+      defaultProduct: auxData.defaultProduct || '',
+      defaultCustomAnalyses: auxData.defaultCustomAnalyses || {},
+      estado: editingAuxiliary ? editingAuxiliary.estado : 'Activo',
+      lastModifiedBy: userUid,
+      lastModifiedAt: nowIso
+    };
 
-        // Audit Log
+    if (editingAuxiliary) {
+      const targetDocId = editingAuxiliary.id;
+      const oldRut = editingAuxiliary.rut;
+
+      // 1. Guardar la ficha principal editada
+      await setDoc(doc(companyRef, 'auxiliaries', targetDocId), payload, { merge: true });
+
+      // 2. Depurar y eliminar automáticamente cualquier otra ficha clon o duplicada de este RUT en Firestore
+      const duplicateClones = allMatchingDocs.filter(a => a.id !== targetDocId);
+      for (const clone of duplicateClones) {
+        try {
+          await deleteDoc(doc(companyRef, 'auxiliaries', clone.id));
+        } catch (e) {
+          console.warn("No se pudo eliminar clon redundante de auxiliar:", clone.id, e);
+        }
+      }
+
+      // Audit Log
+      logAuditEvent({
+        userId: userUid,
+        userEmail: userEmail,
+        studyId,
+        companyId: company.id,
+        action: 'MODIFICAR',
+        module: 'AUXILIARES',
+        details: `Actualización y unificación de auxiliar [${rut}] ${name} (${role}) en ${company.name}${oldRut && oldRut !== auxData.rut ? ` (RUT anterior: ${oldRut})` : ''}`,
+        metadata: { rut, oldRut, name, role, deletedDuplicatesCount: duplicateClones.length }
+      });
+
+      alert('Auxiliar actualizado y unificado exitosamente con todas sus cuentas y análisis.');
+      setEditingAuxiliary(null);
+    } else {
+      if (allMatchingDocs.length > 0) {
+        // Si ya existían una o más fichas con este RUT, actualizar la primera y borrar los clones
+        const primaryDoc = allMatchingDocs[0];
+        await setDoc(doc(companyRef, 'auxiliaries', primaryDoc.id), payload, { merge: true });
+
+        const duplicateClones = allMatchingDocs.slice(1);
+        for (const clone of duplicateClones) {
+          try {
+            await deleteDoc(doc(companyRef, 'auxiliaries', clone.id));
+          } catch (e) {
+            console.warn("No se pudo eliminar clon redundante de auxiliar:", clone.id, e);
+          }
+        }
+
         logAuditEvent({
           userId: userUid,
           userEmail: userEmail,
@@ -2413,12 +2810,11 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           companyId: company.id,
           action: 'MODIFICAR',
           module: 'AUXILIARES',
-          details: `Modificación de auxiliar [${rut}] ${name} (${role}) en ${company.name}`,
-          metadata: { rut, name, role }
+          details: `Actualización y unificación de auxiliar [${rut}] ${name} (${role}) en ${company.name}`,
+          metadata: { rut, name, role, mergedWithId: primaryDoc.id, deletedDuplicatesCount: duplicateClones.length }
         });
 
-        alert('Auxiliar actualizado exitosamente.');
-        setEditingAuxiliary(null);
+        alert(`El auxiliar con RUT ${auxData.rut} ya existía. Se han actualizado y unificado sus datos en una sola ficha limpia.`);
       } else {
         payload.createdBy = userUid;
         payload.createdByUserEmail = userEmail;
@@ -2437,14 +2833,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           metadata: { rut, name, role }
         });
 
-        alert('Auxiliar registrado exitosamente.');
+        alert('Auxiliar registrado exitosamente con sus análisis asociados.');
       }
-      e.currentTarget.reset();
-      await fetchData();
-    } catch (err: any) {
-      console.error("Error saving auxiliary:", err);
-      alert('Error al guardar auxiliar: ' + err.message);
     }
+    await fetchData();
   };
 
   const handleSaveRcvParams = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -2781,6 +3173,17 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'analisisAuxiliares' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Nuevo</span>
                   </button>
                   <button
+                    onClick={() => setActiveTab('analisisCuentas')}
+                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
+                      activeTab === 'analisisCuentas'
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
+                    }`}
+                  >
+                    <span>🔍 Análisis de Cuentas</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'analisisCuentas' ? 'bg-emerald-900 text-emerald-100' : 'bg-emerald-100 text-emerald-800'}`}>Nuevo</span>
+                  </button>
+                  <button
                     onClick={() => setActiveTab('balance8')}
                     className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
                       activeTab === 'balance8'
@@ -2788,30 +3191,19 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                         : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
                     }`}
                   >
-                    <span>⚖️ Blce Gral</span>
+                    <span>⚖️ Balance 8 Columnas (Tributario)</span>
                     <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'balance8' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
-                    onClick={() => setActiveTab('balanceIFRS')}
+                    onClick={() => setActiveTab('tablasAnalisis')}
                     className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
-                      activeTab === 'balanceIFRS'
+                      activeTab === 'tablasAnalisis'
                         ? 'bg-slate-800 text-white shadow-2xs'
                         : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
                     }`}
                   >
-                    <span>🏛️ Blce Clasificado</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'balanceIFRS' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>IFRS</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('estadoResultados')}
-                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
-                      activeTab === 'estadoResultados'
-                        ? 'bg-slate-800 text-white shadow-2xs'
-                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
-                    }`}
-                  >
-                    <span>📈 Resultado</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'estadoResultados' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
+                    <span>🗂️ Catálogos de Análisis</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'tablasAnalisis' ? 'bg-indigo-900 text-indigo-100' : 'bg-indigo-100 text-indigo-800'}`}>CC / Ítems</span>
                   </button>
                 </>
               )}
@@ -2990,6 +3382,28 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'indicadoresFinancieros' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>KPIs</span>
                   </button>
                   <button
+                    onClick={() => setActiveTab('balanceIFRS')}
+                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
+                      activeTab === 'balanceIFRS'
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
+                    }`}
+                  >
+                    <span>🏛️ Balance Clasificado (IFRS)</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'balanceIFRS' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>IFRS</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('estadoResultados')}
+                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
+                      activeTab === 'estadoResultados'
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
+                    }`}
+                  >
+                    <span>📈 Estado de Resultados</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'estadoResultados' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
+                  </button>
+                  <button
                     onClick={() => setActiveTab('flujoDeCaja')}
                     className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
                       activeTab === 'flujoDeCaja'
@@ -3034,6 +3448,17 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>👥 Maestro de Auxiliares (Clientes / Proveedores)</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('tablasAnalisis')}
+                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
+                      activeTab === 'tablasAnalisis'
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
+                    }`}
+                  >
+                    <span>🗂️ Catálogos de Análisis (CC, Ítems, Proyectos, Docs no SII)</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'tablasAnalisis' ? 'bg-indigo-900 text-indigo-100' : 'bg-indigo-100 text-indigo-800'}`}>Nuevo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('rcvParams')}
@@ -3225,351 +3650,53 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         </div>
       )}
 
-      {/* TAB 1: PLAN DE CUENTAS */}
+      {/* TAB 1: PLAN DE CUENTAS (GRILLA DINÁMICA EXCEL) */}
       {activeTab === 'accounts' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm lg:col-span-1">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-medium text-slate-900">
-                {editingAccount ? 'Modificar Cuenta' : 'Nueva Cuenta Contable'}
-              </h3>
-              {editingAccount && (
-                <button type="button" onClick={() => setEditingAccount(null)} className="text-xs text-slate-500 underline">Cancelar</button>
-              )}
-            </div>
-
-            <form onSubmit={handleSaveAccount} key={editingAccount?.id || 'new-acc'} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Código Cuenta *</label>
-                <input name="code" defaultValue={editingAccount?.code || ''} placeholder="Ej. 1.1.01.001" required className="border border-slate-300 p-2.5 w-full rounded-lg font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nombre de la Cuenta *</label>
-                <input name="name" defaultValue={editingAccount?.name || ''} placeholder="Ej. Banco Santander Cta Cte" required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Cuenta *</label>
-                <select name="type" defaultValue={editingAccount?.type || 'Activo'} required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="Activo">Activo</option>
-                  <option value="Pasivo">Pasivo</option>
-                  <option value="Patrimonio">Patrimonio</option>
-                  <option value="Ingreso">Ingreso</option>
-                  <option value="Gasto">Gasto</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Código Cuenta Padre (Opcional)</label>
-                <input name="parentCode" defaultValue={editingAccount?.parentCode || ''} placeholder="Ej. 1.1.01" className="border border-slate-300 p-2.5 w-full rounded-lg font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-
-              {/* Requerimientos base */}
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                <p className="text-xs font-semibold uppercase text-slate-600">Atributos y Requerimientos de Análisis</p>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" name="requiereCentroCosto" defaultChecked={editingAccount?.requiereCentroCosto || false} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  Requiere Centro de Costo
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" name="requiereAuxiliarRUT" defaultChecked={editingAccount?.requiereAuxiliarRUT || false} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  Requiere Auxiliar RUT
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" name="requiereConciliacionBancaria" defaultChecked={editingAccount?.requiereConciliacionBancaria || false} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  Requiere Conciliación Bancaria
-                </label>
-                <div className="pl-6 pt-1 space-y-2">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-0.5">Institución Bancaria (Banco)</label>
-                    <select name="bankInstitution" defaultValue={editingAccount?.bankInstitution || ''} className="border border-slate-300 p-1.5 w-full rounded text-xs">
-                      <option value="">-- Sin Banco Asociado --</option>
-                      <option value="Banco de Chile">Banco de Chile</option>
-                      <option value="Banco Santander">Banco Santander</option>
-                      <option value="Banco BCI">Banco BCI</option>
-                      <option value="Banco Estado">Banco Estado</option>
-                      <option value="Banco Itaú">Banco Itaú</option>
-                      <option value="Scotiabank">Scotiabank</option>
-                      <option value="Banco BICE">Banco BICE</option>
-                      <option value="Banco Security">Banco Security</option>
-                      <option value="Banco Falabella">Banco Falabella</option>
-                      <option value="Banco Ripley">Banco Ripley</option>
-                      <option value="Tapp Caja Los Andes">Tapp Caja Los Andes</option>
-                      <option value="Mercado Pago">Mercado Pago</option>
-                      <option value="Otro">Otro Banco / Institución</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-0.5">N° Cuenta Corriente / Vista</label>
-                    <input name="bankAccountNumber" defaultValue={editingAccount?.bankAccountNumber || ''} placeholder="Ej. 123-45678-09" className="border border-slate-300 p-1.5 w-full rounded text-xs font-mono" />
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" name="requiereDocumento" defaultChecked={editingAccount?.requiereDocumento || false} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  Requiere Documento (Factura/Boleta)
-                </label>
-              </div>
-
-              {/* Dynamic / Scalable Attributes Builder */}
-              <div className="pt-2 border-t border-slate-200 space-y-2">
-                <p className="text-xs font-semibold uppercase text-slate-600">Atributos Dinámicos Adicionales</p>
-                <div className="flex gap-2">
-                  <input placeholder="Propiedad (ej. imptoAdicional)" value={customAttrKey} onChange={e => setCustomAttrKey(e.target.value)} className="border border-slate-300 p-2 text-xs w-1/2 rounded" />
-                  <input placeholder="Valor" value={customAttrVal} onChange={e => setCustomAttrVal(e.target.value)} className="border border-slate-300 p-2 text-xs w-1/2 rounded" />
-                  <button type="button" onClick={() => { if(customAttrKey){ setTempCustomAttrs({...tempCustomAttrs, [customAttrKey]: customAttrVal}); setCustomAttrKey(''); setCustomAttrVal(''); }}} className="bg-slate-800 text-white px-3 py-1 text-xs rounded">+</button>
-                </div>
-                {Object.keys(tempCustomAttrs).length > 0 && (
-                  <div className="text-xs bg-slate-50 p-2 rounded border">
-                    {Object.entries(tempCustomAttrs).map(([k, v]) => (
-                      <div key={k} className="flex justify-between"><span>{k}: {String(v)}</span></div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition-colors">
-                {editingAccount ? 'Guardar Cambios' : 'Registrar Cuenta'}
-              </button>
-            </form>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm lg:col-span-2 space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-              <div>
-                <h3 className="text-lg font-medium text-slate-900">Plan de Cuentas ({accounts.length})</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Catálogo de cuentas contables y parametrización operativa</p>
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <input
-                  type="text"
-                  placeholder="Buscar por código o nombre..."
-                  value={accountSearchQuery}
-                  onChange={(e) => setAccountSearchQuery(e.target.value)}
-                  className="border border-slate-300 p-2 rounded-lg text-xs w-full sm:w-56 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
-                <button
-                  onClick={() => setActiveTab('plantillasCarga')}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-3 py-2 rounded-lg font-bold transition-colors whitespace-nowrap flex items-center gap-1"
-                >
-                  <span>📥</span>
-                  <span>Carga Masiva Excel</span>
-                </button>
-                <button
-                  onClick={handleSeedDefaultAccounts}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3.5 py-2 rounded-lg font-medium transition-colors whitespace-nowrap"
-                >
-                  Cargar Estándar
-                </button>
-              </div>
-            </div>
-
-            {accounts.length === 0 ? (
-              <p className="text-slate-500 text-sm italic py-4 text-center">No hay cuentas contables registradas. Utiliza el botón superior para cargar el estándar chileno.</p>
-            ) : (
-              <div className="space-y-1.5 max-h-[550px] overflow-y-auto pr-1">
-                {accounts
-                  .filter(acc => 
-                    !accountSearchQuery || 
-                    acc.code.toLowerCase().includes(accountSearchQuery.toLowerCase()) || 
-                    acc.name.toLowerCase().includes(accountSearchQuery.toLowerCase())
-                  )
-                  .map(acc => (
-                  <div key={acc.id} className="p-3 border border-slate-200 bg-white hover:bg-slate-50/90 rounded-lg flex items-center justify-between transition-colors">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2.5 flex-wrap">
-                        <span className="font-mono text-sm font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{acc.code}</span>
-                        <span className="text-sm font-normal text-slate-800">{acc.name}</span>
-                        <span className="text-xs font-normal text-slate-600 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{acc.type}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 text-[11px] font-normal">
-                        {acc.requiereCentroCosto && <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded">C.Costo</span>}
-                        {acc.requiereAuxiliarRUT && <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded">Aux. RUT</span>}
-                        {acc.requiereConciliacionBancaria && <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded">Conciliación</span>}
-                        {acc.requiereDocumento && <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded">Documento</span>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs pl-2">
-                      <button onClick={() => setEditingAccount(acc)} className="text-indigo-600 hover:text-indigo-900 font-medium">Editar</button>
-                      <button onClick={async () => { if(window.confirm('¿Eliminar cuenta?')) { await deleteDoc(doc(companyRef, 'chartOfAccounts', acc.id)); await fetchData(); } }} className="text-slate-400 hover:text-red-600 font-medium transition-colors">Eliminar</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <PlanDeCuentasGrid
+          studyId={studyId}
+          company={company}
+          onRefreshCompany={fetchData}
+        />
       )}
 
       {/* TAB 2: AUXILIARIES */}
       {activeTab === 'auxiliaries' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm lg:col-span-1">
-            <h3 className="text-lg font-medium text-slate-900 mb-4">
-              {editingAuxiliary ? 'Modificar Auxiliar' : 'Registrar Nuevo Auxiliar'}
-            </h3>
-            <form onSubmit={handleSaveAuxiliary} key={editingAuxiliary?.id || 'new-aux'} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">RUT *</label>
-                <input name="rut" defaultValue={editingAuxiliary?.rut || ''} placeholder="Ej. 76.123.456-7" required className="border border-slate-300 p-2.5 w-full rounded-lg font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Razón Social / Nombre *</label>
-                <input name="name" defaultValue={editingAuxiliary?.name || ''} placeholder="Ej. Comercial SpA" required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Rol Principal *</label>
-                <select name="role" defaultValue={editingAuxiliary?.role || 'Deudor'} required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="Deudor">Deudor (Cliente)</option>
-                  <option value="Acreedor">Acreedor (Proveedor)</option>
-                  <option value="Ambos">Ambos (Cliente y Proveedor)</option>
-                </select>
-              </div>
+        <div className="space-y-4">
+          <AuxiliariesGrid
+            studyId={studyId}
+            companyId={company.id}
+            auxiliaries={auxiliaries}
+            accounts={accounts}
+            vouchers={vouchers}
+            onRefresh={fetchData}
+            onCreate={() => {
+              setEditingAuxiliary(null);
+              setIsAuxiliaryModalOpen(true);
+            }}
+            onEdit={(aux) => {
+              setEditingAuxiliary(aux);
+              setIsAuxiliaryModalOpen(true);
+            }}
+            onNavigateToBulkImport={() => setActiveTab('plantillasCarga')}
+          />
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-                <input type="email" name="email" defaultValue={editingAuxiliary?.email || ''} placeholder="auxiliar@empresa.cl" className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Teléfono</label>
-                <input name="phone" defaultValue={editingAuxiliary?.phone || ''} placeholder="+56912345678" className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                <label className="block text-xs font-semibold uppercase text-slate-600">Cuenta Contable de Deudor / Cliente</label>
-                <select name="defaultDebtorAccountId" defaultValue={editingAuxiliary?.defaultDebtorAccountId || ''} className="border border-slate-300 p-2.5 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="">Seleccione una cuenta (Opcional)</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>)}
-                </select>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                <label className="block text-xs font-semibold uppercase text-slate-600">Cuenta Contable de Acreedor / Proveedor</label>
-                <select name="defaultCreditorAccountId" defaultValue={editingAuxiliary?.defaultCreditorAccountId || ''} className="border border-slate-300 p-2.5 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="">Seleccione una cuenta (Opcional)</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>)}
-                </select>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                <label className="block text-xs font-semibold uppercase text-slate-600">Cuenta Contable de Ingreso o Costo/Gasto por Defecto</label>
-                <select name="defaultExpenseOrIncomeAccountId" defaultValue={editingAuxiliary?.defaultExpenseOrIncomeAccountId || ''} className="border border-slate-300 p-2.5 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="">Seleccione una cuenta (Opcional)</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>)}
-                </select>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition-colors">
-                  {editingAuxiliary ? 'Guardar Cambios' : 'Registrar Auxiliar'}
-                </button>
-                {editingAuxiliary && (
-                  <button type="button" onClick={() => setEditingAuxiliary(null)} className="border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50">
-                    Cancelar
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm lg:col-span-2 space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-200 pb-3 gap-2">
-              <div>
-                <h3 className="text-lg font-medium text-slate-900">Maestro de Auxiliares ({auxiliaries.length})</h3>
-                <p className="text-xs text-slate-500">Cartera de clientes, proveedores y honorarios</p>
-              </div>
-              <div className="flex gap-2 items-center flex-wrap">
-                <button
-                  onClick={() => setActiveTab('plantillasCarga')}
-                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs px-3 py-1.5 rounded-lg font-bold transition-colors whitespace-nowrap flex items-center gap-1"
-                >
-                  <span>📥</span>
-                  <span>Carga Masiva Excel</span>
-                </button>
-                <button
-                  onClick={() => setAuxSubTab('deudores')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${auxSubTab === 'deudores' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                >
-                  Deudores ({auxiliaries.filter(a => a.role === 'Deudor' || a.role === 'Ambos').length})
-                </button>
-                <button
-                  onClick={() => setAuxSubTab('acreedores')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${auxSubTab === 'acreedores' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                >
-                  Acreedores ({auxiliaries.filter(a => a.role === 'Acreedor' || a.role === 'Ambos').length})
-                </button>
-              </div>
-            </div>
-
-            {auxSubTab === 'deudores' && (
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-slate-700 uppercase">Listado de Deudores (Incluye rol Ambos)</h4>
-                {auxiliaries.filter(a => a.role === 'Deudor' || a.role === 'Ambos').length === 0 ? (
-                  <p className="text-slate-500 text-sm py-4 text-center">No hay deudores registrados.</p>
-                ) : (
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                    {auxiliaries.filter(a => a.role === 'Deudor' || a.role === 'Ambos').map(aux => (
-                      <div key={aux.id} className="p-3 border border-slate-200 bg-slate-50 rounded-lg flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-slate-900">{aux.name}</span>
-                            <span className="text-xs font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{aux.rut}</span>
-                            <span className="text-xs bg-indigo-50 text-indigo-800 px-2 py-0.5 rounded font-medium">{aux.role}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${aux.estado === 'Inactivo' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                              {aux.estado || 'Activo'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">Email: {aux.email || 'N/A'} | Tel: {aux.phone || 'N/A'}</p>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs font-medium">
-                          <button onClick={() => setEditingAuxiliary(aux)} className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2.5 py-1 rounded">Editar</button>
-                          <button onClick={async () => {
-                            const newEst = aux.estado === 'Inactivo' ? 'Activo' : 'Inactivo';
-                            await updateDoc(doc(companyRef, 'auxiliaries', aux.id), { estado: newEst });
-                            await fetchData();
-                          }} className="text-amber-600 hover:text-amber-800 bg-amber-50 px-2.5 py-1 rounded">{aux.estado === 'Inactivo' ? 'Activar' : 'Desactivar'}</button>
-                          <button onClick={async () => { if(window.confirm('¿Eliminar auxiliar?')) { await deleteDoc(doc(companyRef, 'auxiliaries', aux.id)); await fetchData(); } }} className="text-red-500 hover:text-red-700 bg-red-50 px-2.5 py-1 rounded">Eliminar</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {auxSubTab === 'acreedores' && (
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-slate-700 uppercase">Listado de Acreedores (Incluye rol Ambos)</h4>
-                {auxiliaries.filter(a => a.role === 'Acreedor' || a.role === 'Ambos').length === 0 ? (
-                  <p className="text-slate-500 text-sm py-4 text-center">No hay acreedores registrados.</p>
-                ) : (
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                    {auxiliaries.filter(a => a.role === 'Acreedor' || a.role === 'Ambos').map(aux => (
-                      <div key={aux.id} className="p-3 border border-slate-200 bg-slate-50 rounded-lg flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-slate-900">{aux.name}</span>
-                            <span className="text-xs font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{aux.rut}</span>
-                            <span className="text-xs bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-medium">{aux.role}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${aux.estado === 'Inactivo' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                              {aux.estado || 'Activo'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">Email: {aux.email || 'N/A'} | Tel: {aux.phone || 'N/A'}</p>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs font-medium">
-                          <button onClick={() => setEditingAuxiliary(aux)} className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2.5 py-1 rounded">Editar</button>
-                          <button onClick={async () => {
-                            const newEst = aux.estado === 'Inactivo' ? 'Activo' : 'Inactivo';
-                            await updateDoc(doc(companyRef, 'auxiliaries', aux.id), { estado: newEst });
-                            await fetchData();
-                          }} className="text-amber-600 hover:text-amber-800 bg-amber-50 px-2.5 py-1 rounded">{aux.estado === 'Inactivo' ? 'Activar' : 'Desactivar'}</button>
-                          <button onClick={async () => { if(window.confirm('¿Eliminar auxiliar?')) { await deleteDoc(doc(companyRef, 'auxiliaries', aux.id)); await fetchData(); } }} className="text-red-500 hover:text-red-700 bg-red-50 px-2.5 py-1 rounded">Eliminar</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <AuxiliaryModal
+            isOpen={isAuxiliaryModalOpen}
+            onClose={() => {
+              setIsAuxiliaryModalOpen(false);
+              setEditingAuxiliary(null);
+            }}
+            onSave={handleSaveAuxiliary}
+            editingAuxiliary={editingAuxiliary}
+            accounts={accounts}
+            costCenters={costCenters}
+            expenseItems={expenseItems}
+            projects={projects}
+            products={products}
+            customAccountColumns={company.customAccountColumns || []}
+            customAnalysisItems={customAnalysisItems}
+            isReadOnly={isReadOnly}
+          />
         </div>
       )}
 
@@ -3887,69 +4014,15 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
 
       {/* TAB 3: FISCAL PERIODS */}
       {activeTab === 'periods' && (
-        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-              <h3 className="text-lg font-medium text-slate-900">Apertura y Cierre de Ejercicios y Períodos Tributarios</h3>
-              <p className="text-slate-500 text-sm mt-1">Controla el estado mensual (Abierto / Cerrado) para la emisión de libros y balances.</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-slate-700">Año Comercial:</label>
-              <select
-                value={selectedYear}
-                onChange={e => {
-                  const yr = parseInt(e.target.value);
-                  setSelectedYear(yr);
-                  handleEnsureFiscalYear(yr);
-                }}
-                className="border border-slate-300 p-2 rounded-lg font-mono text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              >
-                {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {(() => {
-            // Ensure fiscal year is initialized in view if missing
-            const currentFy = fiscalYears.find(f => f.id === String(selectedYear));
-            if (!currentFy) {
-              handleEnsureFiscalYear(selectedYear);
-              return <p className="text-slate-500 py-6 text-center">Inicializando período para el año {selectedYear}...</p>;
-            }
-
-            const monthNames = [
-              '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-              'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-            ];
-
-            return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pt-4">
-                {Object.entries(currentFy.months).map(([mNumStr, status]) => {
-                  const mNum = parseInt(mNumStr);
-                  const isOpen = status === 'Abierto';
-                  return (
-                    <div key={mNum} className={`p-4 rounded-xl border transition-all ${isOpen ? 'bg-emerald-50/50 border-emerald-200 shadow-sm' : 'bg-slate-100 border-slate-200'}`}>
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-semibold text-slate-900">{monthNames[mNum]} {selectedYear}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${isOpen ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
-                          {status}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => handleToggleMonthStatus(selectedYear, mNum, status as 'Abierto' | 'Cerrado')}
-                        className={`w-full mt-2 text-xs font-medium py-2 rounded-lg transition-colors ${
-                          isOpen ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        }`}
-                      >
-                        {isOpen ? 'Cerrar Período' : 'Abrir Período'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
+        <PeriodsGrid
+          selectedYear={selectedYear}
+          setSelectedYear={setSelectedYear}
+          fiscalYears={fiscalYears}
+          vouchers={vouchers}
+          rcvDocuments={rcvDocuments}
+          onToggleMonthStatus={handleToggleMonthStatus}
+          onEnsureFiscalYear={handleEnsureFiscalYear}
+        />
       )}
 
       {/* TAB 4: RCV & SII IMPORT */}
@@ -4562,8 +4635,8 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   })
                   .filter(v => 
                     !voucherSearchQuery ||
-                    v.gloss.toLowerCase().includes(voucherSearchQuery.toLowerCase()) ||
-                    String(v.voucherNumber).includes(voucherSearchQuery) ||
+                    (v.gloss || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) ||
+                    String(v.voucherNumber || '').includes(voucherSearchQuery) ||
                     (v.lines && v.lines.some(l => (l.auxiliaryRut || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) || (l.accountCode || '').includes(voucherSearchQuery)))
                   )
                   .filter(v => !colNumSearch || String(v.voucherNumber).toLowerCase().includes(colNumSearch.toLowerCase()))
@@ -4677,17 +4750,17 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     )}
                   </div>
 
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-left text-xs">
+                  <div className="border border-slate-200 rounded-lg overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[700px]">
                       <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0">
                         <tr>
                           <th className="p-3 w-28">Cuenta</th>
                           <th className="p-3">Nombre Cuenta</th>
-                          <th className="p-3">Auxiliar RUT</th>
-                          <th className="p-3">Documento Ref</th>
+                          <th className="p-3">Análisis & Atributos</th>
+                          <th className="p-3">Doc Ref</th>
                           <th className="p-3">Detalle / Glosa Línea</th>
-                          <th className="p-3 text-right w-32">Debe ($)</th>
-                          <th className="p-3 text-right w-32">Haber ($)</th>
+                          <th className="p-3 text-right w-28">Debe ($)</th>
+                          <th className="p-3 text-right w-28">Haber ($)</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
@@ -4695,8 +4768,54 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                           <tr key={idx} className="hover:bg-slate-50">
                             <td className="p-3 font-mono font-bold text-slate-700">{line.accountCode}</td>
                             <td className="p-3 font-medium text-slate-900">{line.accountName}</td>
-                            <td className="p-3 text-slate-600 font-mono">{line.auxiliaryRut || '-'}</td>
-                            <td className="p-3 text-slate-600">{line.documentRef || '-'}</td>
+                            <td className="p-3">
+                              <div className="flex flex-wrap gap-1 max-w-[280px]">
+                                {line.auxiliaryRut && (
+                                  <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded text-[10px] font-mono" title={line.auxiliaryName}>
+                                    👤 {line.auxiliaryRut}
+                                  </span>
+                                )}
+                                {line.costCenter && (
+                                  <span className="bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-[10px]">
+                                    🏢 {line.costCenter}
+                                  </span>
+                                )}
+                                {line.bankDocRef && (
+                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                                    🏦 {line.bankDocRef}
+                                  </span>
+                                )}
+                                {line.dueDate && (
+                                  <span className="bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded text-[10px]">
+                                    📅 {line.dueDate}
+                                  </span>
+                                )}
+                                {line.expenseItem && (
+                                  <span className="bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded text-[10px]">
+                                    🏷️ {line.expenseItem}
+                                  </span>
+                                )}
+                                {line.project && (
+                                  <span className="bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded text-[10px]">
+                                    🏗️ {line.project}
+                                  </span>
+                                )}
+                                {line.product && (
+                                  <span className="bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded text-[10px]">
+                                    📦 {line.product}
+                                  </span>
+                                )}
+                                {line.customAnalyses && Object.entries(line.customAnalyses).map(([k, v]) => v ? (
+                                  <span key={k} className="bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded text-[10px]">
+                                    ⚙️ {k}: {v}
+                                  </span>
+                                ) : null)}
+                                {!line.auxiliaryRut && !line.costCenter && !line.bankDocRef && !line.dueDate && !line.expenseItem && !line.project && !line.product && (!line.customAnalyses || Object.keys(line.customAnalyses).length === 0) && (
+                                  <span className="text-slate-400">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-3 text-slate-600 font-mono">{line.documentRef || '-'}</td>
                             <td className="p-3 text-slate-600 truncate max-w-[180px]" title={line.gloss}>{line.gloss || '-'}</td>
                             <td className="p-3 text-right font-medium text-slate-900">{line.debit > 0 ? `$${line.debit.toLocaleString('es-CL')}` : ''}</td>
                             <td className="p-3 text-right font-medium text-slate-900">{line.credit > 0 ? `$${line.credit.toLocaleString('es-CL')}` : ''}</td>
@@ -4926,179 +5045,273 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                       </div>
 
                       <div className="border border-slate-200 rounded-lg overflow-x-auto">
-                        <table className="w-full text-left text-xs min-w-[850px]">
+                        <table className="w-full text-left text-xs min-w-[950px]">
                           <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0">
                             <tr>
                               <th className="p-2.5 w-72">Cuenta Contable *</th>
-                              <th className="p-2.5 w-44">Auxiliar RUT / Nombre</th>
+                              <th className="p-2.5 w-56">Análisis & Atributos</th>
                               <th className="p-2.5 w-32">Doc Ref</th>
                               <th className="p-2.5">Detalle / Glosa Línea</th>
-                              <th className="p-2.5 text-right w-32">Debe ($)</th>
-                              <th className="p-2.5 text-right w-32">Haber ($)</th>
-                              <th className="p-2.5 text-center w-12"></th>
+                              <th className="p-2.5 text-right w-28">Debe ($)</th>
+                              <th className="p-2.5 text-right w-28">Haber ($)</th>
+                              <th className="p-2.5 text-center w-10"></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-200 bg-white">
-                            {voucherForm.lines.map((line, idx) => (
-                              <tr key={idx} className="hover:bg-slate-50">
-                                <td className="p-2">
-                                  <select
-                                    value={line.accountId || ''}
-                                    onChange={(e) => {
-                                      const selectedAccId = e.target.value;
-                                      const accObj = accounts.find(a => a.id === selectedAccId);
-                                      const reqAux = Boolean(accObj?.requiereAuxiliarRUT && accObj?.type !== 'Ingreso' && accObj?.type !== 'Gasto' && !accObj?.code.startsWith('4') && !accObj?.code.startsWith('5') && !accObj?.code.startsWith('1.1.07') && !accObj?.code.startsWith('2.1.03'));
-                                      const newLines = [...voucherForm.lines];
-                                      newLines[idx] = {
-                                        ...newLines[idx],
-                                        accountId: selectedAccId,
-                                        accountCode: accObj?.code || '',
-                                        accountName: accObj?.name || '',
-                                        auxiliaryRut: reqAux ? newLines[idx].auxiliaryRut : '',
-                                        auxiliaryName: reqAux ? newLines[idx].auxiliaryName : ''
-                                      };
-                                      setVoucherForm({ ...voucherForm, lines: newLines });
-                                    }}
-                                    className="border border-slate-300 p-1.5 w-full rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 font-mono"
-                                  >
-                                    <option value="">Seleccione Cuenta...</option>
-                                    {accounts.map(acc => (
-                                      <option key={acc.id} value={acc.id}>
-                                        [{acc.code}] {acc.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </td>
-                                <td className="p-2">
-                                  {(() => {
-                                    const lineAcc = accounts.find(a => a.id === line.accountId || a.code === line.accountCode);
-                                    const reqAux = Boolean(lineAcc?.requiereAuxiliarRUT && lineAcc?.type !== 'Ingreso' && lineAcc?.type !== 'Gasto' && !lineAcc?.code.startsWith('4') && !lineAcc?.code.startsWith('5') && !lineAcc?.code.startsWith('1.1.07') && !lineAcc?.code.startsWith('2.1.03'));
+                            {voucherForm.lines.map((line, idx) => {
+                              const lineAcc = accounts.find(a => a.id === line.accountId || (line.accountCode && a.code === line.accountCode));
+                              const customCols = company.customAccountColumns || [];
+                              const valResult = validateVoucherLine(line, lineAcc, customCols);
+                              const hasMissing = valResult.missingFields.length > 0;
 
-                                    return (
-                                      <input
-                                        type="text"
-                                        placeholder={reqAux ? "RUT / Auxiliar" : "No requiere auxiliar"}
-                                        disabled={!reqAux}
-                                        value={reqAux ? (line.auxiliaryRut || '') : ''}
-                                        onChange={(e) => {
-                                          if (!reqAux) return;
-                                          const newLines = [...voucherForm.lines];
-                                          newLines[idx] = { ...newLines[idx], auxiliaryRut: e.target.value };
-                                          setVoucherForm({ ...voucherForm, lines: newLines });
-                                        }}
-                                        className={`border border-slate-300 p-1.5 w-full rounded text-xs font-mono ${!reqAux ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white focus:ring-1 focus:ring-indigo-500'}`}
-                                      />
-                                    );
-                                  })()}
-                                </td>
-                                <td className="p-2">
-                                  <input
-                                    type="text"
-                                    placeholder="Ej. OTRO 101, 9999-50, Fac 123..."
-                                    value={line.documentRef || ''}
-                                    onChange={(e) => {
-                                      const newLines = [...voucherForm.lines];
-                                      newLines[idx] = { ...newLines[idx], documentRef: e.target.value };
-                                      setVoucherForm({ ...voucherForm, lines: newLines });
-                                    }}
-                                    className="border border-slate-300 p-1.5 w-full rounded text-xs focus:ring-1 focus:ring-indigo-500"
-                                  />
-                                </td>
-                                <td className="p-2">
-                                  <div className="relative flex items-center">
-                                    <input
-                                      type="text"
-                                      placeholder={voucherForm.gloss || "Detalle de línea..."}
-                                      value={line.gloss || ''}
-                                      onFocus={() => {
-                                        if (!line.gloss && voucherForm.gloss) {
-                                          const newLines = [...voucherForm.lines];
-                                          newLines[idx] = { ...newLines[idx], gloss: voucherForm.gloss };
-                                          setVoucherForm({ ...voucherForm, lines: newLines });
-                                        }
-                                      }}
+                              return (
+                                <tr key={idx} className={`hover:bg-slate-50 ${hasMissing && line.accountId ? 'bg-amber-50/40' : ''}`}>
+                                  <td className="p-2">
+                                    <select
+                                      value={line.accountId || ''}
                                       onChange={(e) => {
+                                        const selectedAccId = e.target.value;
+                                        const accObj = accounts.find(a => a.id === selectedAccId);
                                         const newLines = [...voucherForm.lines];
-                                        newLines[idx] = { ...newLines[idx], gloss: e.target.value };
+                                        let defaultDue = newLines[idx].dueDate;
+                                        if (accObj?.requiereVencimiento && !defaultDue && voucherForm.date) {
+                                          try {
+                                            const parts = voucherForm.date.split('-');
+                                            if (parts.length === 3) {
+                                              const dt = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                              dt.setDate(dt.getDate() + 30);
+                                              defaultDue = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+                                            }
+                                          } catch {}
+                                        }
+                                        newLines[idx] = {
+                                          ...newLines[idx],
+                                          accountId: selectedAccId,
+                                          accountCode: accObj?.code || '',
+                                          accountName: accObj?.name || '',
+                                          ...(defaultDue ? { dueDate: defaultDue } : {})
+                                        };
                                         setVoucherForm({ ...voucherForm, lines: newLines });
                                       }}
-                                      className="border border-slate-300 p-1.5 w-full rounded text-xs focus:ring-1 focus:ring-indigo-500 pr-7"
-                                    />
-                                    {voucherForm.gloss && line.gloss !== voucherForm.gloss && (
+                                      className="border border-slate-300 p-1.5 w-full rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 font-mono"
+                                    >
+                                      <option value="">Seleccione Cuenta...</option>
+                                      {accounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>
+                                          [{acc.code}] {acc.name}
+                                        </option>
+                                      ))}
+                                    </select>
+
+                                    {/* Badges de Análisis Exigidos por el Plan de Cuentas */}
+                                    {lineAcc && (
+                                      <div className="flex flex-wrap gap-1 mt-1 font-mono text-[9px]">
+                                        {lineAcc.requiereAuxiliarRUT && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.auxiliaryRut ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            RUT*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereDocumento && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.documentRef ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            DOC*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereCentroCosto && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.costCenter ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            CC*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereConciliacionBancaria && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.bankDocRef ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            BANCO*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereVencimiento && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.dueDate ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            VCTO*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereItemGasto && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.expenseItem ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            GASTO*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereProyecto && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.project ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            PROY*
+                                          </span>
+                                        )}
+                                        {lineAcc.requiereProducto && (
+                                          <span className={`px-1 py-0.2 rounded border ${line.product ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                            PROD*
+                                          </span>
+                                        )}
+                                        {customCols.map(col => {
+                                          if (!isCustomAnalysisRequired(lineAcc, col)) return null;
+                                          const val = line.customAnalyses?.[col];
+                                          return (
+                                            <span key={col} className={`px-1 py-0.2 rounded border ${val ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300 font-bold'}`}>
+                                              {col.toUpperCase()}*
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
-                                        onClick={() => {
+                                        onClick={() => setEditingAnalysisLineIdx(idx)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold flex items-center gap-1 transition-colors border ${
+                                          hasMissing && line.accountId
+                                            ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100'
+                                            : line.auxiliaryRut || line.costCenter || line.bankDocRef || line.dueDate || line.expenseItem || line.project || line.product
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                            : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                                        }`}
+                                      >
+                                        <span>📊</span>
+                                        <span>
+                                          {hasMissing && line.accountId
+                                            ? `Faltan ${valResult.missingFields.length}`
+                                            : line.auxiliaryRut || line.costCenter || line.bankDocRef
+                                            ? 'Ver / Editar'
+                                            : 'Completar'}
+                                        </span>
+                                      </button>
+
+                                      {/* Quick preview tag of auxiliary or CC */}
+                                      {line.auxiliaryRut ? (
+                                        <span className="text-[10px] font-mono text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[110px]" title={`${line.auxiliaryRut} ${line.auxiliaryName || ''}`}>
+                                          {line.auxiliaryRut}
+                                        </span>
+                                      ) : line.costCenter ? (
+                                        <span className="text-[10px] font-mono text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded truncate max-w-[100px]" title={line.costCenter}>
+                                          CC: {line.costCenter}
+                                        </span>
+                                      ) : null}
+
+                                      <button
+                                        type="button"
+                                        onClick={() => setDistributingLineIdx(idx)}
+                                        className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap"
+                                        title="Distribuir esta línea en múltiples centros de costos, ítems de gasto o cuentas"
+                                      >
+                                        <span>✂️</span>
+                                        <span>Distribuir</span>
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="p-2">
+                                    <input
+                                      type="text"
+                                      placeholder="Ej. FAC 102"
+                                      value={line.documentRef || ''}
+                                      onChange={(e) => {
+                                        const newLines = [...voucherForm.lines];
+                                        newLines[idx] = { ...newLines[idx], documentRef: e.target.value };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className="border border-slate-300 p-1.5 w-full rounded text-xs focus:ring-1 focus:ring-indigo-500 font-mono"
+                                    />
+                                  </td>
+                                  <td className="p-2">
+                                    <div className="relative flex items-center">
+                                      <input
+                                        type="text"
+                                        placeholder={voucherForm.gloss || "Detalle de línea..."}
+                                        value={line.gloss || ''}
+                                        onFocus={() => {
+                                          if (!line.gloss && voucherForm.gloss) {
+                                            const newLines = [...voucherForm.lines];
+                                            newLines[idx] = { ...newLines[idx], gloss: voucherForm.gloss };
+                                            setVoucherForm({ ...voucherForm, lines: newLines });
+                                          }
+                                        }}
+                                        onChange={(e) => {
                                           const newLines = [...voucherForm.lines];
-                                          newLines[idx] = { ...newLines[idx], gloss: voucherForm.gloss };
+                                          newLines[idx] = { ...newLines[idx], gloss: e.target.value };
                                           setVoucherForm({ ...voucherForm, lines: newLines });
                                         }}
-                                        title="Copiar glosa general a esta línea"
-                                        className="absolute right-1 text-slate-400 hover:text-indigo-600 p-1 text-[11px]"
-                                      >
-                                        📋
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-2 text-right">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={line.debit || ''}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const val = parseFloat(e.target.value) || 0;
-                                      const newLines = [...voucherForm.lines];
-                                      newLines[idx] = {
-                                        ...newLines[idx],
-                                        debit: val,
-                                        credit: val > 0 ? 0 : newLines[idx].credit
-                                      };
-                                      setVoucherForm({ ...voucherForm, lines: newLines });
-                                    }}
-                                    className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-medium focus:ring-1 focus:ring-indigo-500"
-                                  />
-                                </td>
-                                <td className="p-2 text-right">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={line.credit || ''}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const val = parseFloat(e.target.value) || 0;
-                                      const newLines = [...voucherForm.lines];
-                                      newLines[idx] = {
-                                        ...newLines[idx],
-                                        credit: val,
-                                        debit: val > 0 ? 0 : newLines[idx].debit
-                                      };
-                                      setVoucherForm({ ...voucherForm, lines: newLines });
-                                    }}
-                                    className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-medium focus:ring-1 focus:ring-indigo-500"
-                                  />
-                                </td>
-                                <td className="p-2 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (voucherForm.lines.length <= 2) {
-                                        alert('Un comprobante debe tener al menos dos líneas.');
-                                        return;
-                                      }
-                                      const newLines = voucherForm.lines.filter((_, i) => i !== idx);
-                                      setVoucherForm({ ...voucherForm, lines: newLines });
-                                    }}
-                                    className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 transition-colors"
-                                    title="Eliminar fila"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
+                                        className="border border-slate-300 p-1.5 w-full rounded text-xs focus:ring-1 focus:ring-indigo-500 pr-7"
+                                      />
+                                      {voucherForm.gloss && line.gloss !== voucherForm.gloss && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newLines = [...voucherForm.lines];
+                                            newLines[idx] = { ...newLines[idx], gloss: voucherForm.gloss };
+                                            setVoucherForm({ ...voucherForm, lines: newLines });
+                                          }}
+                                          title="Copiar glosa general a esta línea"
+                                          className="absolute right-1 text-slate-400 hover:text-indigo-600 p-1 text-[11px]"
+                                        >
+                                          📋
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-right">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={line.debit || ''}
+                                      placeholder="0"
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) || 0;
+                                        const newLines = [...voucherForm.lines];
+                                        newLines[idx] = {
+                                          ...newLines[idx],
+                                          debit: val,
+                                          credit: val > 0 ? 0 : newLines[idx].credit
+                                        };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-medium focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-right">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={line.credit || ''}
+                                      placeholder="0"
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) || 0;
+                                        const newLines = [...voucherForm.lines];
+                                        newLines[idx] = {
+                                          ...newLines[idx],
+                                          credit: val,
+                                          debit: val > 0 ? 0 : newLines[idx].debit
+                                        };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-medium focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (voucherForm.lines.length <= 2) {
+                                          alert('Un comprobante debe tener al menos dos líneas.');
+                                          return;
+                                        }
+                                        const newLines = voucherForm.lines.filter((_, i) => i !== idx);
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 transition-colors"
+                                      title="Eliminar fila"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                      </svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                           <tfoot className="bg-slate-100 font-bold border-t-2 border-slate-300 text-xs">
                             {(() => {
@@ -5156,6 +5369,455 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     </button>
                   </div>
                 </form>
+
+                {/* Sub-modal / Drawer para Editar TODOS los Análisis de la Línea */}
+                {editingAnalysisLineIdx !== null && voucherForm.lines[editingAnalysisLineIdx] && (() => {
+                  const targetIdx = editingAnalysisLineIdx;
+                  const currentLine = voucherForm.lines[targetIdx];
+                  const lineAcc = accounts.find(a => a.id === currentLine.accountId || (currentLine.accountCode && a.code === currentLine.accountCode));
+                  const customCols = company.customAccountColumns || [];
+
+                  return (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+                      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                        <div className="p-4 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex justify-between items-center">
+                          <div>
+                            <h4 className="font-bold text-sm flex items-center gap-2">
+                              <span>📊 Análisis Contables - Línea #{targetIdx + 1}</span>
+                              {lineAcc && (
+                                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded font-mono border border-indigo-400/40">
+                                  {lineAcc.code}
+                                </span>
+                              )}
+                            </h4>
+                            <p className="text-xs text-slate-300 mt-0.5 font-medium">
+                              {lineAcc ? lineAcc.name : 'Cuenta no seleccionada'}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setEditingAnalysisLineIdx(null)}
+                            className="text-slate-400 hover:text-white text-lg font-bold"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+                          {/* Account requirements summary bar */}
+                          {lineAcc ? (
+                            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                              <span className="font-bold text-slate-700 block">Exigencias según Plan de Cuentas:</span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {lineAcc.requiereAuxiliarRUT ? <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded font-semibold">⚠️ Exige Auxiliar / RUT</span> : null}
+                                {lineAcc.requiereDocumento ? <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-semibold">⚠️ Exige N° Documento</span> : null}
+                                {lineAcc.requiereCentroCosto ? <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-semibold">⚠️ Exige Centro de Costos</span> : null}
+                                {lineAcc.requiereConciliacionBancaria ? <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-semibold">⚠️ Exige Banco / Cheque</span> : null}
+                                {lineAcc.requiereVencimiento ? <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded font-semibold">⚠️ Exige Fecha Vencimiento</span> : null}
+                                {lineAcc.requiereItemGasto ? <span className="px-2 py-0.5 bg-orange-100 text-orange-800 rounded font-semibold">⚠️ Exige Ítem Gasto</span> : null}
+                                {lineAcc.requiereProyecto ? <span className="px-2 py-0.5 bg-teal-100 text-teal-800 rounded font-semibold">⚠️ Exige Proyecto</span> : null}
+                                {lineAcc.requiereProducto ? <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded font-semibold">⚠️ Exige Producto</span> : null}
+                                {customCols.map(col => {
+                                  if (isCustomAnalysisRequired(lineAcc, col)) {
+                                    return <span key={col} className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-semibold">⚠️ Exige {col}</span>;
+                                  }
+                                  return null;
+                                })}
+                                {!lineAcc.requiereAuxiliarRUT && !lineAcc.requiereDocumento && !lineAcc.requiereCentroCosto && !lineAcc.requiereConciliacionBancaria && !lineAcc.requiereVencimiento && !lineAcc.requiereItemGasto && !lineAcc.requiereProyecto && !lineAcc.requiereProducto && (
+                                  <span className="text-slate-500 italic">Esta cuenta no tiene análisis configurados como obligatorios. Puedes ingresarlos de forma opcional.</span>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* 1. Auxiliar RUT & Selector */}
+                            <div className="sm:col-span-2 p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                              <div className="flex justify-between items-center">
+                                <label className="font-bold text-slate-800 flex items-center gap-1.5">
+                                  <span>👤 Auxiliar / RUT</span>
+                                  {lineAcc?.requiereAuxiliarRUT && <span className="text-rose-600 font-bold">* (Obligatorio)</span>}
+                                </label>
+                                {auxiliaries.length > 0 && (
+                                  <select
+                                    onChange={(e) => {
+                                      const selAux = auxiliaries.find(a => a.rut === e.target.value);
+                                      if (selAux) {
+                                        const newLines = [...voucherForm.lines];
+                                        newLines[targetIdx] = {
+                                          ...newLines[targetIdx],
+                                          auxiliaryRut: selAux.rut,
+                                          auxiliaryName: selAux.name
+                                        };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }
+                                    }}
+                                    className="border border-slate-300 p-1 rounded text-xs bg-white text-slate-700"
+                                  >
+                                    <option value="">Seleccionar Auxiliar existente...</option>
+                                    {auxiliaries.map(aux => (
+                                      <option key={aux.id} value={aux.rut}>
+                                        {aux.rut} - {aux.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="RUT Auxiliar (ej. 76.123.456-7)"
+                                  value={currentLine.auxiliaryRut || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], auxiliaryRut: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded font-mono ${lineAcc?.requiereAuxiliarRUT && !currentLine.auxiliaryRut ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Nombre o Razón Social Auxiliar"
+                                  value={currentLine.auxiliaryName || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], auxiliaryName: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className="border border-slate-300 p-2 w-full rounded bg-white"
+                                />
+                              </div>
+                            </div>
+
+                            {/* 2. Documento Referencia / No SII */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="font-bold text-slate-800 block">
+                                  📄 N° Documento / Ref DTE
+                                  {lineAcc?.requiereDocumento && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                                </label>
+                                {nonSiiDocTypes.length > 0 && (
+                                  <select
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        const docObj = nonSiiDocTypes.find(d => d.code === e.target.value);
+                                        const prefix = docObj ? `${docObj.code} ` : '';
+                                        const curVal = currentLine.documentRef || '';
+                                        const newVal = curVal.includes(' ') ? `${prefix}${curVal.split(' ').slice(1).join(' ')}` : `${prefix}${curVal}`;
+                                        const newLines = [...voucherForm.lines];
+                                        newLines[targetIdx] = { ...newLines[targetIdx], documentRef: newVal.trim() };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }
+                                    }}
+                                    className="border border-slate-300 p-0.5 rounded text-[11px] bg-slate-50 text-slate-700 max-w-[150px]"
+                                  >
+                                    <option value="">Tipo Doc no SII...</option>
+                                    {nonSiiDocTypes.map(d => (
+                                      <option key={d.id} value={d.code}>{d.code} - {d.name}</option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                              <input
+                                type="text"
+                                placeholder="Ej. FAC 1023, BOL 554, ND 12"
+                                value={currentLine.documentRef || ''}
+                                onChange={(e) => {
+                                  const newLines = [...voucherForm.lines];
+                                  newLines[targetIdx] = { ...newLines[targetIdx], documentRef: e.target.value };
+                                  setVoucherForm({ ...voucherForm, lines: newLines });
+                                }}
+                                className={`border p-2 w-full rounded font-mono ${lineAcc?.requiereDocumento && !currentLine.documentRef ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                              />
+                            </div>
+
+                            {/* 3. Centro de Costos */}
+                            <div>
+                              <label className="font-bold text-slate-800 block mb-1">
+                                🏢 Centro de Costos
+                                {lineAcc?.requiereCentroCosto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                              </label>
+                              {costCenters.length > 0 ? (
+                                <select
+                                  value={currentLine.costCenter || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], costCenter: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereCentroCosto && !currentLine.costCenter ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                >
+                                  <option value="">-- Seleccionar Centro de Costos --</option>
+                                  {costCenters.map(cc => (
+                                    <option key={cc.id} value={cc.code}>
+                                      {cc.code} - {cc.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="Ej. ADMINISTRACION, VENTAS"
+                                  value={currentLine.costCenter || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], costCenter: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereCentroCosto && !currentLine.costCenter ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                />
+                              )}
+                            </div>
+
+                            {/* 4. Ref. Bancaria / N° Cheque */}
+                            <div>
+                              <label className="font-bold text-slate-800 block mb-1">
+                                🏦 Ref Bancaria / N° Cheque / Cartola
+                                {lineAcc?.requiereConciliacionBancaria && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="Ej. TRF 98123, CHQ 00192"
+                                value={currentLine.bankDocRef || ''}
+                                onChange={(e) => {
+                                  const newLines = [...voucherForm.lines];
+                                  newLines[targetIdx] = { ...newLines[targetIdx], bankDocRef: e.target.value };
+                                  setVoucherForm({ ...voucherForm, lines: newLines });
+                                }}
+                                className={`border p-2 w-full rounded font-mono ${lineAcc?.requiereConciliacionBancaria && !currentLine.bankDocRef ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                              />
+                            </div>
+
+                            {/* 5. Fecha de Vencimiento */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="font-bold text-slate-800">
+                                  📅 Fecha de Vencimiento
+                                  {lineAcc?.requiereVencimiento && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                                </label>
+                                {voucherForm.date && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      try {
+                                        const parts = voucherForm.date.split('-');
+                                        if (parts.length === 3) {
+                                          const dt = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                          dt.setDate(dt.getDate() + 30);
+                                          const calculated = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+                                          const newLines = [...voucherForm.lines];
+                                          newLines[targetIdx] = { ...newLines[targetIdx], dueDate: calculated };
+                                          setVoucherForm({ ...voucherForm, lines: newLines });
+                                        }
+                                      } catch {}
+                                    }}
+                                    className="text-[11px] text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                                  >
+                                    +30 días emisión ({voucherForm.date})
+                                  </button>
+                                )}
+                              </div>
+                              <input
+                                type="date"
+                                value={currentLine.dueDate || ''}
+                                onChange={(e) => {
+                                  const newLines = [...voucherForm.lines];
+                                  newLines[targetIdx] = { ...newLines[targetIdx], dueDate: e.target.value };
+                                  setVoucherForm({ ...voucherForm, lines: newLines });
+                                }}
+                                className={`border p-2 w-full rounded ${lineAcc?.requiereVencimiento && !currentLine.dueDate ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                              />
+                            </div>
+
+                            {/* 6. Ítem de Gasto */}
+                            <div>
+                              <label className="font-bold text-slate-800 block mb-1">
+                                🏷️ Ítem de Gasto
+                                {lineAcc?.requiereItemGasto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                              </label>
+                              {expenseItems.length > 0 ? (
+                                <select
+                                  value={currentLine.expenseItem || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], expenseItem: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereItemGasto && !currentLine.expenseItem ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                >
+                                  <option value="">-- Seleccionar Ítem de Gasto --</option>
+                                  {expenseItems.map(item => (
+                                    <option key={item.id} value={item.code}>
+                                      {item.code} - {item.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="Ej. ARRIENDOS, COMBUSTIBLES"
+                                  value={currentLine.expenseItem || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], expenseItem: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereItemGasto && !currentLine.expenseItem ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                />
+                              )}
+                            </div>
+
+                            {/* 7. Proyecto */}
+                            <div>
+                              <label className="font-bold text-slate-800 block mb-1">
+                                🏗️ Proyecto / Obra
+                                {lineAcc?.requiereProyecto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                              </label>
+                              {projects.length > 0 ? (
+                                <select
+                                  value={currentLine.project || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], project: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereProyecto && !currentLine.project ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                >
+                                  <option value="">-- Seleccionar Proyecto --</option>
+                                  {projects.map(p => (
+                                    <option key={p.id} value={p.code}>
+                                      {p.code} - {p.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="Ej. OBRA COSTANERA, PROYECTO A"
+                                  value={currentLine.project || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], project: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereProyecto && !currentLine.project ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                />
+                              )}
+                            </div>
+
+                            {/* 8. Producto */}
+                            <div>
+                              <label className="font-bold text-slate-800 block mb-1">
+                                📦 Producto / Servicio
+                                {lineAcc?.requiereProducto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                              </label>
+                              {products.length > 0 ? (
+                                <select
+                                  value={currentLine.product || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], product: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereProducto && !currentLine.product ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                >
+                                  <option value="">-- Seleccionar Producto --</option>
+                                  {products.map(p => (
+                                    <option key={p.id} value={p.code}>
+                                      {p.code} - {p.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="Ej. MERCADERIA TIPO A"
+                                  value={currentLine.product || ''}
+                                  onChange={(e) => {
+                                    const newLines = [...voucherForm.lines];
+                                    newLines[targetIdx] = { ...newLines[targetIdx], product: e.target.value };
+                                    setVoucherForm({ ...voucherForm, lines: newLines });
+                                  }}
+                                  className={`border p-2 w-full rounded ${lineAcc?.requiereProducto && !currentLine.product ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                />
+                              )}
+                            </div>
+
+                            {/* 9. Dynamic Custom Analyses */}
+                            {customCols.map(col => {
+                              const isReq = isCustomAnalysisRequired(lineAcc, col);
+                              const val = currentLine.customAnalyses?.[col] || '';
+                              const colItems = customAnalysisItems.filter(item => (item.analysisColumnName === col || (item as any).analysisName === col) && item.estado !== 'Inactivo');
+
+                              return (
+                                <div key={col}>
+                                  <label className="font-bold text-slate-800 block mb-1">
+                                    ⚙️ {col}
+                                    {isReq && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
+                                  </label>
+                                  {colItems.length > 0 ? (
+                                    <select
+                                      value={val}
+                                      onChange={(e) => {
+                                        const newLines = [...voucherForm.lines];
+                                        const updatedCustom = { ...(newLines[targetIdx].customAnalyses || {}), [col]: e.target.value };
+                                        newLines[targetIdx] = { ...newLines[targetIdx], customAnalyses: updatedCustom };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className={`border p-2 w-full rounded ${isReq && !val ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                    >
+                                      <option value="">-- Seleccionar {col} --</option>
+                                      {colItems.map(item => (
+                                        <option key={item.id} value={item.code}>
+                                          {item.code} - {item.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      placeholder={`Valor para ${col}...`}
+                                      value={val}
+                                      onChange={(e) => {
+                                        const newLines = [...voucherForm.lines];
+                                        const updatedCustom = { ...(newLines[targetIdx].customAnalyses || {}), [col]: e.target.value };
+                                        newLines[targetIdx] = { ...newLines[targetIdx], customAnalyses: updatedCustom };
+                                        setVoucherForm({ ...voucherForm, lines: newLines });
+                                      }}
+                                      className={`border p-2 w-full rounded ${isReq && !val ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'}`}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const lineToDistribute = targetIdx;
+                              setEditingAnalysisLineIdx(null);
+                              setDistributingLineIdx(lineToDistribute);
+                            }}
+                            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                          >
+                            <span>✂️</span>
+                            <span>Distribuir esta Línea (CC / Gastos / Cuentas)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingAnalysisLineIdx(null)}
+                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                          >
+                            ✓ Listo / Aplicar Análisis
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -5212,6 +5874,20 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           rcvDocuments={rcvDocuments}
           vouchers={vouchers}
           fiscalYears={fiscalYears}
+        />
+      )}
+
+      {/* TAB: ANALISIS DE CUENTAS */}
+      {activeTab === 'analisisCuentas' && (
+        <AnalisisCuentasView
+          studyId={studyId}
+          company={company}
+          accounts={accounts}
+          vouchers={vouchers}
+          fiscalYears={fiscalYears}
+          auxiliaries={auxiliaries}
+          rcvDocuments={rcvDocuments}
+          onVouchersUpdated={fetchData}
         />
       )}
 
@@ -5285,17 +5961,24 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         />
       )}
 
-      {/* TAB: CONCILIACIÓN BANCARIA */}
-      {activeTab === 'conciliacionBancaria' && (
+      {/* TAB: CONCILIACIÓN BANCARIA (Se mantiene montado para preservar el trabajo en progreso al navegar por las pestañas) */}
+      <div className={activeTab === 'conciliacionBancaria' ? 'block' : 'hidden'}>
         <ConciliacionBancariaView
           studyId={studyId}
           company={company}
           accounts={accounts}
           vouchers={vouchers}
           fiscalYears={fiscalYears}
+          auxiliaries={auxiliaries}
+          rcvDocuments={rcvDocuments}
+          costCenters={costCenters}
+          expenseItems={expenseItems}
+          projects={projects}
+          products={products}
+          customAnalysisItems={customAnalysisItems}
           onVouchersUpdated={fetchData}
         />
-      )}
+      </div>
 
       {/* TAB: CARGA MASIVA COMPROBANTES */}
       {activeTab === 'cargaMasiva' && (
@@ -5343,6 +6026,46 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           accounts={accounts}
           vouchers={vouchers}
           onRefreshData={fetchData}
+        />
+      )}
+
+      {/* TAB: TABLAS Y CATÁLOGOS MAESTROS DE ANÁLISIS */}
+      {activeTab === 'tablasAnalisis' && (
+        <TablasAnalisisMasterView
+          studyId={studyId}
+          company={company}
+          isReadOnly={isAnalyst}
+          costCenters={costCenters}
+          expenseItems={expenseItems}
+          nonSiiDocTypes={nonSiiDocTypes}
+          projects={projects}
+          products={products}
+          customAnalysisItems={customAnalysisItems}
+          onRefreshData={fetchData}
+        />
+      )}
+
+      {/* MODAL DE DISTRIBUCIÓN DE LÍNEA DE COMPROBANTE */}
+      {distributingLineIdx !== null && voucherForm && voucherForm.lines[distributingLineIdx] && (
+        <VoucherLineDistributionModal
+          isOpen={distributingLineIdx !== null}
+          sourceLine={voucherForm.lines[distributingLineIdx]}
+          lineIndex={distributingLineIdx}
+          accounts={accounts}
+          costCenters={costCenters}
+          expenseItems={expenseItems}
+          nonSiiDocTypes={nonSiiDocTypes}
+          projects={projects}
+          products={products}
+          customAnalysisItems={customAnalysisItems}
+          customColumns={company.customAccountColumns || []}
+          onApplyDistribution={(lineIdx, newLines) => {
+            const updatedLines = [...voucherForm.lines];
+            updatedLines.splice(lineIdx, 1, ...newLines);
+            setVoucherForm({ ...voucherForm, lines: updatedLines });
+            setDistributingLineIdx(null);
+          }}
+          onClose={() => setDistributingLineIdx(null)}
         />
       )}
 

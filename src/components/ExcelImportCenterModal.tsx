@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, setDoc, doc } from 'firebase/firestore';
 import { Company, ChartOfAccount, Auxiliary, Voucher, VoucherLine, FiscalPeriodYear } from '../types';
 import { useProcess } from '../context/ProcessContext';
 import { logAuditEvent } from '../utils/auditLogger';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface ExcelImportCenterModalProps {
   isOpen: boolean;
@@ -231,6 +232,9 @@ export default function ExcelImportCenterModal({
             const userEmail = auth.currentUser?.email || '';
             const nowIso = new Date().toISOString();
 
+            const existingAuxSnap = await getDocs(collection(companyRef, 'auxiliaries'));
+            const existingAuxList = existingAuxSnap.docs.map(d => ({ id: d.id, ...d.data() } as Auxiliary));
+
             for (let i = 0; i < rows.length; i++) {
               const row = rows[i];
               const [rut, name, roleStr, email, phone, banco, tipoCtaStr, numCta, accCode1, accCode2, estadoStr] = row;
@@ -263,7 +267,7 @@ export default function ExcelImportCenterModal({
               else if (tCtaLower.includes('rut')) tipoCuenta = 'RUT';
 
               const auxPayload: Omit<Auxiliary, 'id'> = {
-                rut: rut.trim().toLowerCase(),
+                rut: rut.trim(),
                 name: name.trim(),
                 role,
                 email: email || '',
@@ -283,7 +287,15 @@ export default function ExcelImportCenterModal({
                 lastModifiedAt: nowIso
               };
 
-              await addDoc(collection(companyRef, 'auxiliaries'), auxPayload);
+              const cleanImportRut = rut.replace(/[^0-9kK]/g, '').toUpperCase();
+              const existingAux = existingAuxList.find(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanImportRut);
+
+              if (existingAux) {
+                await setDoc(doc(companyRef, 'auxiliaries', existingAux.id), auxPayload, { merge: true });
+              } else {
+                const newRef = await addDoc(collection(companyRef, 'auxiliaries'), auxPayload);
+                existingAuxList.push({ id: newRef.id, ...auxPayload });
+              }
               successCount++;
             }
           } else if (activeTab === 'comprobantes') {
@@ -382,8 +394,9 @@ export default function ExcelImportCenterModal({
                 stage: `N° ${vData.voucherNumber}: ${vData.gloss}`
               });
 
-              const totalDebit = vData.lines.reduce((s, l) => s + l.debit, 0);
-              const totalCredit = vData.lines.reduce((s, l) => s + l.credit, 0);
+              const sanitizedLines = sanitizeVoucherLines(vData.lines, accounts);
+              const totalDebit = sanitizedLines.reduce((s, l) => s + l.debit, 0);
+              const totalCredit = sanitizedLines.reduce((s, l) => s + l.credit, 0);
 
               const voucherPayload: Omit<Voucher, 'id'> = {
                 voucherNumber: vData.voucherNumber,
@@ -391,7 +404,7 @@ export default function ExcelImportCenterModal({
                 period: vData.period,
                 type: vData.type,
                 gloss: vData.gloss,
-                lines: vData.lines,
+                lines: sanitizedLines,
                 totalDebit,
                 totalCredit,
                 status: 'Valido',

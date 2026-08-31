@@ -4,6 +4,7 @@ import { auth, db } from '../lib/firebase';
 import { collection, query, where, getDocs, updateDoc, collectionGroup } from 'firebase/firestore';
 import { Lock, Mail, Eye, EyeOff, LogIn, ShieldCheck, Building2, KeyRound, ArrowLeft, CheckCircle2, MessageCircle } from 'lucide-react';
 import { logAuditEvent } from '../utils/auditLogger';
+import { APP_VERSION } from '../constants/version';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -46,7 +47,7 @@ export default function Login() {
         try {
           const qSuper = query(collection(db, 'superUsers'), where('email', '==', cleanEmail));
           const snapSuper = await getDocs(qSuper);
-          if (!snapSuper.empty || cleanEmail === 'rcampos@pulsocontable.cl') {
+          if (!snapSuper.empty || cleanEmail === 'rcampos@pulsocontable.cl' || cleanEmail === 'campos.ramon@gmail.com') {
             userFound = true;
           }
         } catch (e) {}
@@ -136,7 +137,7 @@ export default function Login() {
               if (!expectedPass || expectedPass === password) {
                 userAuthorized = true;
               }
-            } else if (cleanEmail === 'rcampos@pulsocontable.cl') {
+            } else if (cleanEmail === 'rcampos@pulsocontable.cl' || cleanEmail === 'campos.ramon@gmail.com') {
               userAuthorized = true;
             }
           } catch (errSuper: any) {
@@ -451,7 +452,7 @@ export default function Login() {
               </p>
               <p className="text-slate-400">Santiago, Chile</p>
               <p className="text-[10px] text-slate-400 font-medium pt-1">
-                Gest_OK® es una Marca Registrada. Todos los derechos reservados.
+                Gest_OK® <span className="font-mono text-indigo-600 font-bold px-1 bg-indigo-50 border border-indigo-100 rounded">{APP_VERSION}</span> — Marca Registrada. Todos los derechos reservados.
               </p>
             </div>
           </div>

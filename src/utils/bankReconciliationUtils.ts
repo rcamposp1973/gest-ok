@@ -120,10 +120,10 @@ export function sanitizeForFirestore(obj: any): any {
 }
 
 /**
- * Computes full mathematical reconciliation summary
+ * Computes full mathematical reconciliation summary considering cumulative historical pending items
  */
 export function calculateReconciliationMath(
-  statementLines: BankStatementLine[],
+  allStatementLines: (BankStatementLine & { period?: string })[],
   allBankVouchers: {
     voucher: Voucher;
     line: any;
@@ -132,8 +132,8 @@ export function calculateReconciliationMath(
     date: string;
     period: string;
     gloss: string;
-    isMatchedInCurrent: boolean;
-    isMatchedInOther: boolean;
+    isMatchedInCurrent?: boolean;
+    isMatchedInOther?: boolean;
     matchedInOtherPeriod?: string;
   }[],
   bankInitialBalance: number,
@@ -141,56 +141,134 @@ export function calculateReconciliationMath(
   bookFinalBalance: number,
   selectedPeriod: string
 ) {
-  // 1. Unmatched statement charges
-  const unmatchedCharges = statementLines
-    .filter(l => l.matchedStatus === 'Pendiente' && l.charge > 0)
-    .reduce((sum, l) => sum + l.charge, 0);
+  // Helper to determine cartola period of a statement line
+  const getLineCartolaPeriod = (line: BankStatementLine & { period?: string }) => {
+    if (line.date && line.date.length >= 7) return line.date.slice(0, 7);
+    return line.period || selectedPeriod;
+  };
 
-  // 2. Unmatched statement deposits
-  const unmatchedDeposits = statementLines
-    .filter(l => l.matchedStatus === 'Pendiente' && l.deposit > 0)
-    .reduce((sum, l) => sum + l.deposit, 0);
+  // Build map of voucherId -> voucher.period for quick lookup
+  const voucherPeriodMap = new Map<string, string>();
+  allBankVouchers.forEach(bv => {
+    if (bv.voucher && bv.voucher.id) {
+      voucherPeriodMap.set(bv.voucher.id, bv.period);
+    }
+  });
 
-  // 3. Matched in current statement
-  const matchedInCurrentIds = new Set(
-    statementLines.filter(l => l.matchedStatus === 'Conciliado' && l.matchedVoucherId).map(l => l.matchedVoucherId!)
-  );
+  // Filter statement lines that occurred on or before selectedPeriod (P_cartola <= selectedPeriod)
+  const validStatementLines = (allStatementLines || []).filter(l => {
+    const p = getLineCartolaPeriod(l);
+    return p <= selectedPeriod;
+  });
 
-  // 4. Deposits in transit
-  const depositsInTransit = allBankVouchers
-    .filter(bv => bv.period <= selectedPeriod && bv.debit > 0 && !matchedInCurrentIds.has(bv.voucher.id) && !bv.isMatchedInOther)
-    .reduce((sum, bv) => sum + bv.debit, 0);
+  // 1. Unmatched statement charges as of selectedPeriod:
+  // Cartola charges on/before selectedPeriod that were NOT matched with a voucher on/before selectedPeriod
+  const unmatchedCharges = validStatementLines
+    .filter(l => {
+      if ((l.charge || 0) <= 0) return false;
+      if (l.matchedStatus === 'No_Corresponde') return false;
+      if (l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return true;
+      const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+      return vPeriod > selectedPeriod; // Matched with a future voucher -> still pending as of selectedPeriod
+    })
+    .reduce((sum, l) => sum + (l.charge || 0), 0);
 
-  // 5. Outstanding checks
-  const outstandingChecks = allBankVouchers
-    .filter(bv => bv.period <= selectedPeriod && bv.credit > 0 && !matchedInCurrentIds.has(bv.voucher.id) && !bv.isMatchedInOther)
-    .reduce((sum, bv) => sum + bv.credit, 0);
+  // 2. Unmatched statement deposits as of selectedPeriod:
+  // Cartola deposits on/before selectedPeriod that were NOT matched with a voucher on/before selectedPeriod
+  const unmatchedDeposits = validStatementLines
+    .filter(l => {
+      if ((l.deposit || 0) <= 0) return false;
+      if (l.matchedStatus === 'No_Corresponde') return false;
+      if (l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return true;
+      const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+      return vPeriod > selectedPeriod; // Matched with a future voucher -> still pending as of selectedPeriod
+    })
+    .reduce((sum, l) => sum + (l.deposit || 0), 0);
 
-  // 6. Cross-Period Regularizations
-  const futureMatchedCharges = statementLines
-    .filter(l => l.matchedStatus === 'Conciliado' && l.charge > 0 && l.matchedVoucherPeriod && l.matchedVoucherPeriod > selectedPeriod)
-    .reduce((sum, l) => sum + l.charge, 0);
+  // Build map of voucherId -> cartola line period for all matched cartola lines
+  const matchedCartolaPeriodMap = new Map<string, string>();
+  (allStatementLines || []).forEach(l => {
+    if (l.matchedStatus === 'Conciliado' && l.matchedVoucherId) {
+      const cPeriod = getLineCartolaPeriod(l);
+      matchedCartolaPeriodMap.set(l.matchedVoucherId, cPeriod);
+    }
+  });
 
-  const futureMatchedDeposits = statementLines
-    .filter(l => l.matchedStatus === 'Conciliado' && l.deposit > 0 && l.matchedVoucherPeriod && l.matchedVoucherPeriod > selectedPeriod)
-    .reduce((sum, l) => sum + l.deposit, 0);
+  // Filter accounting vouchers on or before selectedPeriod (P_voucher <= selectedPeriod)
+  const validVouchers = (allBankVouchers || []).filter(bv => bv.period <= selectedPeriod);
 
-  // Calculated Reconciled statement balance
-  const reconciledStatementBalance = bankFinalBalance + depositsInTransit - outstandingChecks;
+  // 4. Deposits in transit:
+  // Accounting debits on/before selectedPeriod not matched with a cartola line on/before selectedPeriod
+  const depositsInTransit = validVouchers
+    .filter(bv => {
+      if ((bv.debit || 0) <= 0) return false;
+      const cPeriod = matchedCartolaPeriodMap.get(bv.voucher.id);
+      if (!cPeriod) return true; // Unmatched -> in transit
+      return cPeriod > selectedPeriod; // Matched with a future cartola line -> in transit as of selectedPeriod
+    })
+    .reduce((sum, bv) => sum + (bv.debit || 0), 0);
 
-  // Adjusted Book balance
-  const adjustedBookBalance = bookFinalBalance + unmatchedDeposits - unmatchedCharges + futureMatchedDeposits - futureMatchedCharges;
+  // 5. Outstanding checks / expenses in transit:
+  // Accounting credits on/before selectedPeriod not matched with a cartola line on/before selectedPeriod
+  const outstandingChecks = validVouchers
+    .filter(bv => {
+      if ((bv.credit || 0) <= 0) return false;
+      const cPeriod = matchedCartolaPeriodMap.get(bv.voucher.id);
+      if (!cPeriod) return true; // Unmatched -> in transit
+      return cPeriod > selectedPeriod; // Matched with a future cartola line -> in transit as of selectedPeriod
+    })
+    .reduce((sum, bv) => sum + (bv.credit || 0), 0);
 
-  // Final difference
-  const difference = Math.abs(reconciledStatementBalance - adjustedBookBalance);
-  const isBalanced = difference === 0;
+  // Cross-period regularizations reference
+  const crossPeriodLines = validStatementLines.filter(l => {
+    if (l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return false;
+    const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+    const cPeriod = getLineCartolaPeriod(l);
+    return vPeriod !== cPeriod;
+  });
 
-  const crossPeriodLines = statementLines.filter(
-    l => l.matchedStatus === 'Conciliado' && l.matchedVoucherPeriod && l.matchedVoucherPeriod !== selectedPeriod
-  );
+  const futureMatchedCharges = validStatementLines
+    .filter(l => {
+      if ((l.charge || 0) <= 0 || l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return false;
+      const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+      return vPeriod > selectedPeriod;
+    })
+    .reduce((sum, l) => sum + (l.charge || 0), 0);
 
-  const totalChargesMonth = statementLines.reduce((s, l) => s + (l.charge || 0), 0);
-  const totalDepositsMonth = statementLines.reduce((s, l) => s + (l.deposit || 0), 0);
+  const futureMatchedDeposits = validStatementLines
+    .filter(l => {
+      if ((l.deposit || 0) <= 0 || l.matchedStatus !== 'Conciliado' || !l.matchedVoucherId) return false;
+      const vPeriod = l.matchedVoucherPeriod || voucherPeriodMap.get(l.matchedVoucherId) || '';
+      return vPeriod > selectedPeriod;
+    })
+    .reduce((sum, l) => sum + (l.deposit || 0), 0);
+
+  // METHOD 1: ENFOQUE SALDO SEGÚN CARTOLA BANCO -> LLEGA A SALDO CONTABILIDAD
+  // Formula: Saldo Cartola + Cargos no Contabilizados - Abonos no Contabilizados - Egresos en Tránsito + Depósitos en Tránsito
+  const calculatedBookBalance =
+    bankFinalBalance +
+    unmatchedCharges -
+    unmatchedDeposits -
+    outstandingChecks +
+    depositsInTransit;
+
+  // METHOD 2: ENFOQUE SALDO SEGÚN LIBRO MAYOR -> LLEGA A SALDO CARTOLA BANCO
+  // Formula: Saldo Contabilidad + Egresos en Tránsito - Depósitos en Tránsito - Cargos no Contabilizados + Abonos no Contabilizados
+  const calculatedBankBalance =
+    bookFinalBalance +
+    outstandingChecks -
+    depositsInTransit -
+    unmatchedCharges +
+    unmatchedDeposits;
+
+  // Final difference to target balances
+  const difference = Math.abs(calculatedBookBalance - bookFinalBalance);
+  const isBalanced = Math.round(difference) === 0;
+
+  // Month totals (for current selected period cartola lines)
+  const currentMonthLines = (allStatementLines || []).filter(l => getLineCartolaPeriod(l) === selectedPeriod);
+  const totalChargesMonth = currentMonthLines.reduce((s, l) => s + (l.charge || 0), 0);
+  const totalDepositsMonth = currentMonthLines.reduce((s, l) => s + (l.deposit || 0), 0);
 
   return {
     unmatchedCharges,
@@ -200,8 +278,10 @@ export function calculateReconciliationMath(
     futureMatchedCharges,
     futureMatchedDeposits,
     crossPeriodLines,
-    reconciledStatementBalance,
-    adjustedBookBalance,
+    calculatedBookBalance,
+    calculatedBankBalance,
+    reconciledStatementBalance: calculatedBookBalance, // Backward compatibility
+    adjustedBookBalance: calculatedBankBalance, // Backward compatibility
     difference,
     isBalanced,
     totalChargesMonth,

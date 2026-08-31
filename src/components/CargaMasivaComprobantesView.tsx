@@ -4,6 +4,7 @@ import { collection, doc, writeBatch } from 'firebase/firestore';
 import { Company, ChartOfAccount, Voucher, VoucherLine, FiscalPeriodYear } from '../types';
 import { useProcess } from '../context/ProcessContext';
 import { logAuditEvent } from '../utils/auditLogger';
+import { validateVoucherLine, sanitizeVoucherLines } from '../utils/voucherValidation';
 import * as XLSX from 'xlsx';
 
 interface CargaMasivaComprobantesViewProps {
@@ -24,7 +25,7 @@ interface ParsedVoucherDraft {
   period: string;
   type: 'Ingreso' | 'Egreso' | 'Traspaso';
   gloss: string;
-  lines: (VoucherLine & { isAccountMissing?: boolean })[];
+  lines: (VoucherLine & { isAccountMissing?: boolean; requiredErrors?: string[] })[];
   totalDebit: number;
   totalCredit: number;
   isValid: boolean;
@@ -68,7 +69,7 @@ function parseChileanNumber(val: any): number {
 
 // Helper: Parse any date format into YYYY-MM-DD
 function parseDateToYYYYMMDD(rawDate: any): string {
-  if (!rawDate) return new Date().toISOString().split('T')[0];
+  if (rawDate === null || rawDate === undefined || rawDate === '') return '';
 
   if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
     const y = rawDate.getFullYear();
@@ -92,6 +93,7 @@ function parseDateToYYYYMMDD(rawDate: any): string {
   }
 
   const str = String(rawDate).trim();
+  if (!str) return '';
   if (str.includes('T')) {
     return str.split('T')[0];
   }
@@ -114,7 +116,17 @@ function parseDateToYYYYMMDD(rawDate: any): string {
     return `${year}-${month}-${day}`;
   }
 
-  return new Date().toISOString().split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+
+  return str;
+}
+
+// Helper: Safely get string from a cell preserving 0, 0000, and non-string types
+function getSafeCellString(row: any[], idx: number): string {
+  if (idx < 0 || !row || idx >= row.length) return '';
+  const val = row[idx];
+  if (val === null || val === undefined) return '';
+  return String(val).trim();
 }
 
 export default function CargaMasivaComprobantesView({
@@ -139,6 +151,9 @@ export default function CargaMasivaComprobantesView({
 
   const companyRef = doc(db, 'studies', studyId, 'companies', company.id);
 
+  // Anti-double click protection state
+  const [isCommitting, setIsCommitting] = useState<boolean>(false);
+
   // Maximum existing voucher number in the system
   const maxExistingNum = vouchers.length > 0 ? Math.max(...vouchers.map(v => v.voucherNumber || 0)) : 0;
   const existingVoucherNumbers = new Set(vouchers.map(v => v.voucherNumber).filter(Boolean));
@@ -162,19 +177,30 @@ export default function CargaMasivaComprobantesView({
     });
 
     let startIdx = 0;
-    const colIdxMap = {
+    const colIdxMap: { [key: string]: number } = {
       vNum: 0,
       vDate: 1,
       vType: 2,
       vGloss: 3,
       accCode: 4,
-      debit: 5,
-      credit: 6,
-      auxRut: 7,
-      auxName: 8,
-      lineGloss: 9,
-      refDte: 10
+      debit: 6,
+      credit: 7,
+      lineGloss: 8,
+      auxRut: 9,
+      auxName: 10,
+      docType: 11,
+      docNum: 12,
+      refDte: -1,
+      costCenter: 13,
+      bankDocRef: 14,
+      dueDate: 15,
+      expenseItem: 16,
+      project: 17,
+      product: 18
     };
+
+    const customColsMap: { [colName: string]: number } = {};
+    const companyCustomCols = company.customAccountColumns || [];
 
     // Detect header row dynamically
     const firstRowStr = (rows[0] || []).map(cell => String(cell).toLowerCase()).join(' ');
@@ -188,42 +214,187 @@ export default function CargaMasivaComprobantesView({
       const headerRow = (rows[0] || []).map(cell => String(cell).toLowerCase().trim());
       
       headerRow.forEach((head, idx) => {
-        if (head === 'codigocuenta' || head === 'codigo cuenta' || head === 'código cuenta' || head === 'cod_cuenta' || (head.includes('codigo') && head.includes('cuenta')) || head === 'codigo') {
+        // 1. Account Code
+        if (
+          head === 'codigocuenta' ||
+          head === 'codigo cuenta' ||
+          head === 'código cuenta' ||
+          head === 'cod_cuenta' ||
+          head === 'codcuenta' ||
+          (head.includes('codigo') && head.includes('cuenta')) ||
+          head === 'codigo'
+        ) {
           colIdxMap.accCode = idx;
         }
-        else if (head === 'numcomprobante' || head === 'nrocomprobante' || head === 'num_comprobante' || head === 'num comprobante' || head === 'nro' || head === 'n°' || head.includes('folio') || head.includes('asiento')) {
+        // 2. Voucher Number
+        else if (
+          head === 'numerocomprobante' ||
+          head === 'numcomprobante' ||
+          head === 'nrocomprobante' ||
+          head === 'num_comprobante' ||
+          head === 'num comprobante' ||
+          head === 'nro comprobante' ||
+          head === 'n° comprobante' ||
+          head === 'nro' ||
+          head === 'n°' ||
+          head.includes('folio') ||
+          head.includes('asiento')
+        ) {
           colIdxMap.vNum = idx;
         }
         else if (head === 'comprobante' && colIdxMap.vNum === 0) {
           colIdxMap.vNum = idx;
         }
+        // 3. Due Date / Fecha Vencimiento (CRITICAL: MUST CHECK BEFORE GENERAL FECHA!)
+        else if (
+          head.includes('vencimiento') ||
+          head.includes('duedate') ||
+          head.includes('fechavto') ||
+          head.includes('f.venc') ||
+          head === 'vto'
+        ) {
+          colIdxMap.dueDate = idx;
+        }
+        // 4. Voucher Date (Fecha Comprobante)
         else if (head.includes('fecha') || head.includes('date')) {
           colIdxMap.vDate = idx;
         }
-        else if (head.includes('tipo')) {
+        // 5. Document Type (TipoDoc) (CRITICAL: MUST CHECK BEFORE TIPO COMPROBANTE!)
+        else if (
+          head === 'tipodoc' ||
+          head === 'tipo_doc' ||
+          head === 'tipodocumento' ||
+          head === 'tipo documento' ||
+          head === 'tipo dte'
+        ) {
+          colIdxMap.docType = idx;
+        }
+        // 6. Voucher Type (Ingreso / Egreso / Traspaso)
+        else if (
+          head.includes('tipocomprobante') ||
+          head.includes('tipo_comprobante') ||
+          head.includes('tipo comprobante') ||
+          head.includes('tipo asiento') ||
+          (head.includes('tipo') && !head.includes('doc'))
+        ) {
           colIdxMap.vType = idx;
         }
-        else if (head === 'glosacomprobante' || head === 'glosa comprobante' || head === 'glosa asiento' || head === 'glosa' || head.includes('concepto')) {
+        // 7. Voucher Gloss
+        else if (
+          head === 'glosacomprobante' ||
+          head === 'glosa comprobante' ||
+          head === 'glosa asiento' ||
+          head === 'glosageneral' ||
+          head === 'glosa general' ||
+          head === 'concepto'
+        ) {
           colIdxMap.vGloss = idx;
         }
-        else if (head === 'glosalinea' || head === 'glosa linea' || head.includes('detalle')) {
+        // 8. Line Gloss
+        else if (
+          head === 'glosalinea' ||
+          head === 'glosa linea' ||
+          head.includes('detalle')
+        ) {
           colIdxMap.lineGloss = idx;
         }
-        else if (head.includes('debe') || head.includes('debit')) {
+        else if (head === 'glosa') {
+          if (colIdxMap.vGloss === 3) colIdxMap.vGloss = idx;
+          else colIdxMap.lineGloss = idx;
+        }
+        // 9. Debit
+        else if (head.includes('debe') || head.includes('debit') || head === 'cargo') {
           colIdxMap.debit = idx;
         }
-        else if (head.includes('haber') || head.includes('credit')) {
+        // 10. Credit
+        else if (head.includes('haber') || head.includes('credit') || head === 'abono') {
           colIdxMap.credit = idx;
         }
-        else if (head.includes('rut')) {
+        // 11. RUT Auxiliar
+        else if (head.includes('rut') || head === 'auxiliarrut' || head === 'rutauxiliar') {
           colIdxMap.auxRut = idx;
         }
-        else if (head.includes('nombreaux') || head.includes('auxiliar') || head.includes('razon') || head.includes('razón')) {
+        // 12. Aux Name / Razón Social
+        else if (
+          head.includes('razon') ||
+          head.includes('razón') ||
+          head.includes('nombreaux') ||
+          head.includes('nombre_aux') ||
+          head.includes('cli_prov') ||
+          head.includes('cliprov') ||
+          (head.includes('auxiliar') && !head.includes('rut'))
+        ) {
           colIdxMap.auxName = idx;
         }
-        else if (head.includes('ref') || head.includes('doc') || head.includes('factura')) {
+        // 13. Document Number
+        else if (
+          head === 'numerodoc' ||
+          head === 'nrodoc' ||
+          head === 'numdoc' ||
+          head === 'numero_doc' ||
+          head === 'numero doc' ||
+          head === 'nro doc' ||
+          head === 'foliodocumento' ||
+          head === 'factura' ||
+          head.includes('nrodocumento')
+        ) {
+          colIdxMap.docNum = idx;
+        }
+        // 14. Ref DTE / Ref Document
+        else if (
+          head.includes('refdte') ||
+          head.includes('ref_dte') ||
+          head.includes('ref dte') ||
+          head.includes('refdoc') ||
+          head.includes('refdocumento')
+        ) {
           colIdxMap.refDte = idx;
         }
+        // 15. Cost Center
+        else if (
+          head.includes('centrocosto') ||
+          head.includes('centro_costo') ||
+          head.includes('centro costo') ||
+          head === 'cc' ||
+          head.includes('c.costo')
+        ) {
+          colIdxMap.costCenter = idx;
+        }
+        // 16. Bank Ref
+        else if (
+          head.includes('refbanco') ||
+          head.includes('refbancaria') ||
+          head.includes('banco') ||
+          head.includes('conciliacion') ||
+          head.includes('cheque')
+        ) {
+          colIdxMap.bankDocRef = idx;
+        }
+        // 17. Expense Item
+        else if (
+          head.includes('itemgasto') ||
+          head.includes('item_gasto') ||
+          head.includes('ítem gasto') ||
+          head.includes('item gasto') ||
+          head.includes('clasificadorgasto')
+        ) {
+          colIdxMap.expenseItem = idx;
+        }
+        // 18. Project
+        else if (head.includes('proyecto') || head.includes('proy') || head.includes('obra')) {
+          colIdxMap.project = idx;
+        }
+        // 19. Product
+        else if (head.includes('producto') || head.includes('articulo') || head.includes('servicio')) {
+          colIdxMap.product = idx;
+        }
+
+        // Match custom columns
+        companyCustomCols.forEach(customCol => {
+          if (head === customCol.toLowerCase().trim() || head.includes(customCol.toLowerCase().trim())) {
+            customColsMap[customCol] = idx;
+          }
+        });
       });
     }
 
@@ -233,40 +404,100 @@ export default function CargaMasivaComprobantesView({
       period: string;
       type: 'Ingreso' | 'Egreso' | 'Traspaso';
       gloss: string;
-      lines: (VoucherLine & { isAccountMissing?: boolean })[];
+      lines: (VoucherLine & { isAccountMissing?: boolean; requiredErrors?: string[] })[];
     }>();
 
     const missingSet = new Set<string>();
+    let currentVoucherIndex = 1;
+    let lastWasEmptyLine = false;
+    let previousRawNum = '';
 
     for (let i = startIdx; i < rows.length; i++) {
       const row = rows[i];
-      if (!row || row.length === 0) continue;
+      if (!row || row.length === 0) {
+        lastWasEmptyLine = true;
+        continue;
+      }
 
-      const rawNumStr = String(row[colIdxMap.vNum] || '').trim();
+      const accCode = getSafeCellString(row, colIdxMap.accCode);
+      const debit = parseChileanNumber(colIdxMap.debit >= 0 ? row[colIdxMap.debit] : 0);
+      const credit = parseChileanNumber(colIdxMap.credit >= 0 ? row[colIdxMap.credit] : 0);
+      const rawNumStr = getSafeCellString(row, colIdxMap.vNum);
+
+      // Rule: Empty line acts as separator between distinct vouchers
+      const isBlankRow = !accCode && debit === 0 && credit === 0 && !getSafeCellString(row, colIdxMap.vGloss);
+      if (isBlankRow) {
+        lastWasEmptyLine = true;
+        continue;
+      }
+
+      if (lastWasEmptyLine) {
+        currentVoucherIndex++;
+        lastWasEmptyLine = false;
+      } else if (rawNumStr && previousRawNum && rawNumStr !== previousRawNum) {
+        currentVoucherIndex++;
+      }
+      previousRawNum = rawNumStr;
+
       const parsedNum = parseInt(rawNumStr, 10);
-      const vNumKey = !isNaN(parsedNum) ? String(parsedNum) : `auto_${i}`;
-      const fileNumVal = !isNaN(parsedNum) ? parsedNum : (i + 1);
+      const vNumKey = !isNaN(parsedNum) ? `num_${parsedNum}_grp_${currentVoucherIndex}` : `auto_grp_${currentVoucherIndex}`;
+      const fileNumVal = !isNaN(parsedNum) ? parsedNum : currentVoucherIndex;
 
-      const rawDateCell = row[colIdxMap.vDate];
-      const vDate = parseDateToYYYYMMDD(rawDateCell);
+      const rawDateCell = colIdxMap.vDate >= 0 ? row[colIdxMap.vDate] : null;
+      const vDate = parseDateToYYYYMMDD(rawDateCell) || new Date().toISOString().split('T')[0];
       const vPeriod = vDate.slice(0, 7);
 
-      const rawType = String(row[colIdxMap.vType] || '').trim();
+      const rawType = getSafeCellString(row, colIdxMap.vType);
       const vType = (['Ingreso', 'Egreso', 'Traspaso'].includes(rawType) ? rawType : 'Traspaso') as 'Ingreso' | 'Egreso' | 'Traspaso';
       
-      const vGloss = String(row[colIdxMap.vGloss] || 'Comprobante Importado').trim();
-      const accCode = String(row[colIdxMap.accCode] || '').trim();
+      const vGloss = getSafeCellString(row, colIdxMap.vGloss) || 'Comprobante Importado';
+
+      const auxRut = getSafeCellString(row, colIdxMap.auxRut);
+      const auxName = getSafeCellString(row, colIdxMap.auxName);
+      const lineGloss = getSafeCellString(row, colIdxMap.lineGloss) || vGloss;
       
-      const debit = parseChileanNumber(row[colIdxMap.debit]);
-      const credit = parseChileanNumber(row[colIdxMap.credit]);
+      // Combine document type and number if split across columns
+      const docTypeVal = getSafeCellString(row, colIdxMap.docType);
+      const docNumVal = getSafeCellString(row, colIdxMap.docNum);
+      const refDteVal = getSafeCellString(row, colIdxMap.refDte);
+      const bankDocRefVal = getSafeCellString(row, colIdxMap.bankDocRef);
 
-      const auxRut = String(row[colIdxMap.auxRut] || '').trim();
-      const auxName = String(row[colIdxMap.auxName] || '').trim();
-      const lineGloss = String(row[colIdxMap.lineGloss] || vGloss).trim();
-      const refDte = String(row[colIdxMap.refDte] || '').trim();
+      let refDte = refDteVal;
+      if (!refDte) {
+        if (docTypeVal && docNumVal) {
+          refDte = `${docTypeVal} ${docNumVal}`;
+        } else if (docNumVal) {
+          refDte = docNumVal;
+        } else if (docTypeVal) {
+          refDte = docTypeVal;
+        } else if (bankDocRefVal) {
+          refDte = bankDocRefVal;
+        }
+      } else if (docTypeVal && !refDte.toLowerCase().includes(docTypeVal.toLowerCase())) {
+        refDte = `${docTypeVal} ${refDte}`;
+      }
 
-      // Skip empty row
-      if (!accCode && debit === 0 && credit === 0) continue;
+      const costCenter = getSafeCellString(row, colIdxMap.costCenter);
+      let bankDocRef = bankDocRefVal;
+      if (!bankDocRef && (docNumVal || refDte)) {
+        bankDocRef = docNumVal || refDte;
+      }
+      
+      const rawDueDateCell = colIdxMap.dueDate >= 0 ? row[colIdxMap.dueDate] : null;
+      const dueDate = rawDueDateCell ? parseDateToYYYYMMDD(rawDueDateCell) : '';
+
+      const expenseItem = getSafeCellString(row, colIdxMap.expenseItem);
+      const project = getSafeCellString(row, colIdxMap.project);
+      const product = getSafeCellString(row, colIdxMap.product);
+
+      // Custom attributes extracted from row
+      const customAnalyses: { [key: string]: string } = {};
+      Object.entries(customColsMap).forEach(([colName, colIdx]) => {
+        if (colIdx >= 0 && row[colIdx] !== undefined) {
+          const val = getSafeCellString(row, colIdx);
+          if (val) customAnalyses[colName] = val;
+        }
+      });
 
       // Account lookup
       const matchedAccount = accountMap.get(accCode) || accountMap.get(normalizeCode(accCode));
@@ -276,7 +507,7 @@ export default function CargaMasivaComprobantesView({
         missingSet.add(accCode);
       }
 
-      const voucherLine: VoucherLine & { isAccountMissing?: boolean } = {
+      const voucherLine: VoucherLine & { isAccountMissing?: boolean; requiredErrors?: string[] } = {
         id: `line_${i}`,
         accountId: matchedAccount ? matchedAccount.id : `acc_${accCode}`,
         accountCode: accCode || 'SIN_CUENTA',
@@ -286,9 +517,23 @@ export default function CargaMasivaComprobantesView({
         auxiliaryRut: auxRut,
         auxiliaryName: auxName,
         documentRef: refDte,
+        costCenter,
+        bankDocRef,
+        dueDate,
+        expenseItem,
+        project,
+        product,
+        customAnalyses,
         gloss: lineGloss,
-        isAccountMissing: isMissing
+        isAccountMissing: isMissing,
+        requiredErrors: []
       };
+
+      // Perform deep analysis validation according to Chart of Accounts requirements
+      const lineValResult = validateVoucherLine(voucherLine, matchedAccount, companyCustomCols);
+      if (!lineValResult.isValid) {
+        voucherLine.requiredErrors = lineValResult.errors;
+      }
 
       if (!groupedByNumber.has(vNumKey)) {
         groupedByNumber.set(vNumKey, {
@@ -328,7 +573,7 @@ export default function CargaMasivaComprobantesView({
         errors.push(`El N° de comprobante ${val.fileNum} ya existe en el sistema para esta empresa. Use "Auto-numerar" para asignar folios nuevos sin conflicto.`);
       }
 
-      // Check balance
+      // Check balance (Debe = Haber)
       const diff = Math.abs(totalDebit - totalCredit);
       const isBalanced = diff < 0.01 && totalDebit > 0;
 
@@ -346,6 +591,13 @@ export default function CargaMasivaComprobantesView({
         const missingCodesStr = missingInVoucher.map(l => l.accountCode).join(', ');
         errors.push(`Cuentas no existen en Plan de Cuentas: [${missingCodesStr}]`);
       }
+
+      // Check required attributes on lines
+      val.lines.forEach(l => {
+        if (l.requiredErrors && l.requiredErrors.length > 0) {
+          errors.push(...l.requiredErrors);
+        }
+      });
 
       // Check empty lines
       if (val.lines.length === 0) {
@@ -438,6 +690,8 @@ export default function CargaMasivaComprobantesView({
 
   // Download Sample Templates
   const handleDownloadExcelTemplate = () => {
+    const customCols = company.customAccountColumns || [];
+    
     const sampleData = [
       {
         NumComprobante: 1,
@@ -450,7 +704,14 @@ export default function CargaMasivaComprobantesView({
         RutAuxiliar: '',
         NombreAuxiliar: '',
         GlosaLinea: 'Deposito Bancario Capital',
-        RefDTE: ''
+        RefDTE: '',
+        CentroCosto: '',
+        RefBancaria: 'Cartola 0826',
+        FechaVencimiento: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
         NumComprobante: 1,
@@ -463,33 +724,54 @@ export default function CargaMasivaComprobantesView({
         RutAuxiliar: '',
         NombreAuxiliar: '',
         GlosaLinea: 'Capital Pagado',
-        RefDTE: ''
+        RefDTE: '',
+        CentroCosto: '',
+        RefBancaria: '',
+        FechaVencimiento: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
         NumComprobante: 2,
         Fecha: '2026-08-05',
         Tipo: 'Egreso',
-        GlosaComprobante: 'Pago de Arriendo Oficina',
+        GlosaComprobante: 'Pago de Arriendo Oficina y Servicios',
         CodigoCuenta: accounts[2]?.code || '4-2-01-01',
         Debe: 650000,
         Haber: 0,
         RutAuxiliar: '76.123.456-7',
-        NombreAuxiliar: 'INMOBILIARIA SPA',
-        GlosaLinea: 'Gasto Arriendo Agosto',
-        RefDTE: 'Fac 102'
+        NombreAuxiliar: 'INMOBILIARIA CENTRAL SPA',
+        GlosaLinea: 'Gasto Arriendo Casa Matriz',
+        RefDTE: 'FAC 102',
+        CentroCosto: 'ADMINISTRACION',
+        RefBancaria: 'TRF 98231',
+        FechaVencimiento: '2026-08-10',
+        ItemGasto: 'ARRIENDOS',
+        Proyecto: 'SEDE CENTRAL',
+        Producto: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
         NumComprobante: 2,
         Fecha: '2026-08-05',
         Tipo: 'Egreso',
-        GlosaComprobante: 'Pago de Arriendo Oficina',
+        GlosaComprobante: 'Pago de Arriendo Oficina y Servicios',
         CodigoCuenta: accounts[0]?.code || '1-1-01-01',
         Debe: 0,
         Haber: 650000,
         RutAuxiliar: '76.123.456-7',
-        NombreAuxiliar: 'INMOBILIARIA SPA',
-        GlosaLinea: 'Transferencia Bancaria',
-        RefDTE: 'Fac 102'
+        NombreAuxiliar: 'INMOBILIARIA CENTRAL SPA',
+        GlosaLinea: 'Transferencia Bancaria Cuenta Corriente',
+        RefDTE: 'FAC 102',
+        CentroCosto: 'ADMINISTRACION',
+        RefBancaria: 'TRF 98231',
+        FechaVencimiento: '2026-08-10',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       }
     ];
 
@@ -500,12 +782,16 @@ export default function CargaMasivaComprobantesView({
   };
 
   const handleDownloadCsvTemplate = () => {
-    const headers = 'NumComprobante;Fecha;Tipo;GlosaComprobante;CodigoCuenta;Debe;Haber;RutAuxiliar;NombreAuxiliar;GlosaLinea;RefDTE';
+    const customCols = company.customAccountColumns || [];
+    const customHeaderStr = customCols.length > 0 ? ';' + customCols.join(';') : '';
+    const customEmptyStr = customCols.length > 0 ? ';' + customCols.map(() => '').join(';') : '';
+
+    const headers = `NumComprobante;Fecha;Tipo;GlosaComprobante;CodigoCuenta;Debe;Haber;RutAuxiliar;NombreAuxiliar;GlosaLinea;RefDTE;CentroCosto;RefBancaria;FechaVencimiento;ItemGasto;Proyecto;Producto${customHeaderStr}`;
     const sampleRows = [
-      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[0]?.code || '1-1-01-01'};5000000;0;;;Deposito Bancario Capital;`,
-      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[1]?.code || '3-1-01-01'};0;5000000;;;Capital Pagado;`,
-      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[2]?.code || '4-2-01-01'};650000;0;76.123.456-7;INMOBILIARIA SPA;Gasto Arriendo Agosto;Fac 102`,
-      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[0]?.code || '1-1-01-01'};0;650000;76.123.456-7;INMOBILIARIA SPA;Transferencia Bancaria;Fac 102`
+      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[0]?.code || '1-1-01-01'};5000000;0;;;Deposito Bancario Capital;;;Cartola 0826;;;;${customEmptyStr}`,
+      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[1]?.code || '3-1-01-01'};0;5000000;;;Capital Pagado;;;;;;;${customEmptyStr}`,
+      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[2]?.code || '4-2-01-01'};650000;0;76.123.456-7;INMOBILIARIA CENTRAL SPA;Gasto Arriendo Casa Matriz;FAC 102;ADMINISTRACION;TRF 98231;2026-08-10;ARRIENDOS;SEDE CENTRAL;${customEmptyStr}`,
+      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[0]?.code || '1-1-01-01'};0;650000;76.123.456-7;INMOBILIARIA CENTRAL SPA;Transferencia Bancaria Cuenta Corriente;FAC 102;ADMINISTRACION;TRF 98231;2026-08-10;;;${customEmptyStr}`
     ];
 
     const content = '\uFEFF' + [headers, ...sampleRows].join('\n');
@@ -518,6 +804,8 @@ export default function CargaMasivaComprobantesView({
 
   // Upload Valid Drafts to Firestore using WriteBatches
   const handleBatchSave = async () => {
+    if (isCommitting || loading) return;
+
     const validDrafts = parsedVouchers.filter(d => d.isValid);
     if (validDrafts.length === 0) {
       alert('⚠️ No hay comprobantes válidos y totalmente cuadrados para importar.');
@@ -550,6 +838,7 @@ export default function CargaMasivaComprobantesView({
       return;
     }
 
+    setIsCommitting(true);
     setLoading(true);
     try {
       await withProcess(
@@ -580,8 +869,17 @@ export default function CargaMasivaComprobantesView({
                 auxiliaryRut: String(l.auxiliaryRut || '').trim(),
                 auxiliaryName: String(l.auxiliaryName || '').trim(),
                 documentRef: String(l.documentRef || '').trim(),
+                costCenter: String(l.costCenter || '').trim(),
+                bankDocRef: String(l.bankDocRef || '').trim(),
+                dueDate: String(l.dueDate || '').trim(),
+                expenseItem: String(l.expenseItem || '').trim(),
+                project: String(l.project || '').trim(),
+                product: String(l.product || '').trim(),
+                customAnalyses: l.customAnalyses || {},
                 gloss: String(l.gloss || draft.gloss || '').trim()
               }));
+
+              const cleanedLines = sanitizeVoucherLines(sanitizedLines, accounts);
 
               const voucherDocRef = doc(collection(companyRef, 'vouchers'));
               const nowIso = new Date().toISOString();
@@ -594,7 +892,7 @@ export default function CargaMasivaComprobantesView({
                 period: String(draft.period || '').trim() || new Date().toISOString().slice(0, 7),
                 type: (['Ingreso', 'Egreso', 'Traspaso'].includes(draft.type) ? draft.type : 'Traspaso'),
                 gloss: String(draft.gloss || 'Comprobante Importado').trim(),
-                lines: sanitizedLines,
+                lines: cleanedLines,
                 totalDebit: Number(draft.totalDebit) || 0,
                 totalCredit: Number(draft.totalCredit) || 0,
                 status: 'Valido',
@@ -644,6 +942,7 @@ export default function CargaMasivaComprobantesView({
       alert('❌ Error durante el guardado de comprobantes: ' + err.message);
     } finally {
       setLoading(false);
+      setIsCommitting(false);
     }
   };
 
@@ -927,16 +1226,16 @@ export default function CargaMasivaComprobantesView({
             <div className="flex items-center gap-2">
               <button
                 onClick={handleBatchSave}
-                disabled={loading || parsedVouchers.filter(v => v.isValid).length === 0}
+                disabled={loading || isCommitting || parsedVouchers.filter(v => v.isValid).length === 0}
                 className={`px-5 py-2 text-xs font-black rounded-lg shadow-sm transition-all flex items-center gap-2 ${
-                  loading || parsedVouchers.filter(v => v.isValid).length === 0
+                  loading || isCommitting || parsedVouchers.filter(v => v.isValid).length === 0
                     ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                     : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
                 }`}
               >
                 <span>💾</span>
                 <span>
-                  {loading
+                  {loading || isCommitting
                     ? 'Guardando...'
                     : `Guardar ${parsedVouchers.filter(v => v.isValid).length} Comprobantes Válidos`}
                 </span>
@@ -1001,45 +1300,113 @@ export default function CargaMasivaComprobantesView({
                   <table className="w-full text-left text-[11px] border-collapse">
                     <thead>
                       <tr className="text-slate-500 font-bold border-b border-slate-200">
-                        <th className="py-1.5 px-2 w-32">Código Cuenta</th>
-                        <th className="py-1.5 px-2">Nombre Cuenta Contable</th>
-                        <th className="py-1.5 px-2">Auxiliar / Ref</th>
+                        <th className="py-1.5 px-2 w-28">Código Cuenta</th>
+                        <th className="py-1.5 px-2 w-56">Nombre Cuenta Contable</th>
+                        <th className="py-1.5 px-2">Análisis Contables / Atributos</th>
                         <th className="py-1.5 px-2">Detalle Línea</th>
                         <th className="py-1.5 px-2 text-right w-28">Debe ($)</th>
                         <th className="py-1.5 px-2 text-right w-28">Haber ($)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {v.lines.map((l, lIdx) => (
-                        <tr
-                          key={lIdx}
-                          className={l.isAccountMissing ? 'bg-amber-100/60 font-medium' : ''}
-                        >
-                          <td className="py-1 px-2 font-bold text-slate-800">
-                            {l.accountCode}
-                          </td>
-                          <td className="py-1 px-2 font-sans">
-                            {l.isAccountMissing ? (
-                              <span className="text-amber-900 font-bold flex items-center gap-1">
-                                <span>❌</span> {l.accountName}
-                              </span>
-                            ) : (
-                              <span className="text-slate-800">{l.accountName}</span>
-                            )}
-                          </td>
-                          <td className="py-1 px-2 text-slate-600 font-sans">
-                            {l.auxiliaryRut ? `${l.auxiliaryRut} ${l.auxiliaryName ? `- ${l.auxiliaryName}` : ''}` : '-'}
-                            {l.documentRef ? ` (${l.documentRef})` : ''}
-                          </td>
-                          <td className="py-1 px-2 text-slate-500 font-sans">{l.gloss}</td>
-                          <td className="py-1 px-2 text-right text-emerald-700 font-bold">
-                            {l.debit > 0 ? `$${l.debit.toLocaleString('es-CL')}` : '-'}
-                          </td>
-                          <td className="py-1 px-2 text-right text-rose-700 font-bold">
-                            {l.credit > 0 ? `$${l.credit.toLocaleString('es-CL')}` : '-'}
-                          </td>
-                        </tr>
-                      ))}
+                      {v.lines.map((l, lIdx) => {
+                        const hasErrors = l.requiredErrors && l.requiredErrors.length > 0;
+                        return (
+                          <tr
+                            key={lIdx}
+                            className={
+                              l.isAccountMissing
+                                ? 'bg-amber-100/60 font-medium'
+                                : hasErrors
+                                ? 'bg-rose-50/70 font-medium'
+                                : ''
+                            }
+                          >
+                            <td className="py-1 px-2 font-bold text-slate-800">
+                              {l.accountCode}
+                            </td>
+                            <td className="py-1 px-2 font-sans">
+                              {l.isAccountMissing ? (
+                                <span className="text-amber-900 font-bold flex items-center gap-1">
+                                  <span>❌</span> {l.accountName}
+                                </span>
+                              ) : (
+                                <div>
+                                  <span className="text-slate-800 font-semibold">{l.accountName}</span>
+                                  {hasErrors && (
+                                    <div className="text-[10px] text-rose-700 font-bold mt-0.5 space-y-0.5">
+                                      {l.requiredErrors!.map((err, ei) => (
+                                        <div key={ei} className="flex items-center gap-1">
+                                          <span>⚠️</span> {err}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-1 px-2 text-slate-600 font-sans">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {l.auxiliaryRut ? (
+                                  <span className="px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded text-[10px] font-mono border border-slate-200">
+                                    👤 {l.auxiliaryRut} {l.auxiliaryName ? `(${l.auxiliaryName})` : ''}
+                                  </span>
+                                ) : null}
+                                {l.documentRef ? (
+                                  <span className="px-1.5 py-0.5 bg-blue-50 text-blue-800 rounded text-[10px] font-mono border border-blue-200">
+                                    📄 {l.documentRef}
+                                  </span>
+                                ) : null}
+                                {l.costCenter ? (
+                                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 rounded text-[10px] font-mono border border-amber-200">
+                                    🏢 CC: {l.costCenter}
+                                  </span>
+                                ) : null}
+                                {l.bankDocRef ? (
+                                  <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 rounded text-[10px] font-mono border border-emerald-200">
+                                    🏦 {l.bankDocRef}
+                                  </span>
+                                ) : null}
+                                {l.dueDate ? (
+                                  <span className="px-1.5 py-0.5 bg-purple-50 text-purple-800 rounded text-[10px] font-mono border border-purple-200">
+                                    📅 Vto: {l.dueDate}
+                                  </span>
+                                ) : null}
+                                {l.expenseItem ? (
+                                  <span className="px-1.5 py-0.5 bg-orange-50 text-orange-800 rounded text-[10px] font-mono border border-orange-200">
+                                    🏷️ Gasto: {l.expenseItem}
+                                  </span>
+                                ) : null}
+                                {l.project ? (
+                                  <span className="px-1.5 py-0.5 bg-teal-50 text-teal-800 rounded text-[10px] font-mono border border-teal-200">
+                                    🏗️ Proy: {l.project}
+                                  </span>
+                                ) : null}
+                                {l.product ? (
+                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-800 rounded text-[10px] font-mono border border-indigo-200">
+                                    📦 Prod: {l.product}
+                                  </span>
+                                ) : null}
+                                {l.customAnalyses && Object.entries(l.customAnalyses).map(([k, vVal]) => (
+                                  <span key={k} className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px] font-mono border border-slate-200">
+                                    ⚙️ {k}: {vVal}
+                                  </span>
+                                ))}
+                                {!l.auxiliaryRut && !l.documentRef && !l.costCenter && !l.bankDocRef && !l.dueDate && !l.expenseItem && !l.project && !l.product && (!l.customAnalyses || Object.keys(l.customAnalyses).length === 0) && (
+                                  <span className="text-slate-400 text-[10px]">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-1 px-2 text-slate-500 font-sans">{l.gloss}</td>
+                            <td className="py-1 px-2 text-right text-emerald-700 font-bold">
+                              {l.debit > 0 ? `$${l.debit.toLocaleString('es-CL')}` : '-'}
+                            </td>
+                            <td className="py-1 px-2 text-right text-rose-700 font-bold">
+                              {l.credit > 0 ? `$${l.credit.toLocaleString('es-CL')}` : '-'}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-slate-300 font-bold bg-slate-100/60 text-slate-900">

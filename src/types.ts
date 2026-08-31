@@ -38,7 +38,9 @@ export interface StudyAdmin {
 export interface Study {
   id: string;
   name: string;
-  planId: string;
+  planId?: string;
+  maxCompanies?: number; // Cantidad límite de empresas permitidas
+  maxUsers?: number; // Cantidad límite de usuarios permitidos
   rut: string;
   address: string;
   phone: string;
@@ -163,6 +165,7 @@ export interface Company {
   dteConfig?: DTEConfig;
   assignedAccountantIds?: string[];
   assignedAccountantEmails?: string[];
+  customAccountColumns?: string[]; // Lista de nombres de columnas de análisis adicionales (ej: ['REQUIERE SUCURSAL', 'REQUIERE ZONA'])
 }
 
 export interface Assignment {
@@ -174,17 +177,32 @@ export interface Assignment {
 
 export interface ChartOfAccount {
   id: string;
-  code: string; // Código ej: 1.1.01.001
-  name: string; // Nombre de la cuenta
+  code: string; // COD_CTA (ej: 1101001)
+  name: string; // NOMBRE_CTA (ej: CAJA)
   type: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto';
   parentCode?: string; // Para estructura arborescente
-  requiereCentroCosto: boolean;
-  requiereAuxiliarRUT: boolean;
-  requiereConciliacionBancaria: boolean;
-  requiereDocumento: boolean;
+
+  // Matriz de 17 Atributos Oficiales (Grilla Contable)
+  isImputable?: boolean; // IMPUTABLE (SI/NO) - por defecto true
+  moneda?: 'CLP' | 'USD' | 'EUR' | 'UF' | string; // MONEDA (CLP, USD, EUR, UF)
+  requiereAuxiliarRUT: boolean; // REQUIERE AUXILIAR (SI/NO)
+  requiereConciliacionBancaria: boolean; // REQUIERE CONCILIACION (SI/NO)
+  requiereDocumento: boolean; // REQUIERE DOCUMENTO (SI/NO)
+  requiereVencimiento?: boolean; // REQUIERE VENCIMIENTO (SI/NO)
+  requiereCentroCosto: boolean; // REQUIERE CENTRO_COSTO (SI/NO)
+  requiereItemGasto?: boolean; // REQUIERE ITEM_GASTO (SI/NO)
+  requiereProyecto?: boolean; // REQUIERE PROYECTO (SI/NO)
+  requiereProducto?: boolean; // REQUIERE PRODUCTO (SI/NO)
+  esActivoFijo?: boolean; // ES ACTIVO FIJO (SI/NO)
+  requiereCMonetaria?: boolean; // REQUIERE C. MONETARIA (SI/NO)
+  requiereDifCambio?: boolean; // REQUIERE DIF. CAMBIO (SI/NO)
+  blce8Columnas?: 'ACTIVO' | 'PASIVO' | 'PERDIDA' | 'GANANCIA' | 'Activo' | 'Pasivo' | 'Pérdida' | 'Ganancia' | string; // BLCE 8 COLUM
+  codigoIFRS?: string; // IFRS (ej: 1101, 1103)
+
   bankInstitution?: string; // Banco (ej. Banco de Chile, Santander, BCI, etc.)
   bankAccountNumber?: string; // N° Cuenta Corriente / Vista
-  // Atributos dinámicos / escalables adicionales (clave-valor o tags)
+  
+  // Atributos dinámicos / Análisis adicionales configurables por el usuario (la grilla crece en columnas)
   customAttributes?: { [key: string]: any };
   estado: 'Activo' | 'Inactivo';
   createdBy?: string;
@@ -224,6 +242,11 @@ export interface Auxiliary {
   defaultDebtorAccountId?: string; // Cuenta Contable de Deudor / Cliente (ej. Clientes por Cobrar)
   defaultCreditorAccountId?: string; // Cuenta Contable de Acreedor / Proveedor (ej. Proveedores por Pagar)
   defaultExpenseOrIncomeAccountId?: string; // Cuenta Contable de Ingreso o Costo/Gasto por Defecto
+  defaultCostCenter?: string;
+  defaultExpenseItem?: string;
+  defaultProject?: string;
+  defaultProduct?: string;
+  defaultCustomAnalyses?: { [key: string]: string };
   banco?: string;
   tipoCuenta?: 'Corriente' | 'Vista' | 'Ahorro' | 'RUT';
   numeroCuenta?: string;
@@ -269,6 +292,7 @@ export interface RCVDocument {
   tipoDoc: string; // ej: '33', '34', '39', '41', '46', '56', '61', '110', 'BHE'
   folio: string;
   fechaEmision: string; // YYYY-MM-DD
+  fechaVencimiento?: string; // YYYY-MM-DD
   montoNeto: number; // Para Compras/Ventas: Neto afecto. Para Honorarios: Bruto
   montoIva: number; // Para Compras/Ventas: IVA (Débito/Crédito). Para Honorarios: Retención (13.75%/14.5%/15.25%)
   montoExento: number;
@@ -301,9 +325,59 @@ export interface VoucherLine {
   credit: number;
   auxiliaryRut?: string;
   auxiliaryName?: string;
+  documentType?: string;
   documentRef?: string;
+  costCenter?: string;
+  bankDocRef?: string;
+  dueDate?: string;
+  expenseItem?: string;
+  project?: string;
+  product?: string;
+  customAnalyses?: { [key: string]: string };
   gloss?: string;
 }
+
+export interface MatchedLineRef {
+  voucherId: string;
+  voucherNumber: number;
+  voucherDate: string;
+  voucherPeriod: string;
+  lineIndex: number;
+  accountId: string;
+  accountCode: string;
+  debit: number;
+  credit: number;
+  gloss?: string;
+  documentRef?: string;
+  auxiliaryRut?: string;
+  auxiliaryName?: string;
+}
+
+export interface AccountMatch {
+  id: string;
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  matchedLines: MatchedLineRef[];
+  totalAmount: number; // Monto total debitos/creditos pareados
+  matchDate: string; // Fecha o Timestamp ISO
+  matchedBy?: string;
+  notes?: string;
+  creationMode?: 'MANUAL' | 'AUTOMATICO' | 'SUGERENCIA';
+  status: 'CALZADO' | 'DESCALZADO';
+  unmatchedAt?: string;
+  unmatchedBy?: string;
+}
+
+export interface FiscalYear {
+  id: string; // e.g. "2026"
+  year: number;
+  months: {
+    [month: number]: 'Abierto' | 'Cerrado';
+  };
+}
+
+export type AccountingVoucher = Voucher;
 
 export interface Voucher {
   id: string;
@@ -315,7 +389,7 @@ export interface Voucher {
   lines: VoucherLine[];
   totalDebit: number;
   totalCredit: number;
-  status?: 'Valido' | 'Anulado' | 'Descuadrado';
+  status?: 'Valido' | 'Anulado' | 'Descuadrado' | 'Pendiente';
   isDescuadrado?: boolean;
   descuadreDifference?: number;
   anuladoAt?: string;
@@ -447,6 +521,8 @@ export interface BankReconciliation {
   outstandingChecks: number;
   depositsInTransit: number;
   reconciledBalance: number;
+  calculatedBookBalance?: number;
+  calculatedBankBalance?: number;
   difference: number;
   status: 'Cuadrado' | 'Descuadrado';
   notes?: string;
@@ -573,5 +649,81 @@ export interface F29Declaration {
   createdAt: string;
   updatedAt: string;
 }
+
+// ----------------------------------------------------
+// TABLAS MAESTRAS DE ANÁLISIS CONTABLES (CATÁLOGOS)
+// ----------------------------------------------------
+
+export interface CostCenterMaster {
+  id: string;
+  companyId: string;
+  code: string; // e.g. CC-001, ADM, PROD
+  name: string; // e.g. Administración Central, Operaciones, Ventas
+  area?: string; // e.g. Gerencia General, Comercial, Mina
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ExpenseItemMaster {
+  id: string;
+  companyId: string;
+  code: string; // e.g. GTO-ARR, GTO-LUM, GTO-REM
+  name: string; // e.g. Arriendos de Inmuebles, Servicios Básicos, Remuneraciones
+  category?: string; // Fijo, Variable, Operacional, No Operacional, Administrativo
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface NonSiiDocTypeMaster {
+  id: string;
+  companyId: string;
+  code: string; // e.g. VALE_CAJA, REND_GASTO, REC_INT, COMP_TRF, LIQ_SUELDO, CONTRATO
+  name: string; // e.g. Vale Provisorio de Caja Chica, Rendición de Gastos, Recibo Interno
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectMaster {
+  id: string;
+  companyId: string;
+  code: string; // e.g. PROY-01, OBRA-NORTE
+  name: string; // e.g. Edificio Costanera, Proyecto TI 2026
+  clientOrLocation?: string; // e.g. Minera Escondida / Antofagasta
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProductMaster {
+  id: string;
+  companyId: string;
+  code: string; // e.g. PROD-100, SERV-01
+  name: string; // e.g. Servicio de Asesoría Mensual, Producto Terminado A
+  unit?: string; // UN, HRS, MES, KG, GL
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomAnalysisTableItem {
+  id: string;
+  companyId: string;
+  analysisColumnName: string; // e.g. "SUCURSAL", "ZONA", "VEHICULO"
+  code: string; // e.g. SUC-01, ZONA-SUR, PAT-ABCD12
+  name: string; // e.g. Sucursal Las Condes, Zona Austral, Camioneta Toyota
+  description?: string;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 
 

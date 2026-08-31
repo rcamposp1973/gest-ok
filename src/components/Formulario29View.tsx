@@ -19,6 +19,7 @@ import {
   CustomF29Code,
   F29AccountingParams
 } from '../types';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface Formulario29ViewProps {
   studyId: string;
@@ -795,8 +796,9 @@ export default function Formulario29View({
         }
       }
 
-      const finalDebit = lines.reduce((s, l) => s + (l.debit || 0), 0);
-      const finalCredit = lines.reduce((s, l) => s + (l.credit || 0), 0);
+      const sanitizedLines = sanitizeVoucherLines(lines, accounts);
+      const finalDebit = sanitizedLines.reduce((s, l) => s + (l.debit || 0), 0);
+      const finalCredit = sanitizedLines.reduce((s, l) => s + (l.credit || 0), 0);
 
       const voucherData = {
         voucherNumber: nextVoucherNumber,
@@ -804,7 +806,7 @@ export default function Formulario29View({
         period: selectedPeriod,
         type: 'Traspaso',
         gloss: `Centralización y Liquidación Mensual Formulario 29 Impuestos - Período ${selectedPeriod}`,
-        lines,
+        lines: sanitizedLines,
         totalDebit: finalDebit,
         totalCredit: finalCredit,
         status: 'Valido',

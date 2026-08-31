@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase
 import { Company, ChartOfAccount, Auxiliary, RCVDocument, Voucher, PaymentBatch, PaymentItem, FiscalPeriodYear } from '../types';
 import { checkIsPeriodClosed } from '../utils/periodUtils';
 import { logAuditEvent } from '../utils/auditLogger';
+import { sanitizeVoucherLines } from '../utils/voucherValidation';
 
 interface NominasPagoViewProps {
   studyId: string;
@@ -373,7 +374,8 @@ export default function NominasPagoView({
         gloss: `Egreso Bancario Nómina N° ${nextBatchNumber}`
       };
 
-      const voucherLines = [...supplierLines, bankLine];
+      const rawVoucherLines = [...supplierLines, bankLine];
+      const voucherLines = sanitizeVoucherLines(rawVoucherLines, accounts);
       const totalDebitVal = voucherLines.reduce((s, l) => s + (l.debit || 0), 0);
       const totalCreditVal = voucherLines.reduce((s, l) => s + (l.credit || 0), 0);
 

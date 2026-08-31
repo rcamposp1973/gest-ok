@@ -3,6 +3,7 @@ import { UserRole, Company, Study } from '../types';
 import { generateOfficialChileanIndicators, syncOnlineChileanIndicators, DailyIndicator } from '../utils/chileanEconomicIndicators';
 import { Building2, Home, LogOut, Settings, BarChart3, ChevronDown, Check, X, Key } from 'lucide-react';
 import ChangePasswordModal from './ChangePasswordModal';
+import { APP_VERSION } from '../constants/version';
 
 interface ExecutiveHeaderProps {
   currentUserEmail?: string | null;
@@ -110,6 +111,9 @@ export default function ExecutiveHeader({
                   className="font-bold text-base tracking-tight text-white cursor-pointer hover:text-slate-200 transition-colors"
                 >
                   Gest_OK
+                </span>
+                <span className="text-[10px] font-mono font-bold bg-indigo-950/80 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-700/60 shadow-2xs" title={`Versión actual de la plataforma (${APP_VERSION})`}>
+                  {APP_VERSION}
                 </span>
                 <span className="text-slate-400 text-xs hidden sm:inline font-normal">| Plataforma Contable Corporativa</span>
               </div>
