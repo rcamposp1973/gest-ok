@@ -474,6 +474,7 @@ function Dashboard() {
             currentUserId={userData?.id || currentUser?.uid}
             currentUserEmail={currentUser?.email}
             onCompanyChange={(comp) => setActiveCompany(comp)}
+            onLogout={handleLogout}
           />
         ) : (
           <div className="p-8 bg-white rounded-2xl border border-slate-200 shadow-lg max-w-lg mx-auto text-center space-y-5">

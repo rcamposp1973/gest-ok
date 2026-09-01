@@ -2968,20 +2968,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               <span>←</span>
               <span>Volver a Empresas</span>
             </button>
-
-            <div className="h-4 w-px bg-slate-300 hidden sm:block"></div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-black uppercase text-slate-900 tracking-tight">{company.name}</span>
-              <span className="text-xs font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                RUT: {company.rut}
-              </span>
-              {company.giro && (
-                <span className="text-xs text-slate-500 hidden md:inline truncate max-w-sm">
-                  • {company.giro}
-                </span>
-              )}
-            </div>
           </div>
 
           <div className="flex items-center gap-3 text-xs flex-wrap">
@@ -3137,7 +3123,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📝 Vouchers</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'vouchers' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('libroDiario')}
@@ -3148,7 +3133,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📖 Libro Diario</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'libroDiario' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('libroMayor')}
@@ -3159,7 +3143,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📚 Libro Mayor</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'libroMayor' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('analisisAuxiliares')}
@@ -3170,7 +3153,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📑 Auxiliar Cuentas Corrientes</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'analisisAuxiliares' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Nuevo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('analisisCuentas')}
@@ -3181,7 +3163,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🔍 Análisis de Cuentas</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'analisisCuentas' ? 'bg-emerald-900 text-emerald-100' : 'bg-emerald-100 text-emerald-800'}`}>Nuevo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('balance8')}
@@ -3192,7 +3173,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>⚖️ Balance 8 Columnas (Tributario)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'balance8' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('tablasAnalisis')}
@@ -3203,7 +3183,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🗂️ Catálogos de Análisis</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'tablasAnalisis' ? 'bg-indigo-900 text-indigo-100' : 'bg-indigo-100 text-indigo-800'}`}>CC / Ítems</span>
                   </button>
                 </>
               )}
@@ -3220,7 +3199,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>💰 Nóminas de Pago a Proveedores</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'nominasPago' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('cobranza')}
@@ -3231,7 +3209,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📑 Cobranza y Cuentas por Cobrar</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'cobranza' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('flujoDeCaja')}
@@ -3242,7 +3219,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🌊 Flujo de Caja Real & Proyectado</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'flujoDeCaja' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Real</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('conciliacionBancaria')}
@@ -3253,7 +3229,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🏦 Conciliación Bancaria</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'conciliacionBancaria' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                 </>
               )}
@@ -3270,7 +3245,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🛒 Compras (RCV)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'rcv' && rcvFilterType === 'Compra' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => { setActiveTab('rcv'); setRcvFilterType('Venta'); }}
@@ -3281,7 +3255,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📈 Ventas (RCV)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'rcv' && rcvFilterType === 'Venta' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => { setActiveTab('rcv'); setRcvFilterType('Honorarios'); }}
@@ -3292,7 +3265,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🧾 Honorarios (BHR)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'rcv' && rcvFilterType === 'Honorarios' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => { setActiveTab('rcv'); setRcvFilterType('Todos'); }}
@@ -3313,7 +3285,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>⚡ Carga Masiva Comprobantes</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'cargaMasiva' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('plantillasCarga')}
@@ -3324,7 +3295,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📥 Plantillas Excel y Cargas Masivas</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'plantillasCarga' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Plantillas</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('emisionDte')}
@@ -3335,7 +3305,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>⚡ Emisión DTE / Facturador SII</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'emisionDte' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Optativo</span>
                   </button>
                 </>
               )}
@@ -3352,7 +3321,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📑 Formulario 29 Mensual (F29 - SII)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'formulario29' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => { setActiveTab('rcv'); setRcvFilterType('Compra'); }}
@@ -3379,7 +3347,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📊 Tablero de Indicadores Financieros & KPIs</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'indicadoresFinancieros' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>KPIs</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('balanceIFRS')}
@@ -3390,7 +3357,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🏛️ Balance Clasificado (IFRS)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'balanceIFRS' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>IFRS</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('estadoResultados')}
@@ -3401,7 +3367,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>📈 Estado de Resultados</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'estadoResultados' ? 'bg-slate-900 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>Activo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('flujoDeCaja')}
@@ -3458,7 +3423,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     }`}
                   >
                     <span>🗂️ Catálogos de Análisis (CC, Ítems, Proyectos, Docs no SII)</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${activeTab === 'tablasAnalisis' ? 'bg-indigo-900 text-indigo-100' : 'bg-indigo-100 text-indigo-800'}`}>Nuevo</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('rcvParams')}
