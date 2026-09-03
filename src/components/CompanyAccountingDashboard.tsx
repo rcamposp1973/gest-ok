@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Company, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole, CostCenterMaster, ExpenseItemMaster, NonSiiDocTypeMaster, ProjectMaster, ProductMaster, CustomAnalysisTableItem } from '../types';
+import { Company, DTEConfig, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole, CostCenterMaster, ExpenseItemMaster, NonSiiDocTypeMaster, ProjectMaster, ProductMaster, CustomAnalysisTableItem } from '../types';
 import { syncOnlineChileanIndicators, generateOfficialChileanIndicators } from '../utils/chileanEconomicIndicators';
 import { logAuditEvent } from '../utils/auditLogger';
 import LibroDiarioView from './LibroDiarioView';
@@ -30,6 +30,7 @@ import TablasAnalisisMasterView from './TablasAnalisisMasterView';
 import VoucherLineDistributionModal from './VoucherLineDistributionModal';
 import { useProcess } from '../context/ProcessContext';
 import { validateVoucherLine, isCustomAnalysisRequired, sanitizeVoucherLine, sanitizeVoucherLines } from '../utils/voucherValidation';
+import { getLatestOpenPeriod } from '../utils/periodUtils';
 
 interface CompanyAccountingDashboardProps {
   studyId: string;
@@ -54,6 +55,46 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   const [historicalRatesFilterYear, setHistoricalRatesFilterYear] = useState<string>('Todos');
   const [historicalRatesSearch, setHistoricalRatesSearch] = useState<string>('');
   const [showExcelImportModal, setShowExcelImportModal] = useState<boolean>(false);
+  const [isRescatandoRcvApi, setIsRescatandoRcvApi] = useState<boolean>(false);
+  const [showManualUpload, setShowManualUpload] = useState<boolean>(false);
+  const [showQuickApiConfig, setShowQuickApiConfig] = useState<boolean>(false);
+  const [quickApiProvider, setQuickApiProvider] = useState<string>('SIMPLE_API');
+  const [quickApiUrl, setQuickApiUrl] = useState<string>('');
+  const [quickApiKey, setQuickApiKey] = useState<string>('');
+
+  // Sync quick API config inputs whenever company changes
+  useEffect(() => {
+    if (company?.dteConfig) {
+      setQuickApiProvider(company.dteConfig.siiApiProvider || (company.dteConfig.siiApiKey ? 'SIMPLE_API' : 'DIRECT_SII'));
+      setQuickApiUrl(company.dteConfig.siiApiUrl || '');
+      setQuickApiKey(company.dteConfig.siiApiKey || '');
+    }
+  }, [company]);
+
+  const handleSaveQuickApiSettings = async () => {
+    try {
+      let finalUrl = quickApiUrl.trim();
+      if (quickApiProvider === 'SIMPLE_API' && (!finalUrl || finalUrl.includes('GenerarApiKey') || finalUrl.includes('/Productos'))) {
+        finalUrl = 'https://api.simpleapi.cl/v1';
+      }
+      const updatedDteConfig = {
+        ...(company.dteConfig || {}),
+        siiApiProvider: quickApiProvider as any,
+        siiApiUrl: finalUrl,
+        siiApiKey: quickApiKey.trim(),
+        siiConnectionStatus: 'Conectado'
+      };
+      await updateDoc(companyRef, {
+        dteConfig: updatedDteConfig
+      });
+      await fetchData();
+      setShowQuickApiConfig(false);
+      alert(`✅ Configuración de API Guardada con Éxito para ${company.name}:\n\n• Proveedor: ${quickApiProvider}\n• API Key: ${quickApiKey ? '••••' + quickApiKey.slice(-4) : 'Sin Key'}\n• URL Endpoint: ${finalUrl}`);
+    } catch (err) {
+      console.error('Error saving API settings:', err);
+      alert('❌ Error al guardar la configuración de la API.');
+    }
+  };
 
   // Notification for pending modules
   const handlePendingClick = (moduleName: string) => {
@@ -155,39 +196,55 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   } | null>(null);
   const [editingAnalysisLineIdx, setEditingAnalysisLineIdx] = useState<number | null>(null);
 
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedRcvPeriod, setSelectedRcvPeriod] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [selectedYear, setSelectedYear] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(`gest_ok_last_period_${company.id}`) || localStorage.getItem('gest_ok_last_open_period');
+      if (saved && /^\d{4}-\d{2}$/.test(saved)) {
+        return parseInt(saved.split('-')[0], 10);
+      }
+    } catch {}
+    return 2026;
   });
 
-  // Helper para determinar automáticamente el mes abierto más adecuado para un año fiscal
+  const [selectedRcvPeriod, setSelectedRcvPeriod] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`gest_ok_last_period_${company.id}`) || localStorage.getItem('gest_ok_last_open_period');
+      if (saved && /^\d{4}-\d{2}$/.test(saved)) {
+        return saved;
+      }
+    } catch {}
+    return '2026-01';
+  });
+
+  // Persistir período seleccionado en almacenamiento local
+  useEffect(() => {
+    if (selectedRcvPeriod && /^\d{4}-\d{2}$/.test(selectedRcvPeriod)) {
+      try {
+        localStorage.setItem(`gest_ok_last_period_${company.id}`, selectedRcvPeriod);
+        localStorage.setItem('gest_ok_last_open_period', selectedRcvPeriod);
+      } catch {}
+    }
+  }, [selectedRcvPeriod, company.id]);
+
+  // Helper para determinar automáticamente el mes abierto más adecuado para un año fiscal (nunca el mes que estamos viviendo por defecto)
   const getBestActiveMonthForYear = (year: number, currentFyList: FiscalPeriodYear[]): string => {
     const fy = currentFyList.find(f => f.id === String(year));
-    const now = new Date();
-    const currentCalYear = now.getFullYear();
-    const currentCalMonth = now.getMonth() + 1; // 1-12
 
     if (fy && fy.months) {
-      // 1. Si estamos en el año actual y el mes en curso está abierto, es la prioridad
-      if (year === currentCalYear && fy.months[currentCalMonth] === 'Abierto') {
-        return `${year}-${String(currentCalMonth).padStart(2, '0')}`;
-      }
-      // 2. Buscar el mes abierto más reciente del año
+      // 1. Buscar el mes abierto más reciente del año
       const openMonths = Object.entries(fy.months)
-        .filter(([_, status]) => status === 'Abierto')
+        .filter(([m, status]) => status === 'Abierto' && parseInt(m, 10) >= 1 && parseInt(m, 10) <= 12)
         .map(([m]) => parseInt(m, 10))
         .sort((a, b) => b - a);
 
       if (openMonths.length > 0) {
         return `${year}-${String(openMonths[0]).padStart(2, '0')}`;
       }
-      // 3. Si no hay meses abiertos, retornar el último mes del año
+      // 2. Si no hay meses abiertos, retornar el último mes del año
       return `${year}-12`;
     }
 
-    const fallbackMonth = year === currentCalYear ? currentCalMonth : 1;
-    return `${year}-${String(fallbackMonth).padStart(2, '0')}`;
+    return `${year}-01`;
   };
 
   const [selectedRcvIds, setSelectedRcvIds] = useState<string[]>([]);
@@ -472,10 +529,44 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       }, 100);
 
       const fySnap = await getDocs(collection(companyRef, 'fiscalPeriods'));
-      setFiscalYears(fySnap.docs.map(d => ({ ...d.data(), id: d.id } as FiscalPeriodYear)));
+      const loadedFys = fySnap.docs.map(d => ({ ...d.data(), id: d.id } as FiscalPeriodYear));
+      setFiscalYears(loadedFys);
+      const latestOpenPeriod = getLatestOpenPeriod(loadedFys);
+      if (latestOpenPeriod) {
+        setSelectedRcvPeriod(latestOpenPeriod);
+        const y = parseInt(latestOpenPeriod.split('-')[0], 10);
+        if (y) setSelectedYear(y);
+      }
 
       const rcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
-      setRcvDocuments(rcvSnap.docs.map(d => ({ ...d.data(), id: d.id } as RCVDocument)));
+      
+      // Eliminación estricta y automática de cualquier documento de prueba / ficticio remanente
+      const demoDocs = rcvSnap.docs.filter(d => {
+        const data = d.data();
+        return (
+          d.id.startsWith('RCV_DEMO_') ||
+          data.id?.startsWith('RCV_DEMO_') ||
+          data.source === 'DEMO' ||
+          (data.period === '2026-01' && ['96.800.570-7', '96.806.980-2', '96.792.430-K', '16.789.012-3'].includes(data.rutEmisor) && ['45892', '128904', '34091', '15'].includes(String(data.folio))) ||
+          (data.period === '2026-01' && data.tipoRegistro === 'Venta' && String(data.folio) === '101' && data.montoTotal === 2915500)
+        );
+      });
+
+      if (demoDocs.length > 0) {
+        for (const demoDoc of demoDocs) {
+          try {
+            await deleteDoc(doc(companyRef, 'rcvDocuments', demoDoc.id));
+          } catch (e) {
+            console.warn("Error borrando documento demo:", e);
+          }
+        }
+      }
+
+      const cleanRcvDocs = rcvSnap.docs
+        .filter(d => !demoDocs.some(dd => dd.id === d.id))
+        .map(d => ({ ...d.data(), id: d.id } as RCVDocument));
+
+      setRcvDocuments(cleanRcvDocs);
 
       const vouchSnap = await getDocs(collection(companyRef, 'vouchers'));
       const fetchedVouchers = vouchSnap.docs.map(d => ({ ...d.data(), id: d.id } as Voucher));
@@ -537,7 +628,20 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }, (err) => console.warn("Realtime listener error vouchers:", err));
 
     const unsubRcv = onSnapshot(collection(companyRef, 'rcvDocuments'), (rcvSnap) => {
-      setRcvDocuments(rcvSnap.docs.map(d => ({ ...d.data(), id: d.id } as RCVDocument)));
+      const cleanRcvDocs = rcvSnap.docs
+        .filter(d => {
+          const data = d.data();
+          const isDemo = (
+            d.id.startsWith('RCV_DEMO_') ||
+            data.id?.startsWith('RCV_DEMO_') ||
+            data.source === 'DEMO' ||
+            (data.period === '2026-01' && ['96.800.570-7', '96.806.980-2', '96.792.430-K', '16.789.012-3'].includes(data.rutEmisor) && ['45892', '128904', '34091', '15'].includes(String(data.folio))) ||
+            (data.period === '2026-01' && data.tipoRegistro === 'Venta' && String(data.folio) === '101' && data.montoTotal === 2915500)
+          );
+          return !isDemo;
+        })
+        .map(d => ({ ...d.data(), id: d.id } as RCVDocument));
+      setRcvDocuments(cleanRcvDocs);
     }, (err) => console.warn("Realtime listener error rcv:", err));
 
     const unsubCC = onSnapshot(collection(companyRef, 'costCenters'), (snap) => {
@@ -1189,6 +1293,210 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       }
     };
     reader.readAsText(file);
+  };
+
+  // Eliminar cualquier documento de prueba / ficticio remanente de la base de datos
+  const handlePurgeAllDemoDocs = async () => {
+    try {
+      setIsRescatandoRcvApi(true);
+      const rcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
+      const demoDocs = rcvSnap.docs.filter(d => {
+        const data = d.data();
+        return (
+          d.id.startsWith('RCV_DEMO_') ||
+          data.id?.startsWith('RCV_DEMO_') ||
+          data.source === 'DEMO' ||
+          (data.period === '2026-01' && ['96.800.570-7', '96.806.980-2', '96.792.430-K', '16.789.012-3'].includes(data.rutEmisor) && ['45892', '128904', '34091', '15'].includes(String(data.folio))) ||
+          (data.period === '2026-01' && data.tipoRegistro === 'Venta' && String(data.folio) === '101' && data.montoTotal === 2915500)
+        );
+      });
+
+      for (const d of demoDocs) {
+        await deleteDoc(doc(companyRef, 'rcvDocuments', d.id));
+      }
+
+      await fetchData();
+      alert(`🧹 Base de datos depurada:\n\nSe eliminaron exitosamente ${demoDocs.length} registros ficticios/de prueba. Ahora la empresa cuenta únicamente con registros 100% reales.`);
+    } catch (err: any) {
+      console.error("Error purgando datos demo:", err);
+      alert('Error al depurar documentos: ' + err.message);
+    } finally {
+      setIsRescatandoRcvApi(false);
+    }
+  };
+
+  // Direct API sync for RCV Compras, Ventas and Honorarios from Facturador SII
+  const handleRescatarRcvApi = async () => {
+    if (isReadOnly) {
+      alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede ejecutar acciones de rescate.');
+      return;
+    }
+
+    if (!selectedRcvPeriod) {
+      alert('Por favor selecciona un período (Año-Mes) para rescatar el RCV y las Boletas de Honorarios.');
+      return;
+    }
+
+    const periodCheck = checkIsPeriodClosed(selectedRcvPeriod);
+    if (periodCheck.isClosed) {
+      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nPara rescatar e importar documentos en este mes, debes abrir el período en 'Configuraciones > Períodos Contables'.`);
+      return;
+    }
+
+    const [yearStr, monthStr] = selectedRcvPeriod.split('-');
+
+    setIsRescatandoRcvApi(true);
+    try {
+      const dteConfig: Partial<DTEConfig> = company.dteConfig || {};
+      const repRut = company.legalRepRut || dteConfig.rutRepresentante || '';
+      const repClave = dteConfig.claveRepLegalSii || '';
+      const certClave = dteConfig.claveCertificadoDigital || '';
+      const certB64 = dteConfig.certificadoB64 || '';
+      const apiKey = dteConfig.siiApiKey || '';
+
+      // Verificar que cuente con certificado digital o clave del SII
+      if (!certB64 && !repClave) {
+        alert(
+          `⚠️ Credenciales Requeridas para Consulta SII:\n\n` +
+          `Para consultar automáticamente el Registro de Compras, Ventas y Honorarios del SII, la empresa debe tener ingresado su Certificado Digital (.pfx) o la Clave del SII del Representante Legal.\n\n` +
+          `También puede importar directamente los archivos oficiales CSV/TXT mediante el botón "Cargar CSV/TXT Manual".`
+        );
+        setIsRescatandoRcvApi(false);
+        return;
+      }
+
+      const response = await fetch('/api/sii/rescatar-rcv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyRut: company.rut,
+          companyName: company.name,
+          year: parseInt(yearStr, 10),
+          month: monthStr,
+          rutRepresentante: repRut,
+          claveRepresentante: repClave,
+          claveCertificadoDigital: certClave,
+          certificadoB64: certB64,
+          apiKey: apiKey,
+          provider: 'SIMPLE_API',
+          ambiente: dteConfig.ambiente || 'Producción'
+        })
+      });
+
+      let data: any = {};
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        const rawText = await response.text();
+        if (rawText.includes('Starting Server') || rawText.includes('color-scheme: light dark')) {
+          data = {
+            success: false,
+            error: 'El servidor del sistema se estaba inicializando o reconectando en ese momento. Por favor, espere 3 segundos y vuelva a presionar el botón "Rescatar desde API SII".'
+          };
+        } else {
+          const cleanMsg = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+          data = {
+            success: false,
+            error: `Respuesta del servidor no válida (HTTP ${response.status}): ${cleanMsg || response.statusText}`
+          };
+        }
+      }
+
+      if (!response.ok || !data.success) {
+        if (data.needsCertificate) {
+          alert(`⚠️ Certificado Digital Requerido para Sincronización Automática:\n\n${data.error}\n\nPara consultar automáticamente vía API del SII, la empresa debe tener configurado su Certificado Digital (.pfx).\n\nAlternativamente, puede cargar directamente los archivos oficiales descargados del portal del SII usando el botón "📥 Cargar CSV/TXT Manual".`);
+          return;
+        }
+        alert(`❌ Error al conectar con la API del Facturador SII:\n\n${data.error || 'No se pudo completar el rescate desde la API.'}`);
+        return;
+      }
+
+      const fetchedDocs = data.documents || [];
+      if (fetchedDocs.length === 0) {
+        alert(data.message || `ℹ️ Solicitud enviada a la API del SII con éxito para el período ${selectedRcvPeriod}.\n\nNo se encontraron nuevos documentos de Compras, Ventas u Honorarios en dicho período.`);
+        return;
+      }
+
+      // Read current RCV docs from Firestore to prevent duplicates
+      const currentRcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
+      const existingKeys = new Set(
+        currentRcvSnap.docs.map(d => {
+          const docData = d.data();
+          return `${(docData.rutEmisor || '').trim().toLowerCase()}_${String(docData.tipoDocumento || docData.tipoDoc).trim()}_${String(docData.folio).trim()}`;
+        })
+      );
+
+      let loadedCount = 0;
+      let duplicateCount = 0;
+
+      const userUid = auth.currentUser?.uid || 'import-api-sii';
+      const userEmail = auth.currentUser?.email || '';
+      const nowIso = new Date().toISOString();
+
+      for (const item of fetchedDocs) {
+        const itemRut = (item.rutEmisor || item.rut || '11.111.111-1').trim();
+        const itemTipoDoc = String(item.tipoDocumento || item.tipoDoc || '33').trim();
+        const itemFolio = String(item.folio || '0').trim();
+
+        const key = `${itemRut.toLowerCase()}_${itemTipoDoc}_${itemFolio}`;
+        if (existingKeys.has(key)) {
+          duplicateCount++;
+          continue;
+        }
+
+        const docPeriod = item.period || selectedRcvPeriod;
+        
+        const cleanRcv: RCVDocument = {
+          id: `RCV_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          period: docPeriod,
+          tipoRegistro: item.tipoRegistro || (['33', '34', '52', '56'].includes(itemTipoDoc) ? 'Compra' : itemTipoDoc === 'BHR' ? 'Honorarios' : 'Venta'),
+          tipoDocumento: itemTipoDoc,
+          tipoDoc: itemTipoDoc,
+          nombreTipoDoc: item.nombreTipoDoc || (itemTipoDoc === '33' ? 'Factura Electrónica' : itemTipoDoc === '34' ? 'Factura Exenta' : itemTipoDoc === '39' ? 'Boleta Electrónica' : itemTipoDoc === '61' ? 'Nota de Crédito' : 'Documento DTE'),
+          folio: itemFolio,
+          rutEmisor: itemRut,
+          razonSocialEmisor: item.razonSocialEmisor || item.razonSocial || 'EMISOR DTE',
+          rutReceptor: item.rutReceptor || company.rut,
+          razonSocialReceptor: item.razonSocialReceptor || company.name,
+          fechaEmision: item.fechaEmision || `${docPeriod}-01`,
+          montoNeto: Number(item.montoNeto) || 0,
+          montoIva: Number(item.montoIva) || 0,
+          montoExento: Number(item.montoExento) || 0,
+          montoTotal: Number(item.montoTotal) || 0,
+          estado: 'Vigente',
+          estadoContabilizado: false,
+          createdBy: userUid,
+          createdByUserEmail: userEmail,
+          creationMode: 'IMPORTACION_RCV' as const,
+          createdAt: nowIso,
+          lastModifiedBy: userUid,
+          lastModifiedAt: nowIso,
+          source: 'SII_API'
+        };
+
+        await addDoc(collection(companyRef, 'rcvDocuments'), cleanRcv);
+        existingKeys.add(key);
+        loadedCount++;
+      }
+
+      await fetchData();
+
+      alert(
+        `✅ ¡Rescate RCV vía API SII Exitoso!\n\n` +
+        `• Período rescatado: ${selectedRcvPeriod}\n` +
+        `• Nuevos documentos guardados en Firestore: ${loadedCount}\n` +
+        `• Duplicados ya existentes omitidos: ${duplicateCount}\n` +
+        (data.message ? `\nDetalle: ${data.message}\n` : '') +
+        `\n• Conexión: ${data.source || 'SimpleAPI.cl'}`
+      );
+
+    } catch (err: any) {
+      console.error('Error al rescatar RCV vía API:', err);
+      alert(`❌ Ocurrió un error al intentar rescatar datos desde la API SII: ${err.message || String(err)}`);
+    } finally {
+      setIsRescatandoRcvApi(false);
+    }
   };
 
   // Helper to resolve an account object by ID, code, fallback keywords, or fallback type
@@ -2226,186 +2534,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }
   };
 
-  // Purge handlers
-  const handlePurgeJanuaryPurchases = async () => {
-    if (isReadOnly) {
-      alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede eliminar ni purgar registros.');
-      return;
-    }
-
-    const periodCheck = checkIsPeriodClosed('2026-01');
-    if (periodCheck.isClosed) {
-      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes purgar registros de un período cerrado.`);
-      return;
-    }
-
-    if (!window.confirm('¿Confirmas purgar/eliminar todos los registros de Compras de Enero de la empresa? La tabla de compras de enero quedará en cero.')) {
-      return;
-    }
-    try {
-      const docsToDelete = rcvDocuments.filter(
-        d => d.tipoRegistro === 'Compra' && (
-          d.period === '2026-01' || 
-          d.period.endsWith('-01') || 
-          (d.fechaEmision && d.fechaEmision.includes('-01-')) ||
-          (d.fechaEmision && d.fechaEmision.startsWith('2026-01'))
-        )
-      );
-
-      for (const d of docsToDelete) {
-        await deleteDoc(doc(companyRef, 'rcvDocuments', d.id));
-      }
-
-      // Audit Log
-      logAuditEvent({
-        userId: auth.currentUser?.uid || 'anon',
-        userEmail: auth.currentUser?.email || '',
-        studyId,
-        companyId: company.id,
-        action: 'ELIMINAR',
-        module: 'RCV_COMPRAS',
-        details: `Purga de ${docsToDelete.length} registros de Compras de Enero en ${company.name}`,
-        metadata: { action: 'DELETE', documentType: 'RCV_COMPRAS', motivo: 'Purga masiva de compras de enero', registrosEliminados: docsToDelete.length, tipo: 'Compra', periodo: '2026-01' }
-      });
-
-      alert(`Purga completada: Se eliminaron ${docsToDelete.length} registros de Compras de Enero.`);
-      await fetchData();
-    } catch (err: any) {
-      console.error("Error purging January purchases:", err);
-      alert('Error al purgar registros de compras: ' + err.message);
-    }
-  };
-
-  const handlePurgeJanuarySales = async () => {
-    if (isReadOnly) {
-      alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede eliminar ni purgar registros.');
-      return;
-    }
-
-    const periodCheck = checkIsPeriodClosed('2026-01');
-    if (periodCheck.isClosed) {
-      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes purgar registros de un período cerrado.`);
-      return;
-    }
-
-    if (!window.confirm('¿Confirmas purgar/eliminar todas las Ventas de Enero de la empresa? La tabla de ventas de enero quedará en cero.')) {
-      return;
-    }
-    try {
-      const docsToDelete = rcvDocuments.filter(
-        d => d.tipoRegistro === 'Venta' && (
-          d.period === '2026-01' || 
-          d.period.endsWith('-01') || 
-          (d.fechaEmision && d.fechaEmision.includes('-01-')) ||
-          (d.fechaEmision && d.fechaEmision.startsWith('2026-01'))
-        )
-      );
-
-      for (const d of docsToDelete) {
-        await deleteDoc(doc(companyRef, 'rcvDocuments', d.id));
-      }
-
-      // Audit Log
-      logAuditEvent({
-        userId: auth.currentUser?.uid || 'anon',
-        userEmail: auth.currentUser?.email || '',
-        studyId,
-        companyId: company.id,
-        action: 'ELIMINAR',
-        module: 'RCV_VENTAS',
-        details: `Purga de ${docsToDelete.length} registros de Ventas de Enero en ${company.name}`,
-        metadata: { action: 'DELETE', documentType: 'RCV_VENTAS', motivo: 'Purga masiva de ventas de enero', registrosEliminados: docsToDelete.length, tipo: 'Venta', periodo: '2026-01' }
-      });
-
-      alert(`Purga completada: Se eliminaron ${docsToDelete.length} registros de Ventas de Enero.`);
-      await fetchData();
-    } catch (err: any) {
-      console.error("Error purging January sales:", err);
-      alert('Error al purgar registros de ventas: ' + err.message);
-    }
-  };
-
-  const handlePurgeSelectedPeriodSales = async () => {
-    if (isReadOnly) {
-      alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede eliminar ni purgar registros.');
-      return;
-    }
-
-    const periodCheck = checkIsPeriodClosed(selectedRcvPeriod);
-    if (periodCheck.isClosed) {
-      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes eliminar ventas de un período cerrado.`);
-      return;
-    }
-
-    if (!window.confirm(`¿Confirmas eliminar todas las VENTAS del período seleccionado (${selectedRcvPeriod})?`)) {
-      return;
-    }
-    try {
-      const docsToDelete = rcvDocuments.filter(d => d.tipoRegistro === 'Venta' && d.period === selectedRcvPeriod);
-      for (const d of docsToDelete) {
-        await deleteDoc(doc(companyRef, 'rcvDocuments', d.id));
-      }
-
-      // Audit Log
-      logAuditEvent({
-        userId: auth.currentUser?.uid || 'anon',
-        userEmail: auth.currentUser?.email || '',
-        studyId,
-        companyId: company.id,
-        action: 'ELIMINAR',
-        module: 'RCV_VENTAS',
-        details: `Purga de ${docsToDelete.length} registros de Ventas del período ${selectedRcvPeriod} en ${company.name}`,
-        metadata: { action: 'DELETE', documentType: 'RCV_VENTAS', motivo: `Purga de ventas del período ${selectedRcvPeriod}`, registrosEliminados: docsToDelete.length, tipo: 'Venta', periodo: selectedRcvPeriod }
-      });
-
-      alert(`Purga completada: Se eliminaron ${docsToDelete.length} ventas del período ${selectedRcvPeriod}.`);
-      await fetchData();
-    } catch (err: any) {
-      console.error("Error purging sales:", err);
-      alert('Error al purgar ventas: ' + err.message);
-    }
-  };
-
-  const handlePurgeCurrentPeriod = async () => {
-    if (isReadOnly) {
-      alert('🔒 Modo Solo Lectura: El perfil Super Administrador no puede eliminar ni purgar registros.');
-      return;
-    }
-
-    const periodCheck = checkIsPeriodClosed(selectedRcvPeriod);
-    if (periodCheck.isClosed) {
-      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes purgar documentos de un período cerrado.`);
-      return;
-    }
-
-    if (!window.confirm(`¿Confirmas eliminar TODOS los documentos RCV (compras, ventas y honorarios) del período seleccionado (${selectedRcvPeriod})?`)) {
-      return;
-    }
-    try {
-      const docsToDelete = rcvDocuments.filter(d => d.period === selectedRcvPeriod);
-      for (const d of docsToDelete) {
-        await deleteDoc(doc(companyRef, 'rcvDocuments', d.id));
-      }
-
-      logAuditEvent({
-        userId: auth.currentUser?.uid || 'anon',
-        userEmail: auth.currentUser?.email || '',
-        studyId,
-        companyId: company.id,
-        action: 'ELIMINAR',
-        module: 'RCV_COMPRAS',
-        details: `Purga de ${docsToDelete.length} documentos del período ${selectedRcvPeriod} en ${company.name}`,
-        metadata: { action: 'DELETE', documentType: 'RCV_DOCUMENT', motivo: `Purga integral del período ${selectedRcvPeriod}`, registrosEliminados: docsToDelete.length, periodo: selectedRcvPeriod }
-      });
-
-      alert(`Purga completada: Se eliminaron ${docsToDelete.length} documentos del período ${selectedRcvPeriod}.`);
-      await fetchData();
-    } catch (err: any) {
-      console.error("Error purging period:", err);
-      alert('Error al purgar período: ' + err.message);
-    }
-  };
-
   // Delete Single RCV Document (Purchases, Sales, Honorarios, etc.)
   const handleDeleteSingleRcvDoc = async (docId: string, tipo: string, folio: string) => {
     if (isReadOnly) {
@@ -3276,36 +3404,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   >
                     <span>📑 Todos los Documentos RCV</span>
                   </button>
-                  <button
-                    onClick={() => setActiveTab('cargaMasiva')}
-                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
-                      activeTab === 'cargaMasiva'
-                        ? 'bg-slate-800 text-white shadow-2xs'
-                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
-                    }`}
-                  >
-                    <span>⚡ Carga Masiva Comprobantes</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('plantillasCarga')}
-                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
-                      activeTab === 'plantillasCarga'
-                        ? 'bg-slate-800 text-white shadow-2xs'
-                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
-                    }`}
-                  >
-                    <span>📥 Plantillas Excel y Cargas Masivas</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('emisionDte')}
-                    className={`px-3 py-1.5 text-xs rounded font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 ${
-                      activeTab === 'emisionDte'
-                        ? 'bg-slate-800 text-white shadow-2xs'
-                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200'
-                    }`}
-                  >
-                    <span>⚡ Emisión DTE / Facturador SII</span>
-                  </button>
                 </>
               )}
 
@@ -3992,73 +4090,118 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       {/* TAB 4: RCV & SII IMPORT */}
       {activeTab === 'rcv' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          {/* Executive Control Header */}
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Módulo RCV (Registro de Compras y Ventas) & Importación SII</h3>
-              <p className="text-sm text-slate-500 mt-1">
-                Carga masiva, validación anti-duplicados, auto-creación de auxiliares y contabilización automática.
+              <div className="flex items-center gap-2">
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  Sincronización Oficial SII
+                </span>
+                <h3 className="text-base font-bold text-slate-900">
+                  Registro de Compras, Ventas y Honorarios (RCV)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Consulta directa y contabilización de Compras, Ventas y Boletas de Honorarios para <strong>{company.name}</strong> ({company.rut}).
               </p>
             </div>
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2.5 flex-wrap">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Período Seleccionado</label>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Período Fiscal</label>
                 <input
                   type="month"
                   value={selectedRcvPeriod}
                   onChange={(e) => setSelectedRcvPeriod(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg p-2 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-xs"
                 />
+              </div>
+
+              <div className="pt-3.5">
+                <button
+                  type="button"
+                  disabled={isRescatandoRcvApi}
+                  onClick={handleRescatarRcvApi}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-sm transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap"
+                  title={`Sincronizar Compras, Ventas y Honorarios desde el SII para el período ${selectedRcvPeriod}`}
+                >
+                  {isRescatandoRcvApi ? (
+                    <>
+                      <span className="animate-spin text-sm">🔄</span>
+                      <span>Sincronizando con SII...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm">⚡</span>
+                      <span>Sincronizar con SII ({selectedRcvPeriod})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="pt-3.5">
+                <button
+                  type="button"
+                  onClick={() => setShowManualUpload(!showManualUpload)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-3 py-2 rounded-lg border border-slate-300 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  title="Cargar archivos CSV o TXT descargados manualmente desde el portal del SII"
+                >
+                  <span>{showManualUpload ? '✕ Ocultar Carga CSV' : '📥 Cargar CSV/TXT Manual'}</span>
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Official SII File Uploader */}
-          <div className="bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-100 p-6 rounded-lg shadow-sm space-y-4">
-            <h4 className="text-sm font-bold text-indigo-900 uppercase tracking-wider">Cargador Oficial de Archivos del SII (CSV / TXT) - Período: {selectedRcvPeriod}</h4>
-            <p className="text-xs text-slate-600">
-              Seleccione los archivos oficiales descargados desde el SII. El sistema leerá automáticamente los encabezados estándar (RUT Emisor, Razón Social, Folio, Tipo Doc, Monto Neto, IVA, Total), validará duplicados por <strong>[RUT Emisor + Tipo Doc + Folio]</strong> y auto-creará los auxiliares faltantes.
-            </p>
+          {/* Collapsible Manual Upload Section */}
+          {showManualUpload && (
+            <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl space-y-3 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>📂 Carga de Archivos Oficiales del SII (Período: {selectedRcvPeriod})</span>
+                </h4>
+                <span className="text-[11px] text-slate-500">Formatos admitidos: .csv o .txt descargados del portal del SII</span>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm space-y-2">
-                <label className="block text-xs font-bold text-blue-900">1. Compras SII (.csv/.txt)</label>
-                <input
-                  type="file"
-                  accept=".csv,.txt"
-                  onChange={(e) => handleFileUpload(e, 'Compra')}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs space-y-1.5">
+                  <label className="block text-xs font-bold text-blue-900">1. Compras SII (.csv/.txt)</label>
+                  <input
+                    type="file"
+                    accept=".csv,.txt"
+                    onChange={(e) => handleFileUpload(e, 'Compra')}
+                    className="w-full text-xs text-slate-500 file:mr-2.5 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                  />
+                </div>
+                <div className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs space-y-1.5">
+                  <label className="block text-xs font-bold text-emerald-900">2. Ventas SII (.csv/.txt)</label>
+                  <input
+                    type="file"
+                    accept=".csv,.txt"
+                    onChange={(e) => handleFileUpload(e, 'Venta')}
+                    className="w-full text-xs text-slate-500 file:mr-2.5 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+                  />
+                </div>
+                <div className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs space-y-1.5">
+                  <label className="block text-xs font-bold text-amber-900">3. Honorarios BHR (.csv/.txt)</label>
+                  <input
+                    type="file"
+                    accept=".csv,.txt"
+                    onChange={(e) => handleFileUpload(e, 'Honorarios')}
+                    className="w-full text-xs text-slate-500 file:mr-2.5 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 cursor-pointer"
+                  />
+                </div>
               </div>
-              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm space-y-2">
-                <label className="block text-xs font-bold text-emerald-900">2. Ventas SII (.csv/.txt)</label>
-                <input
-                  type="file"
-                  accept=".csv,.txt"
-                  onChange={(e) => handleFileUpload(e, 'Venta')}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                />
-              </div>
-              <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm space-y-2">
-                <label className="block text-xs font-bold text-amber-900">3. Honorarios BHR (.csv/.txt)</label>
-                <input
-                  type="file"
-                  accept=".csv,.txt"
-                  onChange={(e) => handleFileUpload(e, 'Honorarios')}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 cursor-pointer"
-                />
-              </div>
+
+              {rcvImportSummary && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-3 rounded-lg text-xs flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-bold">Resultado de Carga:</span>
+                  <span>Importados: <strong>{rcvImportSummary.loaded}</strong></span>
+                  <span>Duplicados omitidos: <strong>{rcvImportSummary.duplicates}</strong></span>
+                  <span>Auxiliares creados: <strong>{rcvImportSummary.newAuxiliaries}</strong></span>
+                </div>
+              )}
             </div>
-
-            {rcvImportSummary && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-4 rounded-lg text-xs space-y-1">
-                <p className="font-bold">Resumen de Procesamiento Real:</p>
-                <p>• Documentos leídos del archivo: <strong>{(rcvImportSummary as any).read || ((rcvImportSummary as any).loaded + (rcvImportSummary as any).duplicates)}</strong></p>
-                <p>• Nuevos importados (guardados en Firestore): <strong>{rcvImportSummary.loaded}</strong></p>
-                <p>• Duplicados omitidos ([RUT + TipoDoc + Folio]): <strong>{rcvImportSummary.duplicates}</strong></p>
-                <p>• Nuevos auxiliares creados automáticamente: <strong>{rcvImportSummary.newAuxiliaries}</strong></p>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Table Actions */}
           <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
@@ -4109,43 +4252,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 )}
               </div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <button
-                  onClick={handlePurgeJanuarySales}
-                  className="bg-emerald-50 hover:bg-rose-100 text-emerald-800 hover:text-rose-700 border border-emerald-200 hover:border-rose-300 text-xs font-semibold px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 shadow-2xs"
-                  title="Elimina todos los registros de VENTAS de enero de la base de datos"
-                >
-                  <svg className="w-3.5 h-3.5 text-emerald-600 hover:text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Purgar Ventas Enero
-                </button>
-                <button
-                  onClick={handlePurgeJanuaryPurchases}
-                  className="bg-blue-50 hover:bg-rose-100 text-blue-800 hover:text-rose-700 border border-blue-200 hover:border-rose-300 text-xs font-semibold px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 shadow-2xs"
-                  title="Elimina todos los registros de COMPRAS de enero de la base de datos"
-                >
-                  <svg className="w-3.5 h-3.5 text-blue-600 hover:text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Purgar Compras Enero
-                </button>
-                {rcvFilterType === 'Venta' ? (
-                  <button
-                    onClick={handlePurgeSelectedPeriodSales}
-                    className="bg-amber-50 hover:bg-rose-100 text-amber-900 hover:text-rose-700 border border-amber-200 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
-                    title={`Elimina todas las ventas del período ${selectedRcvPeriod}`}
-                  >
-                    Purgar Ventas {selectedRcvPeriod}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handlePurgeCurrentPeriod}
-                    className="bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
-                    title="Elimina todos los registros del período seleccionado (compras, ventas y honorarios)"
-                  >
-                    Purgar Todo Período {selectedRcvPeriod}
-                  </button>
-                )}
                 <button
                   onClick={handleContabilizarAllPending}
                   className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors shadow-sm"
@@ -4286,8 +4392,17 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   })}
                   {rcvDocuments.filter(d => d.period === selectedRcvPeriod).length === 0 && (
                     <tr>
-                      <td colSpan={11} className="p-8 text-center text-slate-500 italic">
-                        No hay documentos registrados para el período {selectedRcvPeriod}. Utiliza los botones superiores para cargar un lote de prueba o importar archivos.
+                      <td colSpan={11} className="p-8 text-center">
+                        <div className="flex flex-col items-center justify-center gap-3">
+                          <p className="text-slate-500 italic text-sm">
+                            No hay documentos registrados para el período <strong>{selectedRcvPeriod}</strong>.
+                          </p>
+                          <div className="flex flex-wrap items-center justify-center gap-3">
+                            <span className="text-slate-500 text-xs">
+                              Utilice el botón <strong>Sincronizar con SII</strong> o cargue los archivos mediante <strong>Cargar CSV/TXT Manual</strong>.
+                            </span>
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   )}

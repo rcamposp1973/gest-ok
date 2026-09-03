@@ -30,6 +30,8 @@ import {
 } from '../utils/bankReconciliationUtils';
 import { ImportCSVModal, ManualMatchModal, QuickVoucherModal } from './BankReconciliationModals';
 import AutoRutMatchModal from './AutoRutMatchModal';
+import BankCartolaSmartImportModal from './BankCartolaSmartImportModal';
+import { parseChileanNumber } from '../utils/bankCartolaParser';
 
 interface ConciliacionBancariaViewProps {
   studyId: string;
@@ -95,6 +97,7 @@ export default function ConciliacionBancariaView({
 
   // Modals
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
+  const [showSmartImportModal, setShowSmartImportModal] = useState<boolean>(false);
   const [showAutoRutModal, setShowAutoRutModal] = useState<boolean>(false);
   const [pastedCSV, setPastedCSV] = useState<string>('');
   const [importInitialBalance, setImportInitialBalance] = useState<number>(0);
@@ -616,22 +619,25 @@ export default function ConciliacionBancariaView({
         let directBalance: number | null = null;
 
         if (parts.length === 3) {
-          const val = parseFloat(parts[2].replace(/\$/g, '').replace(/\./g, '').replace(/,/g, '.')) || 0;
-          if (val < 0) charge = Math.abs(val);
-          else deposit = val;
+          const val = parseChileanNumber(parts[2]);
+          if (val < 0) charge = Math.abs(val); // Negativo es Cargo
+          else deposit = val; // Positivo es Abono
         } else if (parts.length === 4) {
-          charge = Math.abs(parseFloat(parts[2].replace(/[^0-9.-]/g, '')) || 0);
-          deposit = Math.abs(parseFloat(parts[3].replace(/[^0-9.-]/g, '')) || 0);
+          // Column 3: Cargo, Column 4: Abono
+          charge = Math.abs(parseChileanNumber(parts[2]));
+          deposit = Math.abs(parseChileanNumber(parts[3]));
         } else if (parts.length === 5) {
+          // Column 3: N° Doc, Column 4: Cargo, Column 5: Abono
           docNum = parts[2];
-          charge = Math.abs(parseFloat(parts[3].replace(/[^0-9.-]/g, '')) || 0);
-          deposit = Math.abs(parseFloat(parts[4].replace(/[^0-9.-]/g, '')) || 0);
+          charge = Math.abs(parseChileanNumber(parts[3]));
+          deposit = Math.abs(parseChileanNumber(parts[4]));
         } else if (parts.length >= 6) {
+          // Column 3: N° Doc, Column 4: Cargo, Column 5: Abono, Column 6: Saldo
           docNum = parts[2];
-          charge = Math.abs(parseFloat(parts[3].replace(/[^0-9.-]/g, '')) || 0);
-          deposit = Math.abs(parseFloat(parts[4].replace(/[^0-9.-]/g, '')) || 0);
-          const balParsed = parseFloat(parts[5].replace(/[^0-9.-]/g, ''));
-          if (!isNaN(balParsed)) directBalance = balParsed;
+          charge = Math.abs(parseChileanNumber(parts[3]));
+          deposit = Math.abs(parseChileanNumber(parts[4]));
+          const balParsed = parseChileanNumber(parts[5]);
+          if (balParsed !== 0 || parts[5].includes('0')) directBalance = balParsed;
         }
 
         parsedLines.push({
@@ -1255,6 +1261,16 @@ export default function ConciliacionBancariaView({
           </button>
 
           <button
+            onClick={() => setShowSmartImportModal(true)}
+            className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black rounded-lg shadow-sm transition-all flex items-center gap-1.5 border border-indigo-400/30"
+            title="Lectura inteligente de cartolas Excel / CSV de cualquier banco chileno con deduplicación y cuadratura"
+          >
+            <span>🏦</span>
+            <span>Lectura Inteligente Cartola</span>
+            <span className="bg-white/20 text-[9px] px-1 py-0.2 rounded uppercase font-bold">Smart</span>
+          </button>
+
+          <button
             onClick={() => {
               setImportInitialBalance(bankInitialBalanceInput);
               setShowImportModal(true);
@@ -1262,7 +1278,7 @@ export default function ConciliacionBancariaView({
             className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5 shadow-2xs"
           >
             <span>📥</span>
-            <span>Importar Cartola CSV</span>
+            <span>Importar CSV / Pegar</span>
           </button>
 
           {/* NUEZ MARIPOSA / CEREBRO AUTO RUT MATCH BUTTON */}
@@ -1911,6 +1927,29 @@ export default function ConciliacionBancariaView({
       </div>
 
       {/* MODALS */}
+      <BankCartolaSmartImportModal
+        isOpen={showSmartImportModal}
+        onClose={() => setShowSmartImportModal(false)}
+        selectedBankAccount={selectedBankAccount}
+        selectedPeriod={selectedPeriod}
+        existingLines={statementLines}
+        currentInitialBalance={bankInitialBalanceInput}
+        onImportComplete={async ({ newLines, initialBalance, finalBalance, bankName }) => {
+          // Merge non-duplicate new lines with existing lines and sort chronologically
+          const combined = [...statementLines, ...newLines].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+          const { updatedLines, finalBalance: recalculatedFinal } = recalculateRunningBalances(combined, initialBalance);
+
+          setBankInitialBalanceInput(initialBalance);
+          setBankFinalBalanceInput(recalculatedFinal);
+          setStatementLines(updatedLines);
+
+          await persistReconciliation(selectedPeriod, updatedLines, initialBalance, recalculatedFinal);
+          await fetchReconciliations();
+
+          alert(`✅ Cartola de ${bankName} inyectada con éxito:\n• ${newLines.length} nuevos movimientos agregados.\n• Saldo Inicial: $${initialBalance.toLocaleString('es-CL')}\n• Saldo Final Cartola: $${recalculatedFinal.toLocaleString('es-CL')}\n• Guardado automáticamente en Firestore.`);
+        }}
+      />
+
       <ImportCSVModal
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}

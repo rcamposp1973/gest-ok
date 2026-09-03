@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
-import { collection, query, where, getDocs, updateDoc, collectionGroup } from 'firebase/firestore';
-import { Lock, Mail, Eye, EyeOff, LogIn, ShieldCheck, Building2, KeyRound, ArrowLeft, CheckCircle2, MessageCircle } from 'lucide-react';
+import { collection, query, where, getDocs, updateDoc, collectionGroup, doc, onSnapshot } from 'firebase/firestore';
+import { Lock, Mail, Eye, EyeOff, LogIn, ShieldCheck, Building2, KeyRound, ArrowLeft, CheckCircle2, MessageCircle, Link as LinkIcon } from 'lucide-react';
 import { logAuditEvent } from '../utils/auditLogger';
 import { APP_VERSION } from '../constants/version';
+import { MarketingPromoConfig } from '../types';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -12,6 +13,28 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Configuración de promoción dinámica desde Firestore (Super Admin) - Oculto por defecto
+  const [promoConfig, setPromoConfig] = useState<MarketingPromoConfig | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      doc(db, 'system_config', 'marketing_promo'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as MarketingPromoConfig;
+          setPromoConfig(data);
+        } else {
+          setPromoConfig(null);
+        }
+      },
+      (err) => {
+        console.warn('Error reading marketing promo config:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   // Estado para modo "Recuperar Contraseña"
   const [isResetMode, setIsResetMode] = useState(false);
@@ -47,7 +70,7 @@ export default function Login() {
         try {
           const qSuper = query(collection(db, 'superUsers'), where('email', '==', cleanEmail));
           const snapSuper = await getDocs(qSuper);
-          if (!snapSuper.empty || cleanEmail === 'rcampos@pulsocontable.cl' || cleanEmail === 'campos.ramon@gmail.com') {
+          if (!snapSuper.empty || cleanEmail === 'rcampos@pulsocontable.cl') {
             userFound = true;
           }
         } catch (e) {}
@@ -137,7 +160,7 @@ export default function Login() {
               if (!expectedPass || expectedPass === password) {
                 userAuthorized = true;
               }
-            } else if (cleanEmail === 'rcampos@pulsocontable.cl' || cleanEmail === 'campos.ramon@gmail.com') {
+            } else if (cleanEmail === 'rcampos@pulsocontable.cl') {
               userAuthorized = true;
             }
           } catch (errSuper: any) {
@@ -459,27 +482,38 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Botón Flotante WhatsApp - Pide tu prueba gratis de 15 días */}
-      <a
-        id="btn-whatsapp-free-trial"
-        href="https://wa.me/56946318783?text=Hola%21%21%21%20quiero%20usar%20GEST_OK"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="fixed bottom-6 right-4 sm:right-7 z-50 flex items-center gap-3 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl hover:shadow-emerald-500/20 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 border border-white/20 group focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:ring-offset-2 focus:ring-offset-slate-900"
-        title="Pide tu prueba gratis de 15 días en WhatsApp"
-      >
-        <div className="w-9 h-9 bg-white/25 group-hover:bg-white/35 rounded-full flex items-center justify-center flex-shrink-0 transition-colors shadow-inner">
-          <MessageCircle className="w-5 h-5 text-white fill-white/40 stroke-[2.2]" />
-        </div>
-        <div className="flex flex-col text-left pr-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-950/80 leading-none">
-            WhatsApp Oficial
-          </span>
-          <span className="text-xs sm:text-sm font-extrabold text-white tracking-tight leading-tight mt-0.5 whitespace-nowrap">
-            Pide tu prueba gratis de 15 días
-          </span>
-        </div>
-      </a>
+      {/* Botón Flotante Dinámico de Promoción (Controlado por Super Administrador - Oculto si enabled es falso) */}
+      {promoConfig?.enabled && (
+        <a
+          id="btn-whatsapp-free-trial"
+          href={
+            promoConfig.actionType === 'whatsapp'
+              ? `https://wa.me/${(promoConfig.whatsappNumber || '56946318783').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(promoConfig.whatsappCustomMessage || 'Hola!! Quiero usar GEST_OK')}`
+              : (promoConfig.targetUrl || '#')
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ backgroundColor: promoConfig.buttonColor || '#25D366' }}
+          className="fixed bottom-6 right-4 sm:right-7 z-50 flex items-center gap-3 text-white px-4 py-3 rounded-full shadow-2xl hover:brightness-105 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 border border-white/20 group focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900"
+          title={promoConfig.headline || 'Promoción'}
+        >
+          <div className="w-9 h-9 bg-white/25 group-hover:bg-white/35 rounded-full flex items-center justify-center shrink-0 transition-colors shadow-inner">
+            {promoConfig.actionType === 'whatsapp' ? (
+              <MessageCircle className="w-5 h-5 text-white fill-white/40 stroke-[2.2]" />
+            ) : (
+              <LinkIcon className="w-5 h-5 text-white stroke-[2.2]" />
+            )}
+          </div>
+          <div className="flex flex-col text-left pr-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-black/30 leading-none">
+              {promoConfig.badgeText || 'WhatsApp Oficial'}
+            </span>
+            <span className="text-xs sm:text-sm font-extrabold text-white tracking-tight leading-tight mt-0.5 whitespace-nowrap">
+              {promoConfig.headline || 'Pide tu prueba gratis'}
+            </span>
+          </div>
+        </a>
+      )}
     </div>
   );
 }

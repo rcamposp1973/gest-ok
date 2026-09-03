@@ -43,6 +43,19 @@
         "details": { "type": "string" }
       },
       "required": ["timestamp", "userId", "userEmail", "action", "module", "details"]
+    },
+    "systemConfig": {
+      "title": "SystemConfig",
+      "description": "Configuraciones globales del sistema y promociones",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "headline": { "type": "string" },
+        "badgeText": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "whatsappCustomMessage": { "type": "string" }
+      },
+      "required": ["enabled"]
     }
   },
   "firestore": {
@@ -61,6 +74,10 @@
     "/auditLogs/{auditLogId}": {
       "schema": "auditLog",
       "description": "Eventos globales de auditoría y bitácora"
+    },
+    "/system_config/{configId}": {
+      "schema": "systemConfig",
+      "description": "Parámetros globales de landing y configuración de promociones"
     }
   }
 }

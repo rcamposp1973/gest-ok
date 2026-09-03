@@ -8,9 +8,10 @@ import { ShieldAlert, ArrowLeft, Edit3, Save, ExternalLink, UserPlus, Shield, Ch
 interface StudyDetailsProps {
   study: Study;
   onBack: () => void;
+  onLogout?: () => void;
 }
 
-export default function StudyDetails({ study: initialStudy, onBack }: StudyDetailsProps) {
+export default function StudyDetails({ study: initialStudy, onBack, onLogout }: StudyDetailsProps) {
   const [study, setStudy] = useState(initialStudy);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -343,6 +344,7 @@ export default function StudyDetails({ study: initialStudy, onBack }: StudyDetai
         currentUserRole={UserRole.SUPER_USER}
         isSupportMode={true}
         onExitSupportMode={() => setInSupportMode(false)}
+        onLogout={onLogout}
       />
     );
   }

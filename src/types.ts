@@ -3,6 +3,7 @@ export enum UserRole {
   STUDY_ADMIN = 'STUDY_ADMIN',
   ACCOUNTANT = 'ACCOUNTANT',
   ANALYST = 'ANALYST',
+  OBSERVER = 'OBSERVER',
 }
 
 export interface SuperUser {
@@ -75,12 +76,25 @@ export interface DTEConfig {
   rutRepresentante: string;
   nombreRepresentante?: string;
   claveSiiMasked?: string;
+  claveRepLegalSiiMasked?: string;
+  claveEmpresaSiiMasked?: string;
+  claveRepLegalSii?: string;
+  claveEmpresaSii?: string;
+  claveCertificadoDigital?: string;
+  siiApiUrl?: string;
+  rutEmpresaSii?: string;
+  multiEmpresaSelectionEnabled?: boolean;
+  lastSiiSyncDate?: string;
+  siiConnectionStatus?: 'Conectado' | 'No Configurado' | 'Error Credenciales';
+  siiApiProvider?: 'DIRECT_SII' | 'SIMPLE_API' | 'OPEN_FACTURA' | 'LIBRE_DTE' | 'CUSTOM_API';
+  siiApiKey?: string;
   hasCertificadoDigital?: boolean;
   certificadoNombre?: string;
+  certificadoB64?: string;
   certificadoFechaVencimiento?: string;
   defaultCiudadEmisor: string;
   defaultComunaEmisor: string;
-  ambiente: 'Producción' | 'Certificación';
+  ambiente: 'Producción' | 'Certificación' | 'SANDBOX' | string;
   resolutionNumber?: string;
   resolutionDate?: string;
 }
@@ -97,7 +111,7 @@ export interface DTEDocumentItem {
 
 export interface DTEDocument {
   id: string;
-  tipoDTE: '33' | '34' | '39' | '56' | '61'; // 33: Factura, 34: Exenta, 39: Boleta, 56: ND, 61: NC
+  tipoDTE: '33' | '34' | '39' | '41' | '52' | '56' | '61' | string; // 33: Factura, 34: Exenta, 39: Boleta, 41: Boleta Exenta, 52: Guía Despacho, 56: ND, 61: NC
   tipoDTELabel: string;
   folio: number;
   fechaEmision: string; // YYYY-MM-DD
@@ -126,7 +140,7 @@ export interface DTEDocument {
     nombre?: string;
   };
   items: DTEDocumentItem[];
-  formaPago: 'Contado' | 'Crédito 30 días' | 'Crédito 60 días' | 'Transferencia';
+  formaPago: 'Contado' | 'Crédito 30 días' | 'Crédito 60 días' | 'Transferencia' | 'Sin Costo / Entrega Gratuita' | 'Consignación' | string;
   montoNeto: number;
   montoIva: number;
   montoExento: number;
@@ -290,6 +304,8 @@ export interface RCVDocument {
   rutReceptor?: string;
   razonSocialReceptor?: string;
   tipoDoc: string; // ej: '33', '34', '39', '41', '46', '56', '61', '110', 'BHE'
+  tipoDocumento?: string;
+  nombreTipoDoc?: string;
   folio: string;
   fechaEmision: string; // YYYY-MM-DD
   fechaVencimiento?: string; // YYYY-MM-DD
@@ -308,6 +324,12 @@ export interface RCVDocument {
   cuentaGastoId?: string;
   cuentaIvaId?: string;
   cuentaContrapartidaId?: string;
+  estado?: string;
+  tipoOperacion?: string;
+  estadoCobranza?: 'Pagada' | 'Pendiente' | 'Vencida' | 'En Cobranza' | string;
+  estadoPago?: 'Pagada' | 'Pendiente' | 'Vencida' | 'Por Pagar' | string;
+  saldoPendiente?: number;
+  source?: string;
   createdBy?: string;
   createdByUserEmail?: string;
   createdAt?: string;
@@ -415,7 +437,7 @@ export interface AuditLog {
   companyId?: string;
   companyName?: string;
   action: 'LOGIN' | 'LOGOUT' | 'CREAR' | 'MODIFICAR' | 'ELIMINAR' | 'CONTABILIZAR' | 'ANULAR' | 'IMPORTACION_MASIVA' | 'PURGA' | 'EXPORTAR';
-  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV';
+  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV' | 'DEMO_PURGE' | 'MARKETING_PROMO';
   details: string;
   metadata?: { [key: string]: any };
 }
@@ -723,6 +745,20 @@ export interface CustomAnalysisTableItem {
   estado: 'Activo' | 'Inactivo';
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface MarketingPromoConfig {
+  id?: string;
+  enabled: boolean;
+  badgeText: string; // e.g. "WhatsApp Oficial" o "Promoción Especial"
+  headline: string; // e.g. "Pide tu prueba gratis de 15 días"
+  whatsappNumber: string; // e.g. "56946318783"
+  whatsappCustomMessage: string; // e.g. "Hola!! Quiero usar GEST_OK"
+  targetUrl?: string; // Optional direct URL
+  actionType: 'whatsapp' | 'url';
+  buttonColor?: string; // e.g. "#25D366" or "emerald"
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 

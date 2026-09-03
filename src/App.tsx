@@ -22,8 +22,11 @@ import AuditLogsViewer from './components/AuditLogsViewer';
 import ExecutiveHeader from './components/ExecutiveHeader';
 import IndicadoresEconomicosView from './components/IndicadoresEconomicosView';
 import PresentationView from './components/PresentationView';
+import MarketingPromoManager from './components/MarketingPromoManager';
+import SuperAdminSystemMonitor from './components/SuperAdminSystemMonitor';
 import { logAuditEvent } from './utils/auditLogger';
-import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles } from 'lucide-react';
+import { APP_VERSION } from './constants/version';
+import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles, LogOut, Megaphone, Activity } from 'lucide-react';
 
 function Dashboard() {
   const { currentUser } = useAuth();
@@ -32,7 +35,7 @@ function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [studies, setStudies] = useState<Study[]>([]);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
-  const [superAdminTab, setSuperAdminTab] = useState<'studies' | 'create_study' | 'plans' | 'super_users' | 'audit_logs' | 'presentation'>('studies');
+  const [superAdminTab, setSuperAdminTab] = useState<'monitor' | 'studies' | 'create_study' | 'plans' | 'super_users' | 'marketing_promo' | 'audit_logs' | 'presentation'>('monitor');
   const [role, setRole] = useState<UserRole | null>(null);
   const [activeCompany, setActiveCompany] = useState<Company | null>(null);
   const [showGlobalIndicatorsModal, setShowGlobalIndicatorsModal] = useState(false);
@@ -68,11 +71,11 @@ function Dashboard() {
       console.log("Fetching data for:", currentUser.email);
       const userEmail = currentUser.email?.toLowerCase();
 
-      // 1. Root Super Admin Global Bootstrap (rcampos@pulsocontable.cl or campos.ramon@gmail.com)
-      if (userEmail === 'rcampos@pulsocontable.cl' || userEmail === 'campos.ramon@gmail.com') {
+      // 1. Root Super Admin Global Bootstrap (rcampos@pulsocontable.cl)
+      if (userEmail === 'rcampos@pulsocontable.cl') {
         console.log("User is root bootstrap Super Admin Global:", userEmail);
         setRole(UserRole.SUPER_USER);
-        setUserData({ email: userEmail, name: 'Ramón Campos', isSuperUser: true });
+        setUserData({ email: userEmail, name: 'Ramón Campos (Pulso Contable)', isSuperUser: true });
         return;
       }
 
@@ -105,7 +108,7 @@ function Dashboard() {
 
         // B. Check root level legacy/primary admin fields
         const rootAdminEmail = (sData.adminEmail || sData.email || '').toLowerCase();
-        if (!foundStudyAdmin && (rootAdminEmail === userEmail || sData.adminId === currentUser.uid)) {
+        if (!foundStudyAdmin && (rootAdminEmail === userEmail || (sData.adminId === currentUser.uid && rootAdminEmail === userEmail))) {
           if (studyStatus === 'Sin Vigencia') {
             throw new Error('El estudio contable asignado se encuentra sin vigencia.');
           }
@@ -159,6 +162,15 @@ function Dashboard() {
         const qSuper = query(collection(db, 'superUsers'), where('email', '==', userEmail));
         const snapSuper = await getDocs(qSuper);
         if (!snapSuper.empty) {
+          // Safeguard: Study admins / regular users must NEVER be granted SUPER_USER
+          if (foundStudyAdmin || userEmail === 'campos.ramon@gmail.com') {
+            console.warn("Blocking study admin from superuser collection promotion:", userEmail);
+            for (const superDoc of snapSuper.docs) {
+              await deleteDoc(doc(db, 'superUsers', superDoc.id));
+            }
+            return;
+          }
+
           const superDoc = snapSuper.docs[0];
           const superData = superDoc.data();
           if (superData.estado === 'Inactivo' || superData.estado === 'Sin Vigencia') {
@@ -297,75 +309,127 @@ function Dashboard() {
       <main className="flex-1 p-3 md:p-5 w-full">
         {role === UserRole.SUPER_USER ? (
           selectedStudy ? (
-            <StudyDetails study={selectedStudy} onBack={() => setSelectedStudy(null)} />
+            <StudyDetails
+              study={selectedStudy}
+              onBack={() => setSelectedStudy(null)}
+              onLogout={handleLogout}
+            />
           ) : (
           <div className="space-y-6 max-w-7xl mx-auto">
             {/* SUPER ADMIN NAVIGATION TABS */}
-            <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap gap-2">
-              <button
-                onClick={() => setSuperAdminTab('studies')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'studies'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <Building2 className="w-4 h-4" />
-                <span>Estudios Registrados ({studies.length})</span>
-              </button>
+            <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setSuperAdminTab('monitor')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'monitor'
+                      ? 'bg-slate-950 text-white shadow-sm ring-2 ring-indigo-500/20'
+                      : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span>Monitor en Vivo & Estadísticas 📊</span>
+                </button>
 
-              <button
-                onClick={() => setSuperAdminTab('create_study')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'create_study'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Crear Nuevo Estudio</span>
-              </button>
+                <button
+                  onClick={() => setSuperAdminTab('studies')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'studies'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>Estudios Registrados ({studies.length})</span>
+                </button>
 
-              <button
-                onClick={() => setSuperAdminTab('super_users')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'super_users'
-                    ? 'bg-purple-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>Super Administradores (RBAC)</span>
-              </button>
+                <button
+                  onClick={() => setSuperAdminTab('create_study')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'create_study'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Crear Nuevo Estudio</span>
+                </button>
 
-              <button
-                onClick={() => setSuperAdminTab('audit_logs')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'audit_logs'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <History className="w-4 h-4 text-indigo-400" />
-                <span>Bitácora de Sistema (Audit Logs)</span>
-              </button>
+                <button
+                  onClick={() => setSuperAdminTab('super_users')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'super_users'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Super Administradores (RBAC)</span>
+                </button>
 
+                <button
+                  onClick={() => setSuperAdminTab('marketing_promo')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'marketing_promo'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Megaphone className="w-4 h-4" />
+                  <span>Promoción Portada (Landing)</span>
+                </button>
+
+                <button
+                  onClick={() => setSuperAdminTab('audit_logs')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'audit_logs'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <History className="w-4 h-4 text-indigo-400" />
+                  <span>Bitácora de Sistema (Audit Logs)</span>
+                </button>
+
+                <button
+                  onClick={() => setSuperAdminTab('presentation')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                    superAdminTab === 'presentation'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <span>Kit Comercial & Video Tour</span>
+                </button>
+              </div>
+
+              {/* Botón de Cerrar Sesión dedicado para Super Administrador */}
               <button
-                onClick={() => setSuperAdminTab('presentation')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  superAdminTab === 'presentation'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
+                onClick={handleLogout}
+                className="px-3.5 py-2 bg-slate-50 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                title="Cerrar sesión del Super Administrador"
               >
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span>Pitch Deck Comercial 📊</span>
+                <LogOut className="w-4 h-4 text-rose-500" />
+                <span>Cerrar Sesión</span>
               </button>
             </div>
 
             {/* TAB CONTENTS */}
+            {superAdminTab === 'monitor' && (
+              <SuperAdminSystemMonitor
+                onSelectStudy={(study) => {
+                  setSelectedStudy(study);
+                  setSuperAdminTab('studies');
+                }}
+              />
+            )}
             {superAdminTab === 'presentation' && (
               <PresentationView />
+            )}
+
+            {superAdminTab === 'marketing_promo' && (
+              <MarketingPromoManager />
             )}
 
             {superAdminTab === 'audit_logs' && (
@@ -467,7 +531,7 @@ function Dashboard() {
             )}
           </div>
           )
-        ) : (role === UserRole.STUDY_ADMIN || role === UserRole.ACCOUNTANT || role === UserRole.ANALYST) && userData?.studyId ? (
+        ) : (role === UserRole.STUDY_ADMIN || role === UserRole.ACCOUNTANT || role === UserRole.ANALYST || role === UserRole.OBSERVER) && userData?.studyId ? (
           <StudyAdminDashboard
             studyId={userData.studyId}
             currentUserRole={role}
@@ -533,7 +597,7 @@ function Dashboard() {
       </main>
 
       <footer className="bg-white border-t border-slate-200 px-4 py-2 text-[10px] text-slate-400 text-center">
-        Gest_OK v1.1.0 - Build 20260827 | Sistema de Gestión Contable
+        Gest_OK {APP_VERSION} - Build 20260903 | Sistema de Gestión Contable y Tributaria
       </footer>
 
       {/* Modal de Indicadores Económicos Oficiales Global */}

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { User, Company, UserRole, Assignment, Study } from '../types';
+import { User, Company, UserRole, Assignment, Study, ChartOfAccount, Voucher, RCVDocument, BankReconciliation, FiscalPeriodYear } from '../types';
 import CompanyAccountingDashboard from './CompanyAccountingDashboard';
-import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut } from 'lucide-react';
+import ClientExecutiveManagementView from './ClientExecutiveManagementView';
+import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import ChangePasswordModal from './ChangePasswordModal';
+import { isTestStudy, executeTestStudyDataPurge, TestStudyPurgeStats } from '../utils/testStudyPurgeUtils';
 
 export interface StudyAdminDashboardProps {
   studyId: string;
@@ -31,15 +33,70 @@ export default function StudyAdminDashboard({
   const isStudyAdmin = currentUserRole === UserRole.STUDY_ADMIN;
   const isAccountant = currentUserRole === UserRole.ACCOUNTANT;
   const isAnalyst = currentUserRole === UserRole.ANALYST;
-  const isRestrictedWorker = isAccountant || isAnalyst;
+  const isObserver = currentUserRole === UserRole.OBSERVER;
+  const isRestrictedWorker = isAccountant || isAnalyst || isObserver;
+
+  // Observer mode loaded data
+  const [observerAccounts, setObserverAccounts] = useState<ChartOfAccount[]>([]);
+  const [observerVouchers, setObserverVouchers] = useState<Voucher[]>([]);
+  const [observerRcvDocs, setObserverRcvDocs] = useState<RCVDocument[]>([]);
+  const [observerBankRecs, setObserverBankRecs] = useState<BankReconciliation[]>([]);
+  const [observerFiscalYears, setObserverFiscalYears] = useState<FiscalPeriodYear[]>([]);
+  const [loadingObserverData, setLoadingObserverData] = useState<boolean>(false);
 
   const [showChangePassModal, setShowChangePassModal] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'users' | 'companies' | 'assignments'>('companies');
+  const [activeTab, setActiveTab] = useState<'users' | 'companies' | 'assignments' | 'demoPurge'>('companies');
   const [users, setUsers] = useState<User[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [studyData, setStudyData] = useState<Study | null>(null);
+
+  const isCurrentStudyTest = isTestStudy(studyId, studyData?.name);
+
+  // Test Study Purge states
+  const [isTestPurging, setIsTestPurging] = useState(false);
+  const [testPurgeTargetCompanyId, setTestPurgeTargetCompanyId] = useState<string>('ALL');
+  const [testPurgeConfirmation, setTestPurgeConfirmation] = useState('');
+  const [testPurgeSuccessMessage, setTestPurgeSuccessMessage] = useState<string | null>(null);
+  const [testPurgeErrorMessage, setTestPurgeErrorMessage] = useState<string | null>(null);
+  const [lastTestPurgeStats, setLastTestPurgeStats] = useState<TestStudyPurgeStats | null>(null);
+
+  const handleExecuteTestPurge = async () => {
+    if (!isCurrentStudyTest) {
+      alert("⚠️ Acción bloqueada: Esta herramienta es exclusiva para demostraciones en 'ESTUDIO DE PRUEBA'.");
+      return;
+    }
+    if (testPurgeConfirmation.trim().toUpperCase() !== 'PURGAR_DEMO') {
+      alert('Debes escribir "PURGAR_DEMO" para confirmar el reinicio de datos de demostración.');
+      return;
+    }
+
+    setIsTestPurging(true);
+    setTestPurgeErrorMessage(null);
+    setTestPurgeSuccessMessage(null);
+
+    try {
+      const stats = await executeTestStudyDataPurge(
+        studyId,
+        studyData?.name || 'ESTUDIO DE PRUEBA',
+        testPurgeTargetCompanyId === 'ALL' ? undefined : testPurgeTargetCompanyId,
+        currentUserEmail || undefined,
+        currentUserId || undefined
+      );
+      setLastTestPurgeStats(stats);
+      setTestPurgeSuccessMessage(
+        `✅ Purga de datos de demostración completada con éxito. Se eliminaron ${stats.totalDeleted} registros en ${stats.purgedCompaniesCount} empresa(s). Las empresas y usuarios se mantienen intactos.`
+      );
+      setTestPurgeConfirmation('');
+      await fetchData();
+    } catch (err: any) {
+      console.error("Error executing test purge:", err);
+      setTestPurgeErrorMessage("Error al ejecutar purga: " + err.message);
+    } finally {
+      setIsTestPurging(false);
+    }
+  };
 
   // In-flight saving guards (Anti-Double Click Protection)
   const [isSavingUser, setIsSavingUser] = useState(false);
@@ -193,6 +250,31 @@ export default function StudyAdminDashboard({
     onCompanyChange?.(comp);
     if (comp) {
       localStorage.setItem(`activeCompanyId_${studyId}`, comp.id);
+      if (isObserver) {
+        // Load company data for observer dashboard
+        (async () => {
+          setLoadingObserverData(true);
+          try {
+            const compRef = doc(db, 'studies', studyId, 'companies', comp.id);
+            const [accSnap, vouSnap, rcvSnap, recSnap, fisSnap] = await Promise.all([
+              getDocs(collection(compRef, 'chartOfAccounts')),
+              getDocs(collection(compRef, 'vouchers')),
+              getDocs(collection(compRef, 'rcvDocuments')),
+              getDocs(collection(compRef, 'bankReconciliations')),
+              getDocs(collection(compRef, 'fiscalYears'))
+            ]);
+            setObserverAccounts(accSnap.docs.map(d => ({ id: d.id, ...d.data() } as ChartOfAccount)));
+            setObserverVouchers(vouSnap.docs.map(d => ({ id: d.id, ...d.data() } as Voucher)));
+            setObserverRcvDocs(rcvSnap.docs.map(d => ({ id: d.id, ...d.data() } as RCVDocument)));
+            setObserverBankRecs(recSnap.docs.map(d => ({ id: d.id, ...d.data() } as BankReconciliation)));
+            setObserverFiscalYears(fisSnap.docs.map(d => ({ id: d.id, ...d.data() } as FiscalPeriodYear)));
+          } catch (err) {
+            console.error('Error fetching observer data:', err);
+          } finally {
+            setLoadingObserverData(false);
+          }
+        })();
+      }
     } else {
       localStorage.removeItem(`activeCompanyId_${studyId}`);
     }
@@ -635,6 +717,29 @@ export default function StudyAdminDashboard({
       );
     }
 
+    if (isObserver) {
+      if (loadingObserverData) {
+        return (
+          <div className="p-12 text-center text-slate-500 text-sm flex items-center justify-center gap-3">
+            <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            <span>Cargando panel ejecutivo y de gestión para {selectedCompanyForAccounting.name}...</span>
+          </div>
+        );
+      }
+
+      return (
+        <ClientExecutiveManagementView
+          company={selectedCompanyForAccounting}
+          accounts={observerAccounts}
+          vouchers={observerVouchers}
+          rcvDocuments={observerRcvDocs}
+          bankReconciliations={observerBankRecs}
+          fiscalYears={observerFiscalYears}
+          onBack={() => handleSelectCompany(null)}
+        />
+      );
+    }
+
     return (
       <CompanyAccountingDashboard
         studyId={studyId}
@@ -645,11 +750,11 @@ export default function StudyAdminDashboard({
     );
   }
 
-  const tabs = [
+  const tabs: { id: 'users' | 'companies' | 'assignments'; label: string }[] = [
     { id: 'companies', label: 'Empresas Clientes' },
     { id: 'users', label: 'Gestión de Usuarios' },
     { id: 'assignments', label: 'Asignaciones' },
-  ] as const;
+  ];
 
   return (
     <div className="space-y-6">
@@ -676,11 +781,12 @@ export default function StudyAdminDashboard({
         <div>
           <span className={`text-[11px] px-2.5 py-0.5 rounded font-mono font-bold uppercase ${
             isAnalyst ? 'bg-amber-900/60 text-amber-200 border border-amber-700' :
+            isObserver ? 'bg-sky-900/60 text-sky-200 border border-sky-700' :
             isAccountant ? 'bg-emerald-900/60 text-emerald-200 border border-emerald-700' :
             isSuperUser ? 'bg-slate-800 text-slate-200 border border-slate-700' :
             'bg-slate-800 text-slate-200 border border-slate-700'
           }`}>
-            {isAnalyst ? 'PERFIL ANALISTA' : isAccountant ? 'PERFIL CONTADOR' : isSuperUser ? 'SUPER ADMIN (LECTURA)' : 'ADMINISTRACIÓN DE ESTUDIO'}
+            {isAnalyst ? 'PERFIL ANALISTA' : isObserver ? 'CLIENTE OBSERVADOR (GESTIÓN)' : isAccountant ? 'PERFIL CONTADOR' : isSuperUser ? 'SUPER ADMIN (LECTURA)' : 'ADMINISTRACIÓN DE ESTUDIO'}
           </span>
           <h2 className="text-xl font-bold mt-1.5 text-white tracking-tight">
             {isRestrictedWorker ? 'Mis Empresas Asignadas' : 'Panel de Administración y Contabilidad'}
@@ -827,6 +933,7 @@ export default function StudyAdminDashboard({
                     <select name="role" defaultValue={editingUser?.role || UserRole.ACCOUNTANT} required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                       <option value={UserRole.ACCOUNTANT}>Contador (Operación Contable y Tributaria)</option>
                       <option value={UserRole.ANALYST}>Analista (Operación Contable sin Indicadores/KPIs)</option>
+                      <option value={UserRole.OBSERVER}>Cliente Final / Observador (KPIs, CxC, CxP, Gastos, Ventas y Conciliación Bancaria)</option>
                       <option value={UserRole.STUDY_ADMIN}>Administrador de Estudio (Gestión Completa)</option>
                     </select>
                   </div>
@@ -857,10 +964,11 @@ export default function StudyAdminDashboard({
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`text-xs px-2 py-0.5 rounded font-bold ${
                               u.role === UserRole.ANALYST ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                              u.role === UserRole.OBSERVER ? 'bg-sky-100 text-sky-800 border border-sky-300' :
                               u.role === UserRole.STUDY_ADMIN ? 'bg-purple-100 text-purple-800 border border-purple-300' :
                               'bg-indigo-100 text-indigo-700 border border-indigo-300'
                             }`}>
-                              {u.role === UserRole.ANALYST ? 'Analista' : u.role === UserRole.STUDY_ADMIN ? 'Admin Estudio' : 'Contador'}
+                              {u.role === UserRole.ANALYST ? 'Analista' : u.role === UserRole.OBSERVER ? 'Observador' : u.role === UserRole.STUDY_ADMIN ? 'Admin Estudio' : 'Contador'}
                             </span>
                             <span className={`text-xs px-2 py-0.5 rounded font-medium ${u.estado === 'Inactivo' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
                               {u.estado || 'Activo'}

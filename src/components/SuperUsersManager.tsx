@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { SuperUser } from '../types';
-import { ShieldCheck, UserPlus, Edit3, Trash2, CheckCircle2, XCircle, Key, Eye, EyeOff, AlertTriangle, Phone, Mail, ShieldAlert, Database, RefreshCw } from 'lucide-react';
-import { executeCompleteDatabasePurge, PurgeStats } from '../utils/databaseResetUtils';
+import { ShieldCheck, UserPlus, Edit3, Trash2, CheckCircle2, XCircle, Key, Eye, EyeOff, AlertTriangle, Phone, Mail, ShieldAlert } from 'lucide-react';
 
 export default function SuperUsersManager() {
   const [superUsers, setSuperUsers] = useState<SuperUser[]>([]);
@@ -184,34 +183,6 @@ export default function SuperUsersManager() {
     }
   };
 
-  const [isPurging, setIsPurging] = useState(false);
-  const [showPurgeModal, setShowPurgeModal] = useState(false);
-  const [purgeConfirmationText, setPurgeConfirmationText] = useState('');
-  const [purgeStats, setPurgeStats] = useState<PurgeStats | null>(null);
-
-  const handleExecutePurge = async () => {
-    if (purgeConfirmationText !== 'BORRAR_TODO_EN_CERO') {
-      alert('Debe escribir exactamente "BORRAR_TODO_EN_CERO" para confirmar el formateo de la base de datos.');
-      return;
-    }
-
-    setIsPurging(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const stats = await executeCompleteDatabasePurge();
-      setPurgeStats(stats);
-      setSuccess(`✅ Base de datos restaurada a cero con éxito. Se eliminaron ${stats.totalDocumentsDeleted} registros. Los perfiles de Super Administrador permanecen intactos.`);
-      setShowPurgeModal(false);
-      setPurgeConfirmationText('');
-    } catch (err: any) {
-      console.error("Error executing database purge:", err);
-      setError("Error al purgar base de datos: " + err.message);
-    } finally {
-      setIsPurging(false);
-    }
-  };
-
   const handleDeleteSuperUser = async (user: SuperUser) => {
     if (!user.id) return;
     setError(null);
@@ -254,15 +225,6 @@ export default function SuperUsersManager() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setShowPurgeModal(true)}
-            className="px-3.5 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
-            title="Borrar todos los estudios, empresas y datos para dejar la BD en cero"
-          >
-            <Database className="w-4 h-4 text-rose-400" />
-            <span>Limpiar Base de Datos (Poner en Cero)</span>
-          </button>
-
           <button
             onClick={handleOpenAddModal}
             className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2"
@@ -531,101 +493,6 @@ export default function SuperUsersManager() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: PURGAR / RESETEAR BASE DE DATOS A CERO */}
-      {showPurgeModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl border-2 border-rose-500 shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-150">
-            <div className="bg-rose-600 text-white p-5 flex justify-between items-center">
-              <div className="flex items-center gap-2.5">
-                <ShieldAlert className="w-6 h-6 text-white animate-pulse" />
-                <div>
-                  <h3 className="font-bold text-base">Restaurar Base de Datos a CERO</h3>
-                  <p className="text-rose-100 text-xs mt-0.5">Acción Crítica de Super Administrador</p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  if (!isPurging) {
-                    setShowPurgeModal(false);
-                    setPurgeConfirmationText('');
-                  }
-                }}
-                disabled={isPurging}
-                className="text-rose-200 hover:text-white text-lg font-bold disabled:opacity-50"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 text-xs">
-              <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-2 text-rose-950">
-                <p className="font-bold text-rose-900 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-600" />
-                  Esta acción eliminará de forma irreversible:
-                </p>
-                <ul className="list-disc list-inside space-y-1 text-slate-700 pl-1 font-medium">
-                  <li>Todos los <strong>Estudios Contables</strong> registrados.</li>
-                  <li>Todas las <strong>Empresas Clientes</strong> asociadas.</li>
-                  <li>Todos los <strong>Usuarios Contadores y Analistas</strong>.</li>
-                  <li>Todos los <strong>Comprobantes contables, planes de cuentas y auxiliares</strong>.</li>
-                  <li>Todas las <strong>Cartolas bancarias, RCV, conciliaciones y bitácoras</strong>.</li>
-                </ul>
-                <div className="mt-2 pt-2 border-t border-rose-200 font-bold text-emerald-800 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Se conservará intacto el usuario y clave del Super Administrador.</span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block font-bold text-slate-800">
-                  Para confirmar, escribe <span className="font-mono text-rose-600 font-extrabold select-all">BORRAR_TODO_EN_CERO</span> a continuación:
-                </label>
-                <input
-                  type="text"
-                  value={purgeConfirmationText}
-                  onChange={(e) => setPurgeConfirmationText(e.target.value)}
-                  placeholder="Escribe BORRAR_TODO_EN_CERO"
-                  disabled={isPurging}
-                  className="w-full border-2 border-slate-300 focus:border-rose-600 rounded-lg p-2.5 font-mono text-sm font-bold text-rose-700 focus:outline-none uppercase"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-slate-200 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPurgeModal(false);
-                    setPurgeConfirmationText('');
-                  }}
-                  disabled={isPurging}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors disabled:opacity-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExecutePurge}
-                  disabled={purgeConfirmationText !== 'BORRAR_TODO_EN_CERO' || isPurging}
-                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-lg hover:shadow-rose-600/30 transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {isPurging ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Limpiando base de datos...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      <span>Confirmar y Poner en Cero</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

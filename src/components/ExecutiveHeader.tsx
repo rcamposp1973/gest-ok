@@ -74,10 +74,11 @@ export default function ExecutiveHeader({
   };
 
   const getRoleLabel = () => {
-    if (currentUserRole === UserRole.SUPER_USER || currentUserRole === 'SUPER_USER') return 'Super Admin Global';
-    if (currentUserRole === UserRole.STUDY_ADMIN || currentUserRole === 'STUDY_ADMIN') return 'Admin Estudio';
-    if (currentUserRole === UserRole.ANALYST || currentUserRole === 'ANALYST') return 'Analista Contable';
-    return 'Contador';
+    if (currentUserRole === UserRole.SUPER_USER || currentUserRole === 'SUPER_USER') return '🛡️ Super Admin Global';
+    if (currentUserRole === UserRole.STUDY_ADMIN || currentUserRole === 'STUDY_ADMIN') return '🏢 Admin Estudio Contable';
+    if (currentUserRole === UserRole.ANALYST || currentUserRole === 'ANALYST') return '📊 Analista Contable';
+    if (currentUserRole === UserRole.OBSERVER || currentUserRole === 'OBSERVER') return '👁️ Cliente Observador';
+    return '💼 Contador';
   };
 
   const formatVal = (key: string, rateObj: DailyIndicator | null) => {
@@ -193,9 +194,9 @@ export default function ExecutiveHeader({
                 1. Empresa Activa como nombre principal
                 2. Abajo: Usuario (email)
                 3. Abajo: Rol
-                4. Abajo: Opción "Ir al inicio"
+                4. Abajo: Opciones (Inicio, Clave, Salir)
             */}
-            <div className="bg-[#142130] px-3.5 py-1.5 rounded-lg border border-slate-700/80 text-right flex flex-col items-end min-w-[190px]">
+            <div className="bg-[#142130] px-3.5 py-1.5 rounded-lg border border-slate-700/80 text-right flex flex-col items-end min-w-[200px]">
               {/* 1. Empresa Activa como nombre principal */}
               <div className="text-xs font-bold text-white tracking-tight truncate max-w-[210px]" title={activeCompany?.name || activeStudy?.name || 'Gest_OK'}>
                 {activeCompany ? activeCompany.name : (activeStudy ? activeStudy.name : 'Gest_OK Corporativo')}
@@ -211,15 +212,42 @@ export default function ExecutiveHeader({
                 {getRoleLabel()}
               </div>
 
-              {/* 4. Opción Ir al inicio */}
-              <button
-                onClick={onGoHome}
-                className="mt-1 text-[11px] font-medium text-slate-300 hover:text-white flex items-center gap-1 hover:underline transition-all"
-                title="Volver a la vista principal"
-              >
-                <Home className="w-3 h-3 stroke-[1.5]" />
-                <span>Ir al inicio</span>
-              </button>
+              {/* 4. Opciones de Acción: Inicio, Clave & Cerrar Sesión */}
+              <div className="mt-1.5 pt-1 border-t border-slate-700/60 w-full flex items-center justify-end gap-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={onGoHome}
+                  className="font-medium text-slate-300 hover:text-white flex items-center gap-1 hover:underline transition-all cursor-pointer"
+                  title="Volver a la vista principal"
+                >
+                  <Home className="w-3 h-3 stroke-[1.5]" />
+                  <span>Inicio</span>
+                </button>
+
+                <span className="text-slate-600 text-xs select-none">•</span>
+
+                <button
+                  type="button"
+                  onClick={() => setShowChangePassModal(true)}
+                  className="font-medium text-slate-300 hover:text-white flex items-center gap-1 hover:underline transition-all cursor-pointer"
+                  title="Cambiar Contraseña"
+                >
+                  <Key className="w-3 h-3 stroke-[1.5]" />
+                  <span>Clave</span>
+                </button>
+
+                <span className="text-slate-600 text-xs select-none">•</span>
+
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="font-bold text-rose-300 hover:text-rose-100 flex items-center gap-1 hover:underline transition-all cursor-pointer"
+                  title="Cerrar sesión y salir del sistema"
+                >
+                  <LogOut className="w-3 h-3 stroke-[1.75]" />
+                  <span>Salir</span>
+                </button>
+              </div>
             </div>
 
           </div>
