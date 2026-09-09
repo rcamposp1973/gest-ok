@@ -60,7 +60,7 @@ export function sanitizeVoucherLine<T extends VoucherLine>(
     let hasKeys = false;
     Object.entries(clean.customAnalyses).forEach(([key, val]) => {
       if (val && isCustomAnalysisRequired(account, key)) {
-        sanitizedCustom[key] = val;
+        sanitizedCustom[key.toUpperCase()] = String(val).toUpperCase();
         hasKeys = true;
       }
     });
@@ -70,6 +70,19 @@ export function sanitizeVoucherLine<T extends VoucherLine>(
       delete clean.customAnalyses;
     }
   }
+
+  // REQUERIMIENTO: Todos los registros contables, atributos y textos deben quedar en MAYÚSCULAS
+  if (clean.accountCode) clean.accountCode = clean.accountCode.toUpperCase();
+  if (clean.accountName) clean.accountName = clean.accountName.toUpperCase();
+  if (clean.auxiliaryRut) clean.auxiliaryRut = clean.auxiliaryRut.toUpperCase();
+  if (clean.auxiliaryName) clean.auxiliaryName = clean.auxiliaryName.toUpperCase();
+  if (clean.documentRef) clean.documentRef = clean.documentRef.toUpperCase();
+  if (clean.costCenter) clean.costCenter = clean.costCenter.toUpperCase();
+  if (clean.expenseItem) clean.expenseItem = clean.expenseItem.toUpperCase();
+  if (clean.project) clean.project = clean.project.toUpperCase();
+  if (clean.product) clean.product = clean.product.toUpperCase();
+  if (clean.bankDocRef) clean.bankDocRef = clean.bankDocRef.toUpperCase();
+  if (clean.gloss) clean.gloss = clean.gloss.toUpperCase();
 
   return clean;
 }
