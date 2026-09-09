@@ -91,161 +91,137 @@ export default function ExecutiveHeader({
 
   return (
     <>
-      <header className="sticky top-0 z-50 bg-[#1e2e42] text-white border-b border-slate-700/80 shadow-sm flex-shrink-0">
-        <div className="max-w-[1750px] mx-auto px-4 py-2.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+      <header className="sticky top-0 z-50 bg-[#0f172a] text-white border-b border-slate-800 shadow-xs flex-shrink-0">
+        <div className="max-w-[1800px] mx-auto px-4 py-1.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 min-h-[48px]">
           
-          {/* LADO IZQUIERDO: Logo, Nombre de la App, Versión pequeña y Tagline */}
-          <div className="flex items-center gap-3">
-            <div
+          {/* LADO IZQUIERDO: Logo, Nombre de la App, Versión y Tagline */}
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            <button
+              type="button"
               onClick={onGoHome}
-              className="w-10 h-10 bg-[#283b54] hover:bg-[#324966] text-white transition-colors rounded-lg border border-slate-600/70 flex items-center justify-center font-bold shadow-xs cursor-pointer flex-shrink-0"
-              title="Ir al Inicio"
+              className="w-8 h-8 bg-slate-800 hover:bg-slate-700 text-slate-100 transition-colors rounded-md border border-slate-700/80 flex items-center justify-center cursor-pointer shadow-2xs"
+              title="Ir al Inicio / Selección de Estudio y Empresa"
             >
-              <Building2 className="w-5 h-5 stroke-[1.5]" />
-            </div>
+              <Building2 className="w-4 h-4 stroke-[1.75] text-indigo-300" />
+            </button>
 
-            <div className="flex flex-col">
-              {/* Nombre de la App + Versión más pequeña */}
-              <div className="flex items-center gap-2">
-                <span
-                  onClick={onGoHome}
-                  className="font-bold text-lg tracking-tight text-white cursor-pointer hover:text-slate-200 transition-colors"
-                >
-                  Gest_OK
-                </span>
-                <span 
-                  className="text-[10px] font-mono font-bold bg-[#142130] text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/40 shadow-2xs" 
-                  title={`Versión actual de la plataforma (${APP_VERSION})`}
-                >
-                  {APP_VERSION}
-                </span>
-              </div>
-
-              {/* Tagline */}
-              <span className="text-[11px] text-slate-300 font-normal tracking-wide">
+            <div className="flex items-center gap-2">
+              <span
+                onClick={onGoHome}
+                className="font-bold text-base tracking-tight text-white cursor-pointer hover:text-slate-200 transition-colors select-none"
+              >
+                Gest_OK
+              </span>
+              <span 
+                className="text-[10px] font-mono font-bold bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700 leading-none" 
+                title={`Versión actual de la plataforma (${APP_VERSION})`}
+              >
+                {APP_VERSION}
+              </span>
+              <span className="hidden xl:inline text-slate-600 select-none">•</span>
+              <span className="hidden xl:inline text-[11px] text-slate-400 font-normal">
                 Gestión basada en la Contabilidad
               </span>
             </div>
           </div>
 
-          {/* CENTRO: Nombre de la Empresa Consultora (Sutil) + Empresa Activa (Más grande) */}
-          <div className="flex-1 max-w-xl mx-auto text-center px-4 py-1.5 bg-[#142130]/80 rounded-lg border border-slate-700/80 my-1 md:my-0">
-            {/* Empresa Consultora / Estudio Contable (Sutil) */}
-            <div className="text-[11px] text-slate-300 font-medium tracking-wide flex items-center justify-center gap-1.5">
-              <span>{activeStudy?.name || 'Estudio Contable'}</span>
-              {selectedPeriod && (
-                <span className="text-[10px] font-mono font-semibold bg-[#283b54] text-slate-200 px-1.5 py-0.2 rounded border border-slate-600">
-                  Período: {selectedPeriod}
+          {/* CENTRO: Contexto Activo (Estudio + Empresa Activa + RUT) */}
+          <div className="flex-1 max-w-xl mx-auto text-center px-3 py-1 bg-slate-900/90 rounded-md border border-slate-800/90 my-0.5 md:my-0">
+            <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+              <span className="truncate max-w-[200px]" title={activeStudy?.name || 'Estudio Contable'}>
+                {activeStudy?.name || 'Estudio Contable'}
+              </span>
+              <span className="text-slate-600">/</span>
+              <span className="font-semibold text-white tracking-tight truncate max-w-[260px]" title={activeCompany ? activeCompany.name : 'Panel General'}>
+                {activeCompany ? activeCompany.name : 'Panel General'}
+              </span>
+              {activeCompany?.rut && (
+                <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded border border-slate-700">
+                  {activeCompany.rut}
                 </span>
               )}
             </div>
-
-            {/* Empresa Activa (Más abajo y más grande) */}
-            <h2 className="text-base font-bold text-white tracking-tight truncate max-w-lg mt-0.5">
-              {activeCompany ? activeCompany.name : (activeStudy ? activeStudy.name : 'Panel General de Control')}
-            </h2>
-            {activeCompany?.rut && (
-              <p className="text-[11px] font-mono text-slate-400">
-                RUT: {activeCompany.rut}
-              </p>
-            )}
           </div>
 
-          {/* LADO DERECHO: Indicadores Económicos + Bloque de Usuario Organizado */}
-          <div className="flex items-center justify-end gap-3 flex-shrink-0">
+          {/* LADO DERECHO: Indicadores Económicos Oficiales + Bloque de Usuario Organizado */}
+          <div className="flex items-center justify-end gap-2.5 flex-shrink-0">
             
             {/* Widget de 2 Indicadores Fijos con Fecha */}
-            <div className="hidden lg:flex flex-col items-end bg-[#142130] px-2.5 py-1.5 rounded-lg border border-slate-700/80">
+            <div className="hidden lg:flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded-md border border-slate-800 text-right">
               {latestRate?.date && (
-                <div className="text-[10px] font-semibold text-slate-300 mb-1 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
-                  <span>Al {latestRate.date.split('-').reverse().join('/')}</span>
-                </div>
+                <span className="text-[9px] font-mono text-slate-400 mr-1 hidden 2xl:inline" title="Fecha del valor oficial">
+                  {latestRate.date.split('-').reverse().join('/')}
+                </span>
               )}
               <div className="flex items-center gap-1.5">
                 {selectedIndicators.map(key => {
                   const info = INDICATOR_LABELS[key] || { label: key.toUpperCase(), symbol: key.toUpperCase() };
                   const valStr = formatVal(key, latestRate);
                   return (
-                    <div key={key} className="bg-[#1e2e42] px-2 py-0.5 rounded border border-slate-700 text-right min-w-[75px]">
-                      <div className="text-[9px] text-slate-400 font-sans font-medium uppercase tracking-wider">
+                    <div key={key} className="bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/80 text-right min-w-[70px]">
+                      <div className="text-[9px] text-slate-400 font-sans font-medium uppercase tracking-wider leading-tight">
                         {info.label}
                       </div>
-                      <div className="text-[11px] font-mono font-bold text-slate-100">
+                      <div className="text-[11px] font-mono font-semibold text-slate-100 leading-tight">
                         {valStr}
                       </div>
                     </div>
                   );
                 })}
 
-                {/* Botón rápido para configurar indicadores */}
                 <button
                   type="button"
                   onClick={() => setShowConfigModal(true)}
-                  className="p-1 bg-[#1e2e42] hover:bg-[#283b54] text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
-                  title="Configurar los 2 indicadores visibles"
+                  className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
+                  title="Configurar indicadores visibles"
                 >
-                  <Settings className="w-3 h-3 stroke-[1.25]" />
+                  <Settings className="w-3 h-3 stroke-[1.5]" />
                 </button>
               </div>
             </div>
 
-            {/* BLOQUE DE USUARIO REORGANIZADO:
-                1. Empresa Activa como nombre principal
-                2. Abajo: Usuario (email)
-                3. Abajo: Rol
-                4. Abajo: Opciones (Inicio, Clave, Salir)
-            */}
-            <div className="bg-[#142130] px-3.5 py-1.5 rounded-lg border border-slate-700/80 text-right flex flex-col items-end min-w-[200px]">
-              {/* 1. Empresa Activa como nombre principal */}
-              <div className="text-xs font-bold text-white tracking-tight truncate max-w-[210px]" title={activeCompany?.name || activeStudy?.name || 'Gest_OK'}>
-                {activeCompany ? activeCompany.name : (activeStudy ? activeStudy.name : 'Gest_OK Corporativo')}
+            {/* BLOQUE DE USUARIO COMPACTO & ELEGANTE */}
+            <div className="bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 flex items-center gap-2.5">
+              <div className="text-right">
+                <div className="text-[11px] font-mono font-medium text-slate-200 truncate max-w-[160px] leading-tight" title={currentUserEmail || ''}>
+                  {currentUserEmail || 'usuario'}
+                </div>
+                <div className="text-[9px] font-semibold uppercase text-indigo-300 leading-tight tracking-wider">
+                  {getRoleLabel()}
+                </div>
               </div>
 
-              {/* 2. Usuario */}
-              <div className="text-[11px] font-mono text-slate-300 truncate max-w-[210px]" title={currentUserEmail || ''}>
-                {currentUserEmail || 'usuario@pulsocontable.cl'}
-              </div>
+              <div className="h-5 w-px bg-slate-800"></div>
 
-              {/* 3. Rol */}
-              <div className="text-[10px] font-semibold uppercase text-indigo-300 mt-0.5">
-                {getRoleLabel()}
-              </div>
-
-              {/* 4. Opciones de Acción: Inicio, Clave & Cerrar Sesión */}
-              <div className="mt-1.5 pt-1 border-t border-slate-700/60 w-full flex items-center justify-end gap-2 text-[11px]">
+              {/* Acciones Rápidas */}
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={onGoHome}
-                  className="font-medium text-slate-300 hover:text-white flex items-center gap-1 hover:underline transition-all cursor-pointer"
-                  title="Volver a la vista principal"
+                  className="p-1 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="Volver a la selección de empresas"
                 >
-                  <Home className="w-3 h-3 stroke-[1.5]" />
-                  <span>Inicio</span>
+                  <Home className="w-3.5 h-3.5" />
                 </button>
 
-                <span className="text-slate-600 text-xs select-none">•</span>
-
-                <button
-                  type="button"
-                  onClick={() => setShowChangePassModal(true)}
-                  className="font-medium text-slate-300 hover:text-white flex items-center gap-1 hover:underline transition-all cursor-pointer"
-                  title="Cambiar Contraseña"
-                >
-                  <Key className="w-3 h-3 stroke-[1.5]" />
-                  <span>Clave</span>
-                </button>
-
-                <span className="text-slate-600 text-xs select-none">•</span>
+                {currentUserEmail && (
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePassModal(true)}
+                    className="p-1 text-slate-300 hover:text-amber-300 hover:bg-slate-800 rounded transition-colors"
+                    title="Cambiar contraseña de acceso"
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="font-bold text-rose-300 hover:text-rose-100 flex items-center gap-1 hover:underline transition-all cursor-pointer"
-                  title="Cerrar sesión y salir del sistema"
+                  className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded transition-colors"
+                  title="Cerrar sesión segura"
                 >
-                  <LogOut className="w-3 h-3 stroke-[1.75]" />
-                  <span>Salir</span>
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>

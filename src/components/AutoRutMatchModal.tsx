@@ -8,11 +8,13 @@ import {
   VoucherLine,
   Auxiliary,
   RCVDocument,
-  Company
+  Company,
+  FiscalPeriodYear
 } from '../types';
 import { extractRutFromGloss, areRutsEqual, ExtractedRutInfo } from '../utils/rutMatcher';
 import { sanitizeForFirestore } from '../utils/bankReconciliationUtils';
 import { logAuditEvent } from '../utils/auditLogger';
+import { getNextOpenPeriodAndDate, checkIsPeriodClosed } from '../utils/periodUtils';
 
 export interface AutoRutMatchModalProps {
   isOpen: boolean;
@@ -26,6 +28,7 @@ export interface AutoRutMatchModalProps {
   rcvDocuments?: RCVDocument[];
   selectedBankAccountId: string;
   selectedPeriod: string;
+  fiscalYears?: FiscalPeriodYear[];
   onApplyMatches: (
     updatedStatementLines: BankStatementLine[],
     createdVouchersCount: number
@@ -33,26 +36,51 @@ export interface AutoRutMatchModalProps {
   onVouchersUpdated?: () => void;
 }
 
+export interface LearnedRutRule {
+  rut: string;
+  entityName: string;
+  type: 'ABONO' | 'CARGO';
+  targetAccountId: string;
+  targetAccountCode: string;
+  targetAccountName: string;
+  isHonorario?: boolean;
+  timesApplied: number;
+  lastUpdated: string;
+}
+
 export interface ProposedMatch {
   id: string;
   line: BankStatementLine;
   rutInfo: ExtractedRutInfo;
-  type: 'ABONO' | 'CARGO'; // ABONO = Cobro de Cliente (Ingreso), CARGO = Pago a Proveedor (Egreso)
+  type: 'ABONO' | 'CARGO'; // ABONO = Cobro de Cliente (Ingreso), CARGO = Pago a Proveedor / Honorario (Egreso)
   amount: number;
-  matchStatus: 'EXACTO_MONTO_Y_RUT' | 'MATCH_RUT_AUXILIAR' | 'RUT_DETECTADO';
+  matchStatus: 'EXACTO_MONTO_Y_RUT' | 'DIFERENCIA_MENOR_10_PENDIENTE' | 'MATCH_RUT_AUXILIAR' | 'APRENDIDO_POR_JUNIOR' | 'RUT_DETECTADO';
+  differenceAmount?: number; // Para alertar diferencias menores a 10 pesos
   matchedDocument?: RCVDocument;
   matchedAuxiliary?: Auxiliary;
+  isHonorario?: boolean;
+  isJuniorLearned?: boolean;
   targetAccountId: string;
   targetAccountName: string;
+  targetAccountCode: string;
   docType: string;
   docNumber: string;
   dueDate: string;
   effectiveRut: string;
+  entityName: string;
+  originalDate: string;
+  effectiveDate: string;
+  effectivePeriod: string;
+  isPeriodShifted: boolean;
   selected: boolean;
 }
 
-export default function AutoRutMatchModal({
-  isOpen,
+export default function AutoRutMatchModal(props: AutoRutMatchModalProps) {
+  if (!props.isOpen) return null;
+  return <AutoRutMatchModalContent {...props} />;
+}
+
+function AutoRutMatchModalContent({
   onClose,
   studyId,
   company,
@@ -63,48 +91,56 @@ export default function AutoRutMatchModal({
   rcvDocuments = [],
   selectedBankAccountId,
   selectedPeriod,
+  fiscalYears = [],
   onApplyMatches,
   onVouchersUpdated
 }: AutoRutMatchModalProps) {
-  if (!isOpen) return null;
-
   // Account Selection State
-  const [collectionAccountId, setCollectionAccountId] = useState<string>(''); // Accounts for Abonos (e.g. Clientes)
-  const [paymentAccountId, setPaymentAccountId] = useState<string>('');       // Accounts for Cargos (e.g. Proveedores)
+  const [collectionAccountId, setCollectionAccountId] = useState<string>(''); // Abonos: Clientes
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('');       // Cargos: Proveedores
+  const [honorariosAccountId, setHonorariosAccountId] = useState<string>(''); // Cargos: Honorarios por Pagar
   const [bankAccountId, setBankAccountId] = useState<string>(selectedBankAccountId);
 
   // Settings & Theme
   const [themeMode, setThemeMode] = useState<'NUEZ_MARIPOSA' | 'MAZINGER_Z'>('NUEZ_MARIPOSA');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [matchResults, setMatchResults] = useState<ProposedMatch[]>([]);
-  const [filterType, setFilterType] = useState<'TODOS' | 'SOLO_EXACTOS' | 'ABONOS' | 'CARGOS'>('TODOS');
+  const [filterType, setFilterType] = useState<'TODOS' | 'SOLO_EXACTOS' | 'DIFERENCIAS_MENORES' | 'ABONOS' | 'CARGOS' | 'HONORARIOS'>('TODOS');
   const [selectedCount, setSelectedCount] = useState<number>(0);
+  const [learnedRules, setLearnedRules] = useState<Record<string, LearnedRutRule>>({});
 
   // Auto-detect default accounts on mount
   useEffect(() => {
-    // Try to find default "Clientes" account
+    // 1. Clientes (Abonos)
     const defaultClientes = accounts.find(
       a => a.code === '1103001' || a.name.toLowerCase().includes('cliente')
     );
     if (defaultClientes) setCollectionAccountId(defaultClientes.id);
-    else if (accounts.length > 0) setCollectionAccountId(accounts[0].id);
+    else if (accounts.length > 0 && !collectionAccountId) setCollectionAccountId(accounts[0].id);
 
-    // Try to find default "Proveedores" account
+    // 2. Proveedores (Cargos Compras)
     const defaultProveedores = accounts.find(
       a => a.code === '2101001' || a.name.toLowerCase().includes('proveedor')
     );
     if (defaultProveedores) setPaymentAccountId(defaultProveedores.id);
-    else if (accounts.length > 0) setPaymentAccountId(accounts[0].id);
+    else if (accounts.length > 0 && !paymentAccountId) setPaymentAccountId(accounts[0].id);
+
+    // 3. Honorarios por Pagar (Cargos BHE / Servicios)
+    const defaultHonorarios = accounts.find(
+      a => a.code === '2102001' || a.code === '2101002' || a.name.toLowerCase().includes('honorario') || a.name.toLowerCase().includes('retencion')
+    );
+    if (defaultHonorarios) setHonorariosAccountId(defaultHonorarios.id);
+    else if (defaultProveedores) setHonorariosAccountId(defaultProveedores.id);
 
     if (!bankAccountId && selectedBankAccountId) {
       setBankAccountId(selectedBankAccountId);
     }
   }, [accounts, selectedBankAccountId]);
 
-  // Load saved configuration for this company from Firestore
+  // Load saved configuration and Junior's learned RUT memory from Firestore
   useEffect(() => {
     if (!studyId || !company?.id) return;
-    const loadConfig = async () => {
+    const loadConfigAndMemory = async () => {
       try {
         const configSnap = await getDocs(query(collection(db, `studies/${studyId}/companies/${company.id}/bankConfig`)));
         configSnap.forEach(d => {
@@ -112,16 +148,21 @@ export default function AutoRutMatchModal({
             const data = d.data();
             if (data.collectionAccountId) setCollectionAccountId(data.collectionAccountId);
             if (data.paymentAccountId) setPaymentAccountId(data.paymentAccountId);
+            if (data.honorariosAccountId) setHonorariosAccountId(data.honorariosAccountId);
+          }
+          if (d.id === 'rutLearnedRules') {
+            const rulesData = d.data() as Record<string, LearnedRutRule>;
+            setLearnedRules(rulesData || {});
           }
         });
       } catch (err) {
         console.warn('Config load info:', err);
       }
     };
-    loadConfig();
+    loadConfigAndMemory();
   }, [studyId, company]);
 
-  // Analyze Unconciliated Statement Lines & Propose Matches
+  // Analyze Unconciliated Statement Lines & Propose Matches (La Nuez Intelligence Engine)
   useEffect(() => {
     if (!statementLines || statementLines.length === 0) {
       setMatchResults([]);
@@ -142,39 +183,125 @@ export default function AutoRutMatchModal({
         const amount = isAbono ? depositAmt : chargeAmt;
         const matchType: 'ABONO' | 'CARGO' = isAbono ? 'ABONO' : 'CARGO';
 
+        // Check Junior's learned memory first
+        const learnedRule = learnedRules[rutInfo.rutClean] || learnedRules[rutInfo.rutShort];
+
         // Search in Auxiliaries
         const matchedAux = auxiliaries.find(a => areRutsEqual(a.rut, rutInfo.rutFormatted));
 
-        // Search in RCV Documents (Pending Invoices)
-        const matchedDoc = rcvDocuments.find(d => {
-          const docRut = d.tipoRegistro === 'Venta' ? d.rutReceptor : d.rutEmisor;
-          const rutMatch = areRutsEqual(docRut, rutInfo.rutFormatted);
-          const amountMatch = Math.abs(d.montoTotal - amount) < 1; // exact or rounded amount
-          return rutMatch && (amountMatch || !d.estadoContabilizado);
-        });
+        // Search in RCV Documents:
+        // For ABONO: Search in Sales Invoices (tipoRegistro === 'Venta')
+        // For CARGO: Search in Purchase Invoices (tipoRegistro === 'Compra') or Honorarios (tipoRegistro === 'Honorarios' / BHE)
+        let matchedDoc: RCVDocument | undefined = undefined;
+        let isHonorario = false;
 
-        // Determine target account
-        let targetAccId = isAbono ? collectionAccountId : paymentAccountId;
-        let targetAccName = accounts.find(a => a.id === targetAccId)?.name || (isAbono ? 'Clientes' : 'Proveedores');
+        if (isAbono) {
+          // Ventas pendientes de clientes
+          matchedDoc = rcvDocuments.find(d => {
+            if (d.tipoRegistro !== 'Venta') return false;
+            const docRut = d.rutReceptor;
+            const rutMatch = areRutsEqual(docRut, rutInfo.rutFormatted);
+            return rutMatch;
+          });
+        } else {
+          // Primero buscar en Honorarios si la glosa o auxiliar lo indica o si hay Boleta de Honorarios pendiente
+          const isGlossHonorario = /honorario|bhe|profesional|boleta/i.test(gloss) ||
+                                  (matchedAux?.name && /honorario|profesional/i.test(matchedAux.name)) ||
+                                  (matchedAux?.defaultGloss && /honorario|bhe/i.test(matchedAux.defaultGloss));
 
-        // Determine Match Quality
-        let matchStatus: ProposedMatch['matchStatus'] = 'RUT_DETECTADO';
-        if (matchedDoc && Math.abs(matchedDoc.montoTotal - amount) < 1) {
-          matchStatus = 'EXACTO_MONTO_Y_RUT';
-        } else if (matchedAux || matchedDoc) {
-          matchStatus = 'MATCH_RUT_AUXILIAR';
+          const honorarioDoc = rcvDocuments.find(d => {
+            if (d.tipoRegistro !== 'Honorarios' && d.tipoDoc !== 'BHE' && d.tipoDoc !== '70') return false;
+            const docRut = d.rutEmisor;
+            return areRutsEqual(docRut, rutInfo.rutFormatted);
+          });
+
+          if (honorarioDoc || isGlossHonorario) {
+            isHonorario = true;
+            matchedDoc = honorarioDoc;
+          }
+
+          if (!matchedDoc) {
+            // Buscar en Compras (Proveedores)
+            matchedDoc = rcvDocuments.find(d => {
+              if (d.tipoRegistro !== 'Compra') return false;
+              const docRut = d.rutEmisor;
+              return areRutsEqual(docRut, rutInfo.rutFormatted);
+            });
+          }
         }
 
-        // Determine effective RUT: use exact RUT from auxiliary if matched, else short format without dots
+        // Determine target account
+        let targetAccId = isAbono
+          ? collectionAccountId
+          : (isHonorario ? (honorariosAccountId || paymentAccountId) : paymentAccountId);
+
+        if (learnedRule?.targetAccountId && accounts.some(a => a.id === learnedRule.targetAccountId)) {
+          targetAccId = learnedRule.targetAccountId;
+          if (learnedRule.isHonorario) isHonorario = true;
+        }
+
+        const targetAccObj = accounts.find(a => a.id === targetAccId);
+        const targetAccCode = targetAccObj?.code || (isAbono ? '1103001' : (isHonorario ? '2102001' : '2101001'));
+        const targetAccName = targetAccObj?.name || (isAbono ? 'Clientes Nacionales' : (isHonorario ? 'Honorarios por Pagar' : 'Proveedores Nacionales'));
+
+        // Determine Entity Name
+        const entityName = matchedAux?.name ||
+                           matchedDoc?.razonSocialEmisor ||
+                           matchedDoc?.razonSocialReceptor ||
+                           learnedRule?.entityName ||
+                           (isAbono ? 'Cliente Directo TEF' : (isHonorario ? 'Prestador Honorarios TEF' : 'Proveedor TEF'));
+
+        // Determine effective document amount and compare with statement amount
+        const docAmount = matchedDoc
+          ? (matchedDoc.tipoRegistro === 'Honorarios' ? (matchedDoc.montoLiquido || matchedDoc.montoTotal) : matchedDoc.montoTotal)
+          : 0;
+
+        const diff = matchedDoc ? Math.abs(amount - docAmount) : 0;
+        let matchStatus: ProposedMatch['matchStatus'] = 'RUT_DETECTADO';
+        let differenceAmount: number | undefined = undefined;
+        let isSelected = true;
+
+        if (matchedDoc) {
+          if (diff < 0.001) {
+            // EXACTO: Monto y RUT idénticos
+            matchStatus = 'EXACTO_MONTO_Y_RUT';
+            isSelected = true;
+          } else if (diff > 0.001 && diff <= 10) {
+            // REGLA: Diferencias menores a 10 pesos quedan PENDIENTES DE REGISTRO pero INFORMADAS
+            matchStatus = 'DIFERENCIA_MENOR_10_PENDIENTE';
+            differenceAmount = amount - docAmount;
+            isSelected = false; // Queda deseleccionado para no auto-contabilizar a ciegas
+          } else {
+            // Diferencia mayor a $10 (pago parcial o factura de otro monto)
+            matchStatus = 'MATCH_RUT_AUXILIAR';
+            isSelected = true;
+          }
+        } else if (matchedAux) {
+          matchStatus = 'MATCH_RUT_AUXILIAR';
+          isSelected = true;
+        } else if (learnedRule) {
+          matchStatus = 'APRENDIDO_POR_JUNIOR';
+          isSelected = true;
+        }
+
+        // Effective RUT
         const effectiveRut = matchedAux?.rut ||
                              matchedDoc?.rutEmisor ||
                              matchedDoc?.rutReceptor ||
                              rutInfo.rutShort;
 
-        // Determine Document Metadata from RCV document if matched
-        const docType = matchedDoc?.tipoDoc ? String(matchedDoc.tipoDoc) : '33';
+        // Document Metadata
+        const docType = matchedDoc?.tipoDoc ? String(matchedDoc.tipoDoc) : (isHonorario ? 'BHE' : '33');
         const docNumber = matchedDoc?.folio ? String(matchedDoc.folio) : (line.documentNumber || '');
         const dueDate = matchedDoc?.fechaVencimiento || matchedDoc?.fechaEmision || line.date;
+
+        // Date and Closed Period Calculation:
+        // Rule: Registra en el mes (fecha) de la cartola; si el mes está CERRADO, registrar en el siguiente mes con fecha 01
+        const shiftInfo = getNextOpenPeriodAndDate(line.date, fiscalYears);
+        const originalDate = line.date;
+        const effectiveDate = shiftInfo.date;
+        const effectivePeriod = shiftInfo.period;
+        const isPeriodShifted = effectiveDate !== originalDate;
 
         proposals.push({
           id: line.id,
@@ -183,28 +310,37 @@ export default function AutoRutMatchModal({
           type: matchType,
           amount,
           matchStatus,
+          differenceAmount,
           matchedDocument: matchedDoc,
           matchedAuxiliary: matchedAux,
+          isHonorario,
+          isJuniorLearned: !!learnedRule,
           targetAccountId: targetAccId,
           targetAccountName: targetAccName,
+          targetAccountCode: targetAccCode,
           docType,
           docNumber,
           dueDate,
           effectiveRut,
-          selected: true
+          entityName,
+          originalDate,
+          effectiveDate,
+          effectivePeriod,
+          isPeriodShifted,
+          selected: isSelected
         });
       }
     });
 
     setMatchResults(proposals);
-  }, [statementLines, auxiliaries, rcvDocuments, collectionAccountId, paymentAccountId, accounts]);
+  }, [statementLines, auxiliaries, rcvDocuments, collectionAccountId, paymentAccountId, honorariosAccountId, accounts, learnedRules, fiscalYears]);
 
   // Update selection count
   useEffect(() => {
     setSelectedCount(matchResults.filter(m => m.selected).length);
   }, [matchResults]);
 
-  // Save Config to Firestore
+  // Save Config and Junior Learned Knowledge to Firestore
   const saveAccountConfig = async () => {
     if (!studyId || !company?.id) return;
     try {
@@ -212,6 +348,7 @@ export default function AutoRutMatchModal({
       await setDoc(configRef, {
         collectionAccountId,
         paymentAccountId,
+        honorariosAccountId,
         updatedAt: new Date().toISOString()
       }, { merge: true });
     } catch (e) {
@@ -228,17 +365,36 @@ export default function AutoRutMatchModal({
     setMatchResults(prev => prev.map(m => m.id === id ? { ...m, selected: !m.selected } : m));
   };
 
+  // Change individual proposal target account
+  const handleAccountChange = (id: string, newAccountId: string) => {
+    const accObj = accounts.find(a => a.id === newAccountId);
+    if (!accObj) return;
+    setMatchResults(prev => prev.map(m => {
+      if (m.id === id) {
+        return {
+          ...m,
+          targetAccountId: newAccountId,
+          targetAccountName: accObj.name,
+          targetAccountCode: accObj.code
+        };
+      }
+      return m;
+    }));
+  };
+
   // Filtered Match Results for rendering
   const filteredProposals = useMemo(() => {
     return matchResults.filter(m => {
       if (filterType === 'SOLO_EXACTOS') return m.matchStatus === 'EXACTO_MONTO_Y_RUT';
+      if (filterType === 'DIFERENCIAS_MENORES') return m.matchStatus === 'DIFERENCIA_MENOR_10_PENDIENTE';
       if (filterType === 'ABONOS') return m.type === 'ABONO';
       if (filterType === 'CARGOS') return m.type === 'CARGO';
+      if (filterType === 'HONORARIOS') return m.isHonorario;
       return true;
     });
   }, [matchResults, filterType]);
 
-  // Execute Automatic Voucher Creation & Reconciliation
+  // Execute Automatic Voucher Creation, Memory Learning for Junior & Full Reconciliation
   const handleExecuteAutoMatch = async () => {
     const selectedMatches = matchResults.filter(m => m.selected);
     if (selectedMatches.length === 0) {
@@ -257,6 +413,7 @@ export default function AutoRutMatchModal({
     try {
       const updatedLines = [...statementLines];
       let createdVouchers = 0;
+      const newLearnedRules: Record<string, LearnedRutRule> = { ...learnedRules };
 
       const bankAcc = accounts.find(a => a.id === bankAccountId);
 
@@ -272,27 +429,24 @@ export default function AutoRutMatchModal({
         const isAbono = item.type === 'ABONO';
         const voucherType: 'Ingreso' | 'Egreso' | 'Traspaso' = isAbono ? 'Ingreso' : 'Egreso';
 
-        // Target Account (Clientes / Proveedores)
-        const targetAcc = accounts.find(a => a.id === item.targetAccountId);
-        const targetAccCode = targetAcc?.code || (isAbono ? '1103001' : '2101001');
-        const targetAccNameStr = targetAcc?.name || (isAbono ? 'Clientes Nacionales' : 'Proveedores Nacionales');
+        // Target Account (Clientes / Proveedores / Honorarios por Pagar)
+        const targetAccCode = item.targetAccountCode || (isAbono ? '1103001' : (item.isHonorario ? '2102001' : '2101001'));
+        const targetAccNameStr = item.targetAccountName || (isAbono ? 'Clientes Nacionales' : (item.isHonorario ? 'Honorarios por Pagar' : 'Proveedores Nacionales'));
 
-        const entityName = item.matchedAuxiliary?.name ||
-                           item.matchedDocument?.razonSocialEmisor ||
-                           item.matchedDocument?.razonSocialReceptor ||
-                           'PAGO/ABONO TEF';
+        const entityName = item.entityName || (isAbono ? 'Cliente TEF' : (item.isHonorario ? 'Honorarios TEF' : 'Proveedor TEF'));
+        const auxRut = item.effectiveRut || item.rutInfo.rutShort;
 
-        // Effective RUT: Use exact auxiliary RUT if matched, else short format without extra dots
-        const auxRut = item.effectiveRut || item.matchedAuxiliary?.rut || item.rutInfo.rutShort;
-
-        // Bank Document Ref: Use statement document number, or fallback to YYYYMM (e.g. 202601)
+        // Bank Document Ref
         const rawBankDoc = (item.line.documentNumber || '').trim();
-        const periodDocRef = item.line.date
-          ? item.line.date.replace(/-/g, '').slice(0, 6)
+        const periodDocRef = item.effectiveDate
+          ? item.effectiveDate.replace(/-/g, '').slice(0, 6)
           : (selectedPeriod ? selectedPeriod.replace(/-/g, '') : '202601');
         const finalBankDocRef = rawBankDoc || periodDocRef;
 
-        const glossText = `${isAbono ? 'Abono TEF Cliente' : 'Pago TEF Proveedor'} ${auxRut} ${entityName} (${item.line.description})`;
+        const glossHeader = isAbono
+          ? 'Abono TEF Cliente'
+          : (item.isHonorario ? 'Pago TEF Honorarios' : 'Pago TEF Proveedor');
+        const glossText = `${glossHeader} ${auxRut} ${entityName} (${item.line.description})`;
 
         // Build Voucher Lines
         const bankLine: VoucherLine = {
@@ -317,20 +471,22 @@ export default function AutoRutMatchModal({
           gloss: glossText,
           auxiliaryRut: auxRut,
           auxiliaryName: entityName,
-          documentType: item.docType || '33',
+          documentType: item.docType || (item.isHonorario ? 'BHE' : '33'),
           documentRef: item.docNumber || finalBankDocRef,
-          dueDate: item.dueDate || item.line.date
+          dueDate: item.dueDate || item.effectiveDate
         };
 
         const lines: VoucherLine[] = isAbono ? [bankLine, auxLine] : [auxLine, bankLine];
 
-        const currentPeriodStr = selectedPeriod || item.line.date.slice(0, 7);
+        // Ensure date and period respect closed fiscal months (shifted to 01 of next open month)
+        const effectiveDate = item.effectiveDate;
+        const effectivePeriod = item.effectivePeriod;
 
-        // Create Voucher Record in Firestore with correct sequential voucherNumber
+        // Create Voucher Record in Firestore
         const voucherData: Omit<Voucher, 'id'> = {
           voucherNumber: nextVoucherNum,
-          date: item.line.date,
-          period: currentPeriodStr,
+          date: effectiveDate,
+          period: effectivePeriod,
           type: voucherType,
           status: 'Valido',
           gloss: glossText,
@@ -356,9 +512,49 @@ export default function AutoRutMatchModal({
             matchedStatus: 'Conciliado',
             matchedVoucherId: voucherRef.id,
             matchedVoucherNumber: nextVoucherNum,
-            matchedVoucherPeriod: currentPeriodStr
+            matchedVoucherPeriod: effectivePeriod
           };
         }
+
+        // Memorize learned rule for Junior
+        if (item.rutInfo?.rutClean) {
+          const prevTimes = newLearnedRules[item.rutInfo.rutClean]?.timesApplied || 0;
+          newLearnedRules[item.rutInfo.rutClean] = {
+            rut: item.effectiveRut,
+            entityName,
+            type: item.type,
+            targetAccountId: item.targetAccountId,
+            targetAccountCode: targetAccCode,
+            targetAccountName: targetAccNameStr,
+            isHonorario: item.isHonorario,
+            timesApplied: prevTimes + 1,
+            lastUpdated: new Date().toISOString()
+          };
+        }
+      }
+
+      // Persist learned memory for Junior in Firestore
+      try {
+        const memoryRef = doc(db, `studies/${studyId}/companies/${company.id}/bankConfig`, 'rutLearnedRules');
+        await setDoc(memoryRef, newLearnedRules, { merge: true });
+
+        // Also add training knowledge record for Junior AI Training Center
+        await addDoc(
+          collection(db, 'studies', studyId, 'companies', company.id, 'copilotCompanyKnowledge'),
+          {
+            title: `Memoria de Conciliación Nuez Mariposa (${company.name})`,
+            keywords: ['conciliacion', 'nuez mariposa', 'rut', 'cartola', 'honorarios', 'clientes', 'proveedores'],
+            directiveContent: `Junior ha memorizado ${Object.keys(newLearnedRules).length} RUTs y contrapartes bancarias habituales de ${company.name} para conciliar automáticamente abonos (Clientes) y cargos (Proveedores y Honorarios por Pagar), aplicando traslados automáticos de fechas a mes abierto (día 01) si el mes se encuentra cerrado.`,
+            recommendedEntries: 'Revisa Conciliación Bancaria > 🧠 Nuez Mariposa para cruce en 1 clic.',
+            scope: 'company',
+            studyId,
+            companyId: company.id,
+            isActive: true,
+            createdAt: new Date().toISOString()
+          }
+        );
+      } catch (memErr) {
+        console.warn('Junior memory save warning:', memErr);
       }
 
       // Audit Log
@@ -368,18 +564,19 @@ export default function AutoRutMatchModal({
         companyName: company.name,
         action: 'CONTABILIZAR',
         module: 'CONCILIACION',
-        details: `Se contabilizaron y concatenaron ${createdVouchers} movimientos de cartola bancaria por RUT (${themeMode}).`
+        details: `Nuez Mariposa contabilizó y concilió ${createdVouchers} movimientos por RUT (Abonos -> Clientes, Cargos -> Proveedores/Honorarios). Junior memorizó los patrones para futuras cartolas.`
       });
 
-      // Trigger callback
+      // Trigger callbacks
       onApplyMatches(updatedLines, createdVouchers);
       if (onVouchersUpdated) onVouchersUpdated();
 
-      alert(`🎉 ¡ÉXITO TOTAL!
+      alert(`🎉 ¡PROCESO DE LA NUEZ MARIPOSA FINALIZADO CON ÉXITO!
 --------------------------------------------------
-✅ Comprobantes creados: ${createdVouchers}
-✅ Movimientos conciliados en la cartola: ${createdVouchers}
-🧠 Proceso de Inteligencia por RUT finalizado con aislamiento multiempresa.`);
+✅ Comprobantes generados: ${createdVouchers}
+✅ Movimientos bancarios conciliados: ${createdVouchers}
+📅 Fechas asignadas según cartola (y trasladadas a día 01 en meses cerrados).
+🧠 Junior ha memorizado los RUTs y cuentas asignadas para futuras conciliaciones.`);
 
       onClose();
     } catch (error: any) {
@@ -392,25 +589,23 @@ export default function AutoRutMatchModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
-      <div className={`bg-white rounded-2xl shadow-2xl max-w-5xl w-full border-2 overflow-hidden flex flex-col max-h-[92vh] ${
+      <div className={`bg-white rounded-2xl shadow-2xl max-w-6xl w-full border-2 overflow-hidden flex flex-col max-h-[92vh] ${
         themeMode === 'NUEZ_MARIPOSA' ? 'border-amber-400/80 shadow-amber-500/20' : 'border-rose-600/80 shadow-rose-600/20'
       }`}>
         
         {/* Animated Banner Header */}
         <div className={`p-4 sm:p-5 text-white relative flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-500 ${
           themeMode === 'NUEZ_MARIPOSA' 
-            ? 'bg-gradient-to-r from-amber-900 via-amber-800 to-yellow-900' 
+            ? 'bg-gradient-to-r from-amber-950 via-amber-900 to-yellow-950' 
             : 'bg-gradient-to-r from-slate-950 via-rose-950 to-slate-900 border-b border-rose-500/40'
         }`}>
           <div className="flex items-center gap-3">
             
             {/* ICON: ANIMATED NUEZ MARIPOSA / CEREBRO or MAZINGER-Z */}
             {themeMode === 'NUEZ_MARIPOSA' ? (
-              <div className="relative group cursor-pointer" title="Nuez Mariposa - Cerebro Inteligente de Cartolas">
-                {/* Glowing pulsing aura */}
+              <div className="relative group cursor-pointer" title="Nuez Mariposa - Cerebro Inteligente de Cartolas & Junior AI">
                 <div className="absolute -inset-1 bg-gradient-to-r from-amber-400 to-yellow-300 rounded-full blur-md opacity-75 animate-pulse group-hover:opacity-100 transition"></div>
                 <div className="relative w-12 h-12 bg-amber-950 border-2 border-yellow-400/80 rounded-2xl flex items-center justify-center text-2xl shadow-inner transform transition hover:scale-110 active:rotate-12">
-                  {/* Custom Walnut Brain SVG */}
                   <svg className="w-8 h-8 text-yellow-400 animate-spin-slow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2C8 2 5 4.5 5 8c0 2 1 3.5 2.5 4.5C6 13.5 5 15 5 17c0 3 3 5 7 5s7-2 7-5c0-2-1-3.5-2.5-4.5C18 11.5 19 10 19 8c0-3.5-3-6-7-6z" fill="rgba(251, 191, 36, 0.15)" />
                     <path d="M12 2v20" strokeDasharray="2 2" className="animate-pulse" />
@@ -431,21 +626,21 @@ export default function AutoRutMatchModal({
             )}
 
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base sm:text-lg font-black tracking-tight text-amber-200 uppercase flex items-center gap-1.5">
-                  {themeMode === 'NUEZ_MARIPOSA' ? '🧠 Nuez Mariposa' : '🤖 Mazinger-Z'} Match & Contabilización Automática por RUT
+                  {themeMode === 'NUEZ_MARIPOSA' ? '🧠 Nuez Mariposa' : '🤖 Mazinger-Z'} Motor Inteligente de RUT & Contabilización
                 </h3>
                 <span className="text-[10px] bg-amber-400 text-amber-950 font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  FASE 1 ASISTIDA
+                  APRENDIZAJE JUNIOR ACTIVO
                 </span>
               </div>
-              <p className="text-xs text-amber-100/80 mt-0.5">
-                Escanea la cartola, extrae el RUT de las glosas bancarias (<code className="bg-black/30 px-1 py-0.2 rounded text-amber-300">0105559089</code> ➔ <code className="bg-black/30 px-1 py-0.2 rounded text-amber-300">10.555.908-9</code>), cruza con auxiliares/facturas y contabiliza.
+              <p className="text-xs text-amber-100/90 mt-0.5 max-w-2xl">
+                Cruza <strong>Abonos</strong> con facturas de clientes, <strong>Cargos</strong> con facturas de proveedores y honorarios por pagar. Si el mes está cerrado, traslada automáticamente a fecha 01 del mes siguiente.
               </p>
             </div>
           </div>
 
-          {/* Theme Switcher Toggle (Nuez Mariposa vs Mazinger Z) */}
+          {/* Theme Switcher Toggle */}
           <div className="flex items-center gap-2 self-end sm:self-auto bg-black/40 p-1 rounded-xl border border-white/20">
             <button
               onClick={() => setThemeMode('NUEZ_MARIPOSA')}
@@ -478,18 +673,18 @@ export default function AutoRutMatchModal({
 
         </div>
 
-        {/* Configuration Panel (Cuentas objetivo por defecto) */}
-        <div className="bg-slate-50 p-4 border-b border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Configuration Panel (Cuentas objetivo por defecto: Clientes, Proveedores, Honorarios, Banco) */}
+        <div className="bg-slate-50 p-4 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
-              <span>📥 Cta. Cobro Clientes (Abonos):</span>
+              <span>📥 Cta. Clientes (Abonos):</span>
             </label>
             <select
               value={collectionAccountId}
               onChange={e => setCollectionAccountId(e.target.value)}
               className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-amber-500"
             >
-              <option value="">-- Seleccionar Cuenta de Clientes --</option>
+              <option value="">-- Cuenta Clientes --</option>
               {accounts.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.code} - {a.name}
@@ -500,14 +695,14 @@ export default function AutoRutMatchModal({
 
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
-              <span>📤 Cta. Pago Proveedores (Cargos):</span>
+              <span>📤 Cta. Proveedores (Cargos):</span>
             </label>
             <select
               value={paymentAccountId}
               onChange={e => setPaymentAccountId(e.target.value)}
               className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-amber-500"
             >
-              <option value="">-- Seleccionar Cuenta de Proveedores --</option>
+              <option value="">-- Cuenta Proveedores --</option>
               {accounts.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.code} - {a.name}
@@ -518,14 +713,32 @@ export default function AutoRutMatchModal({
 
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
-              <span>🏦 Cta. Banco para Asiento:</span>
+              <span>📜 Cta. Honorarios por Pagar:</span>
+            </label>
+            <select
+              value={honorariosAccountId}
+              onChange={e => setHonorariosAccountId(e.target.value)}
+              className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="">-- Cuenta Honorarios --</option>
+              {accounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.code} - {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+              <span>🏦 Cta. Banco Asiento:</span>
             </label>
             <select
               value={bankAccountId}
               onChange={e => setBankAccountId(e.target.value)}
               className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-amber-500"
             >
-              <option value="">-- Seleccionar Cuenta Bancaria --</option>
+              <option value="">-- Cuenta Banco --</option>
               {accounts.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.code} - {a.name}
@@ -536,8 +749,8 @@ export default function AutoRutMatchModal({
         </div>
 
         {/* Action Bar & Filter Controls */}
-        <div className="bg-amber-50/60 p-3 border-b border-amber-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="bg-amber-50/70 p-3 border-b border-amber-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-bold text-amber-950 uppercase">Filtrar:</span>
             <button
               onClick={() => setFilterType('TODOS')}
@@ -553,7 +766,16 @@ export default function AutoRutMatchModal({
                 filterType === 'SOLO_EXACTOS' ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white text-slate-700 border-slate-300'
               }`}
             >
-              ✨ Exactos RUT + Monto ({matchResults.filter(m => m.matchStatus === 'EXACTO_MONTO_Y_RUT').length})
+              ✨ Exactos ({matchResults.filter(m => m.matchStatus === 'EXACTO_MONTO_Y_RUT').length})
+            </button>
+            <button
+              onClick={() => setFilterType('DIFERENCIAS_MENORES')}
+              className={`px-2.5 py-1 text-xs rounded-lg font-bold border transition ${
+                filterType === 'DIFERENCIAS_MENORES' ? 'bg-amber-600 text-white border-amber-700' : 'bg-white text-amber-900 border-amber-300'
+              }`}
+              title="Diferencias menores a $10 que quedan pendientes pero informadas"
+            >
+              ⚠️ Dif. &lt; $10 ({matchResults.filter(m => m.matchStatus === 'DIFERENCIA_MENOR_10_PENDIENTE').length})
             </button>
             <button
               onClick={() => setFilterType('ABONOS')}
@@ -561,7 +783,7 @@ export default function AutoRutMatchModal({
                 filterType === 'ABONOS' ? 'bg-indigo-700 text-white border-indigo-800' : 'bg-white text-slate-700 border-slate-300'
               }`}
             >
-              📥 Solo Abonos (Ingresos)
+              📥 Abonos (Clientes)
             </button>
             <button
               onClick={() => setFilterType('CARGOS')}
@@ -569,7 +791,15 @@ export default function AutoRutMatchModal({
                 filterType === 'CARGOS' ? 'bg-rose-700 text-white border-rose-800' : 'bg-white text-slate-700 border-slate-300'
               }`}
             >
-              📤 Solo Cargos (Egresos)
+              📤 Cargos (Proveedores)
+            </button>
+            <button
+              onClick={() => setFilterType('HONORARIOS')}
+              className={`px-2.5 py-1 text-xs rounded-lg font-bold border transition ${
+                filterType === 'HONORARIOS' ? 'bg-purple-700 text-white border-purple-800' : 'bg-white text-purple-900 border-purple-300'
+              }`}
+            >
+              📜 Honorarios ({matchResults.filter(m => m.isHonorario).length})
             </button>
           </div>
 
@@ -595,7 +825,7 @@ export default function AutoRutMatchModal({
                 No se encontraron movimientos no conciliados con RUTs detectables en la glosa.
               </p>
               <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                Asegúrese de haber cargado la cartola bancaria. El motor escanea números con patrones como <code className="bg-slate-200 px-1 rounded">0105559089</code> o <code className="bg-slate-200 px-1 rounded">076123456K</code> en el detalle de la transferencia.
+                Asegúrese de haber cargado la cartola bancaria. La Nuez escanea números con patrones como <code className="bg-slate-200 px-1 rounded">0105559089</code> o <code className="bg-slate-200 px-1 rounded">076123456K</code> en el detalle de la transferencia.
               </p>
             </div>
           ) : (
@@ -604,23 +834,24 @@ export default function AutoRutMatchModal({
                 <thead className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200">
                   <tr>
                     <th className="p-2.5 text-center w-10">Sel.</th>
-                    <th className="p-2.5">Fecha</th>
+                    <th className="p-2.5">Fecha Cartola / Asiento</th>
                     <th className="p-2.5">Tipo</th>
-                    <th className="p-2.5">Glosa Bancaria Original</th>
-                    <th className="p-2.5">RUT Detectado / Entidad</th>
-                    <th className="p-2.5 text-right">Monto ($)</th>
-                    <th className="p-2.5">Coincidencia / Documento</th>
-                    <th className="p-2.5">Cuenta Asignada</th>
+                    <th className="p-2.5">Glosa Bancaria</th>
+                    <th className="p-2.5">RUT / Entidad Detectada</th>
+                    <th className="p-2.5 text-right">Monto Cartola ($)</th>
+                    <th className="p-2.5">Cruce RCV / Documento</th>
+                    <th className="p-2.5">Cuenta Contable</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 bg-white">
                   {filteredProposals.map((item) => {
                     const isExact = item.matchStatus === 'EXACTO_MONTO_Y_RUT';
+                    const isSmallDiff = item.matchStatus === 'DIFERENCIA_MENOR_10_PENDIENTE';
                     return (
                       <tr 
                         key={item.id}
                         className={`hover:bg-amber-50/50 transition ${
-                          item.selected ? 'bg-amber-50/30' : ''
+                          isSmallDiff ? 'bg-amber-50/40 border-l-4 border-l-amber-500' : (item.selected ? 'bg-amber-50/20' : '')
                         }`}
                       >
                         <td className="p-2.5 text-center">
@@ -631,13 +862,29 @@ export default function AutoRutMatchModal({
                             className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer"
                           />
                         </td>
-                        <td className="p-2.5 font-bold text-slate-800 whitespace-nowrap">
-                          {item.line.date}
+                        
+                        {/* Fecha Cartola y Regla de Mes Cerrado */}
+                        <td className="p-2.5 whitespace-nowrap">
+                          <div className="font-bold text-slate-900">{item.originalDate}</div>
+                          {item.isPeriodShifted ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 mt-0.5" title="El mes original se encuentra CERRADO. Se contabilizará el día 01 del siguiente mes abierto.">
+                              <span>🔄</span> A {item.effectiveDate}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-emerald-700 font-semibold flex items-center gap-0.5 mt-0.5">
+                              <span>✓</span> Mes Abierto
+                            </span>
+                          )}
                         </td>
+
                         <td className="p-2.5">
                           {item.type === 'ABONO' ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
                               ABONO
+                            </span>
+                          ) : item.isHonorario ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-300">
+                              HONORARIO
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300">
@@ -645,43 +892,76 @@ export default function AutoRutMatchModal({
                             </span>
                           )}
                         </td>
+
                         <td className="p-2.5 text-slate-700 max-w-xs truncate" title={item.line.description}>
                           <span className="font-mono bg-slate-100 px-1 py-0.5 rounded border border-slate-200 text-[11px]">
                             {item.line.description}
                           </span>
                         </td>
+
                         <td className="p-2.5">
                           <div className="font-bold text-slate-900 flex items-center gap-1">
                             <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-black border border-amber-300">
                               {item.effectiveRut || item.rutInfo.rutFormatted}
                             </span>
+                            {item.isJuniorLearned && (
+                              <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1 py-0.2 rounded font-black border border-indigo-200" title="RUT aprendido previamente por Junior">
+                                🧠 Junior
+                              </span>
+                            )}
                           </div>
-                          {(item.matchedAuxiliary || item.matchedDocument) && (
-                            <div className="text-[11px] text-slate-600 font-medium truncate max-w-xs mt-0.5">
-                              {item.matchedAuxiliary?.name || item.matchedDocument?.razonSocialEmisor || item.matchedDocument?.razonSocialReceptor}
-                            </div>
-                          )}
+                          <div className="text-[11px] text-slate-700 font-medium truncate max-w-xs mt-0.5">
+                            {item.entityName}
+                          </div>
                         </td>
+
                         <td className="p-2.5 text-right font-black font-mono text-slate-900 text-sm">
                           ${item.amount.toLocaleString('es-CL')}
                         </td>
+
+                        {/* Coincidencia / Diferencias < $10 */}
                         <td className="p-2.5">
                           {isExact ? (
                             <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center gap-1 w-fit">
-                              <span>✨</span> Exacto ({item.docType ? `Tipo ${item.docType} ` : ''}N° {item.docNumber})
+                              <span>✨</span> Exacto ({item.docType ? `Doc ${item.docType} ` : ''}Folio {item.docNumber})
+                            </span>
+                          ) : isSmallDiff ? (
+                            <div className="p-1.5 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 max-w-xs">
+                              <div className="flex items-center gap-1 text-amber-950 font-black">
+                                <span>⚠️</span> Dif. &lt; $10 ({item.differenceAmount && item.differenceAmount > 0 ? `+$${item.differenceAmount.toFixed(0)}` : `-$${Math.abs(item.differenceAmount || 0).toFixed(0)}`})
+                              </div>
+                              <div className="text-[9px] text-amber-800 font-normal">
+                                Pendiente de registro (Doc {item.docNumber || 'RCV'} por ${(item.amount - (item.differenceAmount || 0)).toLocaleString('es-CL')})
+                              </div>
+                            </div>
+                          ) : item.matchedDocument ? (
+                            <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-300 flex items-center gap-1 w-fit">
+                              <span>📄</span> Doc {item.docType} Folio {item.docNumber} (${(item.matchedDocument.montoTotal || 0).toLocaleString('es-CL')})
                             </span>
                           ) : item.matchedAuxiliary ? (
-                            <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-300 flex items-center gap-1 w-fit">
-                              <span>👤</span> Auxiliar Encontrado {item.docNumber ? `(Doc N° ${item.docNumber})` : ''}
+                            <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-300 flex items-center gap-1 w-fit">
+                              <span>👤</span> Auxiliar Maestro Registrado
                             </span>
                           ) : (
                             <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 flex items-center gap-1 w-fit">
-                              <span>📄</span> Pago por RUT {item.docNumber ? `(Doc N° ${item.docNumber})` : ''}
+                              <span>🔍</span> Propuesta por RUT Glosa
                             </span>
                           )}
                         </td>
-                        <td className="p-2.5 font-semibold text-slate-800">
-                          {item.targetAccountName}
+
+                        {/* Cuenta Asignada editable */}
+                        <td className="p-2.5">
+                          <select
+                            value={item.targetAccountId}
+                            onChange={e => handleAccountChange(item.id, e.target.value)}
+                            className="text-xs font-semibold bg-white border border-slate-300 rounded px-1.5 py-1 focus:ring-1 focus:ring-amber-500 max-w-[180px] truncate"
+                          >
+                            {accounts.map(a => (
+                              <option key={a.id} value={a.id}>
+                                {a.code} - {a.name}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                       </tr>
                     );
@@ -695,7 +975,12 @@ export default function AutoRutMatchModal({
         {/* Footer Actions */}
         <div className="p-4 bg-slate-100 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
           <div className="text-xs text-slate-600 font-medium">
-            Seleccionados: <strong className="text-slate-900 font-bold">{selectedCount}</strong> de {matchResults.length} movimientos.
+            Seleccionados: <strong className="text-slate-900 font-bold">{selectedCount}</strong> de {matchResults.length} movimientos
+            {matchResults.some(m => m.matchStatus === 'DIFERENCIA_MENOR_10_PENDIENTE') && (
+              <span className="ml-2 text-amber-800 font-bold">
+                (⚠️ {matchResults.filter(m => m.matchStatus === 'DIFERENCIA_MENOR_10_PENDIENTE').length} con dif. &lt; $10 pendientes e informados)
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -703,7 +988,7 @@ export default function AutoRutMatchModal({
               type="button"
               onClick={onClose}
               disabled={isProcessing}
-              className="px-4 py-2 bg-white hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 transition w-full sm:w-auto"
+              className="px-4 py-2 bg-white hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 transition w-full sm:w-auto cursor-pointer"
             >
               Cancelar
             </button>
@@ -712,7 +997,7 @@ export default function AutoRutMatchModal({
               type="button"
               onClick={handleExecuteAutoMatch}
               disabled={isProcessing || selectedCount === 0}
-              className={`px-5 py-2.5 text-xs font-black rounded-xl text-white shadow-lg transition flex items-center justify-center gap-2 w-full sm:w-auto ${
+              className={`px-5 py-2.5 text-xs font-black rounded-xl text-white shadow-lg transition flex items-center justify-center gap-2 w-full sm:w-auto cursor-pointer ${
                 themeMode === 'NUEZ_MARIPOSA'
                   ? 'bg-gradient-to-r from-amber-600 via-amber-700 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 shadow-amber-500/30'
                   : 'bg-gradient-to-r from-rose-600 via-red-600 to-slate-900 hover:from-rose-700 hover:to-slate-950 shadow-rose-600/30'

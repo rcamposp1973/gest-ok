@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -165,39 +166,6 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
         : cleanRepRutRaw;
 
       try {
-        // Step A: Validate subscription & API key with SimpleAPI
-        const subRes = await fetch("https://api.simpleapi.cl/api/v1/Suscripcion/status", {
-          method: "GET",
-          headers: {
-            "Authorization": effectiveApiKey
-          }
-        });
-
-        if (!subRes.ok) {
-          return res.status(401).json({
-            success: false,
-            error: `API Key del Gateway SII no válida o expirada (HTTP ${subRes.status}). Contacte al Administrador del Sistema.`
-          });
-        }
-
-        const quotas = await subRes.json();
-        const rcvQuota = Array.isArray(quotas) ? quotas.find((q: any) => q.servicio === 'RCV') : null;
-
-        // Step B: Authenticate to obtain token if needed
-        let token = '';
-        try {
-          const authRes = await fetch("https://api.simpleapi.cl/api/Auth/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ apikey: (apiKey || '').trim() })
-          });
-          if (authRes.ok) {
-            token = await authRes.text();
-          }
-        } catch (tokErr) {
-          console.warn("Could not generate bearer token for SimpleAPI:", tokErr);
-        }
-
         // Step C: Check if Certificate & Password are provided to query SII RCV scraper
         let docs: any[] = [];
         const formattedMonth = String(month === 'ALL' ? '01' : month).padStart(2, '0');
@@ -423,13 +391,11 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
 
         // If no certificate was provided, notify clearly without false positive
         if (!certificadoB64) {
-          const quotaStr = rcvQuota ? `${rcvQuota.uso}/${rcvQuota.maximo} consultas disponibles` : 'Plan activo';
           return res.json({
             success: false,
             needsCertificate: true,
             source: 'SIMPLE_API',
-            quotas,
-            error: `Conexión con SimpleAPI.cl validada con éxito (${quotaStr} para RUT ${companyRut}).\n\n` +
+            error: `Conexión con SimpleAPI.cl para RUT ${companyRut}.\n\n` +
                    `⚠️ Para rescatar las Compras y Ventas oficiales directamente del portal del SII a través de SimpleAPI, ` +
                    `se requiere adjuntar el archivo de Firma Digital (.pfx / .p12) del Representante Legal y su clave.\n\n` +
                    `Puedes cargarlo en '3. CARGA RCV/BH' > '⚙ Configurar API Key / Certificado', o bien utilizar la Opción 2 para cargar directamente los archivos CSV oficiales descargados del SII.`
@@ -442,7 +408,6 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
           source: 'SIMPLE_API',
           documentsCount: docs.length,
           documents: docs,
-          quotas,
           message: docs.length > 0 
             ? `Se rescataron exitosamente ${docs.length} documentos desde el SII vía SimpleAPI.`
             : `Conexión con SimpleAPI.cl completada para el RUT ${companyRut} (${mesLabel}). No se encontraron nuevos documentos en el Registro de Compras y Ventas del SII para este período.`
@@ -676,6 +641,42 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
       success: false,
       error: `Error interno de servidor durante la sincronización RCV: ${err.message || String(err)}`
     });
+  }
+});
+
+// ==========================================
+// API CUADERNOS INTELIGENTES CON IA (GEMINI)
+// ==========================================
+app.post("/api/notebook-ai", async (req, res) => {
+  try {
+    const { prompt, companyContext, notesContext } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: "GEMINI_API_KEY no está configurada en el servidor." });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const fullPrompt = `Eres el Copiloto Experto en Auditoría Tributaria, Contabilidad IFRS y Gestión Financiera de GEST_OK para Chile.
+Contexto de la Empresa:
+${JSON.stringify(companyContext || {})}
+
+Notas y Cuaderno Actual:
+${notesContext || 'Sin notas previas.'}
+
+Pregunta o Solicitud del Usuario:
+${prompt}
+
+Responde de forma profesional, precisa, con terminología contable chilena (SII, F29, RCV, IFRS, Balance 8 Columnas) y proporciona un análisis claro.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: fullPrompt,
+    });
+
+    return res.json({ success: true, text: response.text });
+  } catch (err: any) {
+    console.error("Error in /api/notebook-ai:", err);
+    return res.status(500).json({ success: false, error: err.message || String(err) });
   }
 });
 

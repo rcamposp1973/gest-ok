@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BankStatementLine,
   ChartOfAccount,
@@ -10,8 +10,24 @@ import {
   ExpenseItemMaster,
   ProjectMaster,
   ProductMaster,
-  CustomAnalysisTableItem
+  CustomAnalysisTableItem,
+  FiscalPeriodYear
 } from '../types';
+import { getNextOpenPeriodAndDate, checkIsPeriodClosed } from '../utils/periodUtils';
+import { SearchableAuxiliarySelect } from './SearchableAuxiliarySelect';
+import {
+  Plus,
+  Trash2,
+  Split,
+  Sparkles,
+  Building,
+  AlertCircle,
+  CheckCircle2,
+  Calculator,
+  ChevronRight,
+  Layers,
+  ArrowRight
+} from 'lucide-react';
 
 interface ImportCSVModalProps {
   isOpen: boolean;
@@ -24,8 +40,12 @@ interface ImportCSVModalProps {
   currentPeriod: string;
 }
 
-export function ImportCSVModal({
-  isOpen,
+export function ImportCSVModal(props: ImportCSVModalProps) {
+  if (!props.isOpen) return null;
+  return <ImportCSVModalContent {...props} />;
+}
+
+function ImportCSVModalContent({
   onClose,
   pastedCSV,
   setPastedCSV,
@@ -34,8 +54,6 @@ export function ImportCSVModal({
   onImport,
   currentPeriod
 }: ImportCSVModalProps) {
-  if (!isOpen) return null;
-
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -139,7 +157,12 @@ interface ManualMatchModalProps {
   selectedPeriod: string;
 }
 
-export function ManualMatchModal({
+export function ManualMatchModal(props: ManualMatchModalProps) {
+  if (!props.manualMatchLine) return null;
+  return <ManualMatchModalContent {...props} manualMatchLine={props.manualMatchLine} />;
+}
+
+function ManualMatchModalContent({
   manualMatchLine,
   onClose,
   modalScope,
@@ -151,9 +174,7 @@ export function ManualMatchModal({
   availableVouchers,
   onMatch,
   selectedPeriod
-}: ManualMatchModalProps) {
-  if (!manualMatchLine) return null;
-
+}: ManualMatchModalProps & { manualMatchLine: BankStatementLine }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-5 space-y-4 max-h-[90vh] flex flex-col">
@@ -340,6 +361,21 @@ export interface OpenAccountItem {
   source: 'RCV' | 'VOUCHER';
 }
 
+export interface MultiAccountLineItem {
+  id: string;
+  accountId: string;
+  amount: number;
+  gloss: string;
+  auxiliaryRut: string;
+  auxiliaryName: string;
+  documentRef: string;
+  dueDate: string;
+  costCenter: string;
+  expenseItem: string;
+  project: string;
+  product: string;
+}
+
 export interface QuickVoucherModalProps {
   quickVoucherLine: BankStatementLine | null;
   onClose: () => void;
@@ -360,8 +396,10 @@ export interface QuickVoucherModalProps {
   setQuickGloss: (val: string) => void;
   quickVoucherPeriod: string;
   setQuickVoucherPeriod: (val: string) => void;
+  fiscalYears?: FiscalPeriodYear[];
   onPostVoucherWithLines: (voucherData: {
     period: string;
+    date?: string;
     gloss: string;
     counterAccountId: string;
     lines: VoucherLine[];
@@ -370,7 +408,12 @@ export interface QuickVoucherModalProps {
   onPost?: () => void;
 }
 
-export function QuickVoucherModal({
+export function QuickVoucherModal(props: QuickVoucherModalProps) {
+  if (!props.quickVoucherLine) return null;
+  return <QuickVoucherModalContent {...props} quickVoucherLine={props.quickVoucherLine} />;
+}
+
+function QuickVoucherModalContent({
   quickVoucherLine,
   onClose,
   accounts,
@@ -390,13 +433,27 @@ export function QuickVoucherModal({
   setQuickGloss,
   quickVoucherPeriod,
   setQuickVoucherPeriod,
+  fiscalYears = [],
   onPostVoucherWithLines,
   onPost
-}: QuickVoucherModalProps) {
-  if (!quickVoucherLine) return null;
-
+}: QuickVoucherModalProps & { quickVoucherLine: BankStatementLine }) {
   const isCharge = quickVoucherLine.charge > 0;
   const bankAmount = isCharge ? quickVoucherLine.charge : quickVoucherLine.deposit;
+
+  // Compute automatic date shift if original period is closed
+  const effectiveShiftInfo = useMemo(() => {
+    return getNextOpenPeriodAndDate(quickVoucherLine.date, fiscalYears);
+  }, [quickVoucherLine, fiscalYears]);
+
+  const [voucherDate, setVoucherDate] = useState<string>(
+    effectiveShiftInfo?.date || quickVoucherLine?.date || ''
+  );
+
+  useEffect(() => {
+    const shift = getNextOpenPeriodAndDate(quickVoucherLine.date, fiscalYears);
+    setVoucherDate(shift.date);
+    setQuickVoucherPeriod(shift.period);
+  }, [quickVoucherLine, fiscalYears, setQuickVoucherPeriod]);
 
   // Selected account detail
   const selectedAccount = useMemo(() => {
@@ -418,6 +475,48 @@ export function QuickVoucherModal({
     return isCharge;
   }, [selectedAccount, isCharge]);
 
+  // Determine specialized account nature to link with the corresponding document type
+  const isHonorarios = useMemo(() => {
+    if (!selectedAccount) return false;
+    const name = (selectedAccount.name || '').toLowerCase();
+    const code = (selectedAccount.code || '').replace(/\./g, '');
+    return name.includes('honorario') || name.includes('bhe') || name.includes('bhr') || code === '2101003' || (code.startsWith('2101') && name.includes('honorario'));
+  }, [selectedAccount]);
+
+  const isProveedores = useMemo(() => {
+    if (!selectedAccount) return false;
+    if (isHonorarios) return false;
+    const name = (selectedAccount.name || '').toLowerCase();
+    const code = (selectedAccount.code || '').replace(/\./g, '');
+    return (
+      name.includes('proveedor') ||
+      name.includes('facturas por pagar') ||
+      name.includes('factura por pagar') ||
+      name.includes('cuentas por pagar') ||
+      name.includes('cuenta por pagar') ||
+      name.includes('acreedores comerciales') ||
+      code === '2101001' ||
+      (code.startsWith('2101') && !name.includes('honorario') && !name.includes('retencion'))
+    );
+  }, [selectedAccount, isHonorarios]);
+
+  const isClientes = useMemo(() => {
+    if (!selectedAccount) return false;
+    const name = (selectedAccount.name || '').toLowerCase();
+    const code = (selectedAccount.code || '').replace(/\./g, '');
+    return (
+      name.includes('cliente') ||
+      name.includes('facturas por cobrar') ||
+      name.includes('factura por cobrar') ||
+      name.includes('cuentas por cobrar') ||
+      name.includes('cuenta por cobrar') ||
+      name.includes('deudores') ||
+      code.startsWith('1102') ||
+      code === '1102001' ||
+      code === '1102002'
+    );
+  }, [selectedAccount]);
+
   // Dynamic Analysis states
   const [selectedAuxiliaryRut, setSelectedAuxiliaryRut] = useState<string>('');
   const [selectedAuxiliaryName, setSelectedAuxiliaryName] = useState<string>('');
@@ -434,9 +533,285 @@ export function QuickVoucherModal({
   const [docSearch, setDocSearch] = useState<string>('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Multi-Account state & helpers for Previred, payroll, and multiple accounts
+  const isLikelyPrevired = useMemo(() => {
+    const desc = (quickVoucherLine?.description || '').toLowerCase();
+    return desc.includes('previred') || desc.includes('cotizac') || desc.includes('imposic') || desc.includes('leyes soc') || desc.includes('afp');
+  }, [quickVoucherLine]);
+
+  const [voucherMode, setVoucherMode] = useState<'SINGLE' | 'MULTI'>(
+    isLikelyPrevired ? 'MULTI' : 'SINGLE'
+  );
+  const [multiLines, setMultiLines] = useState<MultiAccountLineItem[]>([]);
+
+  // Calculate multi-account total and difference
+  const multiTotalAmount = useMemo(() => {
+    return multiLines.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  }, [multiLines]);
+
+  const multiDifference = bankAmount - multiTotalAmount;
+
+  // Add line to multi-account table
+  const handleAddMultiLine = useCallback((customAccId?: string, customGloss?: string) => {
+    setMultiLines(prev => [
+      ...prev,
+      {
+        id: `multi_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        accountId: customAccId || '',
+        amount: 0,
+        gloss: (customGloss || quickGloss || quickVoucherLine?.description || '').toUpperCase(),
+        auxiliaryRut: '',
+        auxiliaryName: '',
+        documentRef: (quickVoucherLine?.documentNumber || '').toUpperCase(),
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      }
+    ]);
+  }, [quickGloss, quickVoucherLine]);
+
+  // Remove line from multi-account table
+  const handleRemoveMultiLine = useCallback((id: string) => {
+    setMultiLines(prev => prev.filter(item => item.id !== id));
+  }, []);
+
+  // Update field of a multi-account line
+  const handleUpdateMultiLine = useCallback((id: string, field: keyof MultiAccountLineItem, value: any) => {
+    setMultiLines(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      const updated = { ...item, [field]: value };
+      if (field === 'accountId') {
+        const acc = accounts.find(a => a.id === value);
+        if (!acc?.requiereAuxiliarRUT && !item.auxiliaryRut) {
+          updated.auxiliaryRut = '';
+          updated.auxiliaryName = '';
+        }
+      }
+      return updated;
+    }));
+  }, [accounts]);
+
+  // Fill remaining bank balance into a specific line
+  const handleFillRemaining = useCallback((index: number) => {
+    setMultiLines(prev => {
+      const copy = [...prev];
+      const otherSum = copy.reduce((sum, item, idx) => idx === index ? sum : sum + (Number(item.amount) || 0), 0);
+      const remainder = Math.max(0, bankAmount - otherSum);
+      copy[index] = { ...copy[index], amount: remainder };
+      return copy;
+    });
+  }, [bankAmount]);
+
+  // Quick Preset: PREVIRED (AFP, Salud, AFC, Mutual, CCAF)
+  const handleLoadPreviredTemplate = useCallback(() => {
+    const findAcc = (keywords: string[]) => {
+      const p1 = accounts.find(a => {
+        const code = (a.code || '').replace(/\./g, '');
+        const name = (a.name || '').toLowerCase();
+        return (code.startsWith('2') || (a.type || '').toLowerCase().includes('pasivo')) &&
+          keywords.some(k => name.includes(k));
+      });
+      if (p1) return p1;
+      return accounts.find(a => {
+        const name = (a.name || '').toLowerCase();
+        return keywords.some(k => name.includes(k));
+      }) || null;
+    };
+
+    const afpAcc = findAcc(['afp', 'previs', 'pension', 'imposic']);
+    const saludAcc = findAcc(['fonasa', 'isapre', 'salud']);
+    const afcAcc = findAcc(['afc', 'cesant']);
+    const mutualAcc = findAcc(['mutual', 'accidente', 'seguridad']);
+    const cajaAcc = findAcc(['caja', 'ccaf', 'compensac']);
+
+    const periodStr = quickVoucherPeriod || voucherDate.slice(0, 7) || 'PERIODO';
+    const defaultGloss = `PAGO PREVIRED - ${periodStr}`;
+    const defaultDoc = `PREVIRED-${periodStr.replace('-', '')}`;
+    const previredRut = '77.012.340-9';
+    const previredName = 'PREVIRED S.A.';
+
+    const lines: MultiAccountLineItem[] = [
+      {
+        id: `multi_afp_${Date.now()}`,
+        accountId: afpAcc?.id || '',
+        amount: 0,
+        gloss: `AFP COTIZACIONES PREVISIONALES - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: previredRut,
+        auxiliaryName: previredName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      },
+      {
+        id: `multi_salud_${Date.now() + 1}`,
+        accountId: saludAcc?.id || '',
+        amount: 0,
+        gloss: `SALUD FONASA / ISAPRE - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: previredRut,
+        auxiliaryName: previredName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      },
+      {
+        id: `multi_afc_${Date.now() + 2}`,
+        accountId: afcAcc?.id || '',
+        amount: 0,
+        gloss: `SEGURO DE CESANTIA AFC - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: previredRut,
+        auxiliaryName: previredName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      },
+      {
+        id: `multi_mutual_${Date.now() + 3}`,
+        accountId: mutualAcc?.id || '',
+        amount: 0,
+        gloss: `MUTUAL DE SEGURIDAD ACCIDENTES DEL TRABAJO - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: previredRut,
+        auxiliaryName: previredName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      }
+    ];
+
+    if (cajaAcc) {
+      lines.push({
+        id: `multi_caja_${Date.now() + 4}`,
+        accountId: cajaAcc.id,
+        amount: 0,
+        gloss: `CAJA DE COMPENSACION CCAF - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: previredRut,
+        auxiliaryName: previredName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      });
+    }
+
+    setMultiLines(lines);
+    setVoucherMode('MULTI');
+    setQuickGloss(defaultGloss);
+    setValidationError(null);
+  }, [accounts, quickVoucherPeriod, voucherDate, setQuickGloss]);
+
+  // Quick Preset: IMPUESTOS TGR F29
+  const handleLoadTGRTemplate = useCallback(() => {
+    const findAcc = (keywords: string[]) => {
+      return accounts.find(a => {
+        const name = (a.name || '').toLowerCase();
+        return keywords.some(k => name.includes(k));
+      }) || null;
+    };
+
+    const ivaAcc = findAcc(['iva debito', 'debito fiscal', 'iva por pagar', 'f29']);
+    const ppmAcc = findAcc(['ppm', 'pago provisional']);
+    const retAcc = findAcc(['retencion honorario', 'retencion bhe', 'retenciones por pagar']);
+
+    const periodStr = quickVoucherPeriod || voucherDate.slice(0, 7) || 'PERIODO';
+    const defaultGloss = `PAGO IMPUESTOS F29 TGR - ${periodStr}`;
+    const defaultDoc = `F29-${periodStr.replace('-', '')}`;
+    const tgrRut = '60.805.000-0';
+    const tgrName = 'TESORERIA GENERAL DE LA REPUBLICA';
+
+    const lines: MultiAccountLineItem[] = [
+      {
+        id: `multi_iva_${Date.now()}`,
+        accountId: ivaAcc?.id || '',
+        amount: 0,
+        gloss: `IVA F29 POR PAGAR - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: tgrRut,
+        auxiliaryName: tgrName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      },
+      {
+        id: `multi_ppm_${Date.now() + 1}`,
+        accountId: ppmAcc?.id || '',
+        amount: 0,
+        gloss: `PPM POR PAGAR - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: tgrRut,
+        auxiliaryName: tgrName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      },
+      {
+        id: `multi_ret_${Date.now() + 2}`,
+        accountId: retAcc?.id || '',
+        amount: 0,
+        gloss: `RETENCION HONORARIOS BHE - ${defaultGloss}`.toUpperCase(),
+        auxiliaryRut: tgrRut,
+        auxiliaryName: tgrName,
+        documentRef: defaultDoc,
+        dueDate: '',
+        costCenter: '',
+        expenseItem: '',
+        project: '',
+        product: ''
+      }
+    ];
+
+    setMultiLines(lines);
+    setVoucherMode('MULTI');
+    setQuickGloss(defaultGloss);
+    setValidationError(null);
+  }, [accounts, quickVoucherPeriod, voucherDate, setQuickGloss]);
+
+  // Auto-init Previred preset if bank line is Previred
+  useEffect(() => {
+    if (isLikelyPrevired && multiLines.length === 0) {
+      handleLoadPreviredTemplate();
+    }
+  }, [isLikelyPrevired, handleLoadPreviredTemplate, multiLines.length]);
+
+  // Ordenar Centros de Costo e Ítems de Gasto alfabéticamente por código
+  const sortedCostCenters = useMemo(() => {
+    return [...costCenters].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [costCenters]);
+
+  const sortedExpenseItems = useMemo(() => {
+    return [...expenseItems].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [expenseItems]);
+
   // Auto-detect Auxiliary from Bank line description or match against master auxiliaries
+  // IMPORTANTE: SOLO se detecta y muestra si la cuenta seleccionada tiene marcado el casillero auxiliar en el Plan de Cuentas
   useEffect(() => {
     if (!quickVoucherLine) return;
+    
+    // Si la cuenta no está seleccionada o NO requiere auxiliar en el plan de cuentas, se limpia y no se auto-asigna
+    if (!selectedAccount || !selectedAccount.requiereAuxiliarRUT) {
+      setSelectedAuxiliaryRut('');
+      setSelectedAuxiliaryName('');
+      return;
+    }
+
     const desc = quickVoucherLine.description || '';
     
     // Check if description has RUT string (e.g. 76.123.456-7 or 76123456-7)
@@ -446,7 +821,7 @@ export function QuickVoucherModal({
       setSelectedAuxiliaryRut(cleanRut);
       const foundAux = auxiliaries.find(a => (a.rut || '').replace(/\./g, '').toUpperCase() === cleanRut.replace(/\./g, '').toUpperCase());
       if (foundAux) {
-        setSelectedAuxiliaryName(foundAux.name || '');
+        setSelectedAuxiliaryName((foundAux.name || '').toUpperCase());
       }
       return;
     }
@@ -458,18 +833,19 @@ export function QuickVoucherModal({
         return nameUpper.length > 3 && desc.toUpperCase().includes(nameUpper);
       });
       if (match) {
-        setSelectedAuxiliaryRut(match.rut || '');
-        setSelectedAuxiliaryName(match.name || '');
+        setSelectedAuxiliaryRut((match.rut || '').toUpperCase());
+        setSelectedAuxiliaryName((match.name || '').toUpperCase());
       }
     }
-  }, [quickVoucherLine, auxiliaries]);
+  }, [quickVoucherLine, auxiliaries, selectedAccount]);
 
   // Sync selected auxiliary name when RUT changes
   const handleRutChange = (rut: string) => {
-    setSelectedAuxiliaryRut(rut);
-    const aux = auxiliaries.find(a => (a.rut || '').trim().toUpperCase() === (rut || '').trim().toUpperCase());
+    const cleanRut = (rut || '').toUpperCase();
+    setSelectedAuxiliaryRut(cleanRut);
+    const aux = auxiliaries.find(a => (a.rut || '').trim().toUpperCase() === cleanRut.trim());
     if (aux) {
-      setSelectedAuxiliaryName(aux.name || '');
+      setSelectedAuxiliaryName((aux.name || '').toUpperCase());
     }
   };
 
@@ -483,6 +859,7 @@ export function QuickVoucherModal({
   };
 
   // Calculate open documents composing the selected account ("Lo que compone la cuenta")
+  // UNIFIED ENGINE: Merge RCV and Accounting Vouchers with robust Folio and RUT normalization to completely prevent duplicates
   const openItems = useMemo<OpenAccountItem[]>(() => {
     if (!selectedAccount) return [];
 
@@ -490,113 +867,86 @@ export function QuickVoucherModal({
     const accCode = selectedAccount.code;
     const accId = selectedAccount.id;
 
-    // 1. Gather from RCV Documents
-    if (rcvDocuments.length > 0) {
-      if (isAP) {
-        // Purchase invoices & Fees
-        const purchases = rcvDocuments.filter(d => d.tipoRegistro === 'Compra' || d.tipoRegistro === 'Honorarios');
-        for (const doc of purchases) {
-          const total = Number(doc.montoTotal) || 0;
-          if (total <= 0) continue;
-
-          // Find paid amount in vouchers
-          let paid = 0;
-          vouchers.forEach(v => {
-            if (v.status === 'Anulado') return;
-            v.lines?.forEach(l => {
-              if (l.accountId === accId || l.accountCode === accCode) {
-                if ((Number(l.debit) || 0) > 0) {
-                  if (l.auxiliaryRut === doc.rutEmisor || String(l.documentRef) === String(doc.folio)) {
-                    paid += Number(l.debit) || 0;
-                  }
-                }
-              }
-            });
-          });
-
-          const pending = Math.max(0, total - paid);
-          if (pending > 0) {
-            items.push({
-              id: `rcv_${doc.id || doc.folio}_${doc.rutEmisor}`,
-              docType: doc.tipoDoc || '33',
-              docNumber: String(doc.folio),
-              auxiliaryRut: doc.rutEmisor,
-              auxiliaryName: doc.razonSocialEmisor,
-              issueDate: doc.fechaEmision,
-              originalAmount: total,
-              paidAmount: paid,
-              openBalance: pending,
-              source: 'RCV'
-            });
-          }
-        }
-      } else {
-        // Sales invoices
-        const sales = rcvDocuments.filter(d => d.tipoRegistro === 'Venta');
-        for (const doc of sales) {
-          const total = Number(doc.montoTotal) || 0;
-          if (total <= 0) continue;
-
-          let paid = 0;
-          vouchers.forEach(v => {
-            if (v.status === 'Anulado') return;
-            v.lines?.forEach(l => {
-              if (l.accountId === accId || l.accountCode === accCode) {
-                if ((Number(l.credit) || 0) > 0) {
-                  if (l.auxiliaryRut === doc.rutReceptor || String(l.documentRef) === String(doc.folio)) {
-                    paid += Number(l.credit) || 0;
-                  }
-                }
-              }
-            });
-          });
-
-          const pending = Math.max(0, total - paid);
-          if (pending > 0) {
-            items.push({
-              id: `rcv_${doc.id || doc.folio}_${doc.rutReceptor}`,
-              docType: doc.tipoDoc || '33',
-              docNumber: String(doc.folio),
-              auxiliaryRut: doc.rutReceptor,
-              auxiliaryName: doc.razonSocialReceptor,
-              issueDate: doc.fechaEmision,
-              originalAmount: total,
-              paidAmount: paid,
-              openBalance: pending,
-              source: 'RCV'
-            });
-          }
-        }
+    // Helper: Normalize Folio to pure numeric string or standard code (e.g. "#201501", "DTE 34 #201501", "00201501" -> "201501")
+    const normalizeFolio = (val: any): string => {
+      if (val === undefined || val === null) return '';
+      const s = String(val).trim();
+      if (!s) return '';
+      if (s.includes('#')) {
+        const after = s.split('#').pop()?.trim() || '';
+        const d = after.replace(/\D/g, '');
+        if (d) return String(parseInt(d, 10));
       }
-    }
+      const tokens = s.split(/[\s\-_\/]+/);
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        const d = tokens[i].replace(/\D/g, '');
+        if (d.length > 0) return String(parseInt(d, 10));
+      }
+      const allD = s.replace(/\D/g, '');
+      if (allD) return String(parseInt(allD, 10));
+      return s.toUpperCase();
+    };
 
-    // 2. Gather from Accounting Vouchers (Lines with open balances)
+    // Helper: Normalize RUT (removes dots, hyphens, spaces: "99.012.000-5" -> "990120005")
+    const normalizeRut = (rut: any): string => {
+      if (!rut) return '';
+      return String(rut).replace(/[^0-9kK]/g, '').toUpperCase().trim();
+    };
+
+    // Helper: Normalize Document Type ("DTE 34" -> "34", "33" -> "33", "70" -> "BHE")
+    const normalizeDocType = (type: any): string => {
+      if (!type) return '';
+      const s = String(type).trim().toUpperCase();
+      const d = s.replace(/\D/g, '');
+      if (d) return d;
+      if (s.includes('HONORAR') || s.includes('BHE') || s.includes('BHR')) return 'BHE';
+      return s;
+    };
+
+    // 1. Gather & aggregate all lines from Accounting Vouchers on this account
     const lineBalancesMap = new Map<string, {
-      docType: string;
-      docNumber: string;
-      auxiliaryRut: string;
-      auxiliaryName: string;
+      rawDocType: string;
+      rawDocNumber: string;
+      rawRut: string;
+      rawName: string;
       issueDate: string;
+      dueDate?: string;
+      costCenter?: string;
+      expenseItem?: string;
+      project?: string;
+      product?: string;
       debitSum: number;
       creditSum: number;
+      normRut: string;
+      normFolio: string;
     }>();
 
     vouchers.forEach(v => {
       if (v.status === 'Anulado') return;
       v.lines?.forEach(l => {
         if (l.accountId === accId || l.accountCode === accCode) {
-          const rut = l.auxiliaryRut || '';
-          const docRefStr = l.documentRef || 'S/N';
-          const key = `${rut}__${docRefStr}`;
+          const normRut = normalizeRut(l.auxiliaryRut);
+          const normFolio = normalizeFolio(l.documentRef);
+          const rawDocRef = (l.documentRef || 'S/N').trim();
+          
+          // Primary key by normalized RUT and normalized Folio
+          const key = normFolio ? `${normRut}__${normFolio}` : `${normRut}__${rawDocRef}`;
           
           const current = lineBalancesMap.get(key) || {
-            docType: 'DTE',
-            docNumber: docRefStr,
-            auxiliaryRut: rut,
-            auxiliaryName: l.auxiliaryName || '',
+            rawDocType: l.documentType || (isHonorarios ? 'BHE' : 'DTE 33'),
+            rawDocNumber: rawDocRef,
+            rawRut: l.auxiliaryRut || '',
+            rawName: l.auxiliaryName || '',
             issueDate: v.date,
+            dueDate: l.dueDate,
+            costCenter: l.costCenter,
+            expenseItem: l.expenseItem,
+            project: l.project,
+            product: l.product,
             debitSum: 0,
-            creditSum: 0
+            creditSum: 0,
+            normRut,
+            normFolio
           };
 
           current.debitSum += Number(l.debit) || 0;
@@ -606,30 +956,132 @@ export function QuickVoucherModal({
       });
     });
 
-    lineBalancesMap.forEach((data, key) => {
-      const netBalance = isAP ? (data.creditSum - data.debitSum) : (data.debitSum - data.creditSum);
-      if (netBalance > 0) {
-        // Avoid duplicate if already in RCV list
-        const existsInRcv = items.some(i => i.docNumber === data.docNumber && i.auxiliaryRut === data.auxiliaryRut);
-        if (!existsInRcv) {
+    const matchedVoucherKeys = new Set<string>();
+
+    // 2. Process RCV Documents (SII register: Compras, Honorarios, Ventas)
+    if (rcvDocuments.length > 0) {
+      let targetDocs: RCVDocument[] = [];
+      if (isHonorarios) {
+        targetDocs = rcvDocuments.filter(d => d.tipoRegistro === 'Honorarios' || d.tipoDoc === 'BHE' || d.tipoDoc === '70');
+      } else if (isProveedores) {
+        targetDocs = rcvDocuments.filter(d => d.tipoRegistro === 'Compra');
+      } else if (isClientes) {
+        targetDocs = rcvDocuments.filter(d => d.tipoRegistro === 'Venta');
+      }
+
+      for (const doc of targetDocs) {
+        const isClientDoc = isClientes;
+        const rawRut = isClientDoc ? doc.rutReceptor : doc.rutEmisor;
+        const rawName = isClientDoc ? doc.razonSocialReceptor : doc.razonSocialEmisor;
+        const normRut = normalizeRut(rawRut);
+        const normFolio = normalizeFolio(doc.folio);
+        const rcvKey = `${normRut}__${normFolio}`;
+
+        let docTotal = 0;
+        if (isHonorarios) {
+          const bruto = Number(doc.montoBruto || doc.montoTotal || doc.montoNeto) || 0;
+          const retencion = Number(doc.montoRetencion !== undefined ? doc.montoRetencion : (doc.montoIva || 0)) || 0;
+          const liquido = Number(doc.montoLiquido !== undefined && doc.montoLiquido > 0 ? doc.montoLiquido : (bruto - retencion)) || 0;
+          docTotal = liquido > 0 ? liquido : bruto;
+        } else {
+          docTotal = Number(doc.montoTotal) || 0;
+        }
+        if (docTotal <= 0) continue;
+
+        // CASE A: The document has ALREADY been centralized / recorded in accounting vouchers
+        const vEntry = lineBalancesMap.get(rcvKey);
+        if (vEntry) {
+          matchedVoucherKeys.add(rcvKey);
+          const netBalance = isAP ? (vEntry.creditSum - vEntry.debitSum) : (vEntry.debitSum - vEntry.creditSum);
+          
+          // Only show if there is an open balance remaining in the accounting ledger
+          if (netBalance > 0) {
+            items.push({
+              id: `unified_${rcvKey}`,
+              docType: doc.tipoDoc ? String(doc.tipoDoc) : (vEntry.rawDocType || (isHonorarios ? 'BHE' : '33')),
+              docNumber: doc.folio ? String(doc.folio) : vEntry.rawDocNumber,
+              auxiliaryRut: rawRut || vEntry.rawRut,
+              auxiliaryName: rawName || vEntry.rawName,
+              issueDate: doc.fechaEmision || vEntry.issueDate,
+              dueDate: vEntry.dueDate,
+              costCenter: vEntry.costCenter,
+              expenseItem: vEntry.expenseItem,
+              project: vEntry.project,
+              product: vEntry.product,
+              originalAmount: docTotal > 0 ? docTotal : (isAP ? vEntry.creditSum : vEntry.debitSum),
+              paidAmount: isAP ? vEntry.debitSum : vEntry.creditSum,
+              openBalance: netBalance,
+              source: 'VOUCHER'
+            });
+          }
+          continue;
+        }
+
+        // CASE B: The document is in RCV, but has NOT yet been centralized into a voucher
+        let paid = 0;
+        vouchers.forEach(v => {
+          if (v.status === 'Anulado') return;
+          v.lines?.forEach(l => {
+            if (l.accountId === accId || l.accountCode === accCode) {
+              const isPayment = isAP ? ((Number(l.debit) || 0) > 0) : ((Number(l.credit) || 0) > 0);
+              if (isPayment) {
+                const lineRutNorm = normalizeRut(l.auxiliaryRut);
+                const lineFolioNorm = normalizeFolio(l.documentRef);
+                if (lineRutNorm === normRut && (!normFolio || lineFolioNorm === normFolio)) {
+                  paid += isAP ? (Number(l.debit) || 0) : (Number(l.credit) || 0);
+                }
+              }
+            }
+          });
+        });
+
+        const pending = Math.max(0, docTotal - paid);
+        if (pending > 0) {
           items.push({
-            id: `voucher_${key}`,
-            docType: data.docType,
-            docNumber: data.docNumber,
-            auxiliaryRut: data.auxiliaryRut,
-            auxiliaryName: data.auxiliaryName,
-            issueDate: data.issueDate,
-            originalAmount: isAP ? data.creditSum : data.debitSum,
-            paidAmount: isAP ? data.debitSum : data.creditSum,
-            openBalance: netBalance,
-            source: 'VOUCHER'
+            id: `rcv_${doc.id || doc.folio}_${normRut}`,
+            docType: doc.tipoDoc ? String(doc.tipoDoc) : (isHonorarios ? 'BHE' : '33'),
+            docNumber: String(doc.folio || ''),
+            auxiliaryRut: rawRut || '',
+            auxiliaryName: rawName || '',
+            issueDate: doc.fechaEmision,
+            originalAmount: docTotal,
+            paidAmount: paid,
+            openBalance: pending,
+            source: 'RCV'
           });
         }
+      }
+    }
+
+    // 3. Gather remaining Accounting Vouchers that were not matched to any RCV document
+    // (e.g. manual entries, foreign supplier invoices, prior period balances)
+    lineBalancesMap.forEach((data, key) => {
+      if (matchedVoucherKeys.has(key)) return; // Already unified with RCV record
+
+      const netBalance = isAP ? (data.creditSum - data.debitSum) : (data.debitSum - data.creditSum);
+      if (netBalance > 0) {
+        items.push({
+          id: `voucher_${key}`,
+          docType: data.rawDocType,
+          docNumber: data.rawDocNumber,
+          auxiliaryRut: data.rawRut,
+          auxiliaryName: data.rawName,
+          issueDate: data.issueDate,
+          dueDate: data.dueDate,
+          costCenter: data.costCenter,
+          expenseItem: data.expenseItem,
+          project: data.project,
+          product: data.product,
+          originalAmount: isAP ? data.creditSum : data.debitSum,
+          paidAmount: isAP ? data.debitSum : data.creditSum,
+          openBalance: netBalance,
+          source: 'VOUCHER'
+        });
       }
     });
 
     return items;
-  }, [selectedAccount, isAP, rcvDocuments, vouchers]);
+  }, [selectedAccount, isAP, isHonorarios, isProveedores, isClientes, rcvDocuments, vouchers]);
 
   // Filtered open items based on docSearch or selected auxiliary
   const filteredOpenItems = useMemo(() => {
@@ -721,6 +1173,119 @@ export function QuickVoucherModal({
   const handleSubmit = async () => {
     setValidationError(null);
 
+    // MULTI-ACCOUNT SUBMISSION (Previred, payroll, multiple counterpart accounts)
+    if (voucherMode === 'MULTI') {
+      if (!selectedBankAccount) {
+        setValidationError('⚠️ No se ha seleccionado una Cuenta Bancaria de origen.');
+        return;
+      }
+
+      if (multiLines.length < 2) {
+        setValidationError('⚠️ En modo multi-cuentas debe ingresar al menos 2 líneas de imputación contable (por ejemplo, para Previred o pagos desglosados).');
+        return;
+      }
+
+      for (let i = 0; i < multiLines.length; i++) {
+        const line = multiLines[i];
+        if (!line.accountId) {
+          setValidationError(`⚠️ En la fila #${i + 1} no has seleccionado la Cuenta Contable.`);
+          return;
+        }
+        if ((Number(line.amount) || 0) <= 0) {
+          setValidationError(`⚠️ En la fila #${i + 1} el monto debe ser mayor a $0.`);
+          return;
+        }
+        const acc = accounts.find(a => a.id === line.accountId);
+        if (acc) {
+          if (acc.requiereAuxiliarRUT && !line.auxiliaryRut?.trim()) {
+            setValidationError(`⚠️ La cuenta [${acc.code} - ${acc.name}] en la fila #${i + 1} exige Auxiliar / RUT de forma obligatoria según el Plan de Cuentas.`);
+            return;
+          }
+          if (acc.requiereDocumento && !line.documentRef?.trim()) {
+            setValidationError(`⚠️ La cuenta [${acc.code} - ${acc.name}] en la fila #${i + 1} exige N° de Documento / Folio de forma obligatoria según el Plan de Cuentas.`);
+            return;
+          }
+          if (acc.requiereCentroCosto && !line.costCenter?.trim()) {
+            setValidationError(`⚠️ La cuenta [${acc.code} - ${acc.name}] en la fila #${i + 1} exige Centro de Costos de forma obligatoria.`);
+            return;
+          }
+          if (acc.requiereItemGasto && !line.expenseItem?.trim()) {
+            setValidationError(`⚠️ La cuenta [${acc.code} - ${acc.name}] en la fila #${i + 1} exige Ítem de Gasto de forma obligatoria.`);
+            return;
+          }
+        }
+      }
+
+      if (multiDifference !== 0) {
+        setValidationError(
+          `⚠️ Descuadre en Multi-Cuentas:\n\n` +
+          `• Monto Total de la Cartola: $${bankAmount.toLocaleString('es-CL')}\n` +
+          `• Total Asignado en Cuentas: $${multiTotalAmount.toLocaleString('es-CL')}\n` +
+          `• Diferencia pendiente: $${multiDifference.toLocaleString('es-CL')}\n\n` +
+          `El total distribuido en las cuentas debe coincidir exactamente con el valor del movimiento bancario.`
+        );
+        return;
+      }
+
+      const pCheck = checkIsPeriodClosed(quickVoucherPeriod, fiscalYears);
+      if (pCheck.isClosed) {
+        setValidationError(`⚠️ Acción Bloqueada:\n\n${pCheck.errorMsg}\n\nNo puedes registrar comprobantes en un período cerrado.`);
+        return;
+      }
+
+      const defaultGloss = (quickGloss.trim() || quickVoucherLine.description).toUpperCase();
+      const voucherLines: VoucherLine[] = [];
+
+      // Line 1: Bank Account
+      voucherLines.push({
+        id: 'line_bank',
+        accountId: selectedBankAccount.id,
+        accountCode: selectedBankAccount.code,
+        accountName: selectedBankAccount.name,
+        debit: isCharge ? 0 : bankAmount,
+        credit: isCharge ? bankAmount : 0,
+        documentRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
+        bankDocRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
+        gloss: defaultGloss
+      });
+
+      // Lines 2+: Counterparts
+      multiLines.forEach((ml, idx) => {
+        const acc = accounts.find(a => a.id === ml.accountId)!;
+        const amt = Number(ml.amount) || 0;
+        voucherLines.push({
+          id: `line_counter_${idx + 1}`,
+          accountId: acc.id,
+          accountCode: acc.code,
+          accountName: acc.name,
+          debit: isCharge ? amt : 0,
+          credit: isCharge ? 0 : amt,
+          auxiliaryRut: ml.auxiliaryRut ? ml.auxiliaryRut.toUpperCase().trim() : undefined,
+          auxiliaryName: ml.auxiliaryName ? ml.auxiliaryName.toUpperCase().trim() : undefined,
+          documentRef: ml.documentRef ? ml.documentRef.toUpperCase().trim() : undefined,
+          dueDate: ml.dueDate || undefined,
+          costCenter: ml.costCenter ? ml.costCenter.toUpperCase().trim() : undefined,
+          expenseItem: ml.expenseItem ? ml.expenseItem.toUpperCase().trim() : undefined,
+          project: ml.project || undefined,
+          product: ml.product || undefined,
+          gloss: (ml.gloss?.trim() || defaultGloss).toUpperCase()
+        });
+      });
+
+      if (onPostVoucherWithLines) {
+        await onPostVoucherWithLines({
+          period: quickVoucherPeriod,
+          date: voucherDate || effectiveShiftInfo?.date || quickVoucherLine.date,
+          gloss: defaultGloss,
+          counterAccountId: multiLines[0].accountId,
+          lines: voucherLines
+        });
+      } else if (onPost) {
+        onPost();
+      }
+      return;
+    }
+
     if (!selectedAccount) {
       setValidationError('⚠️ Debe seleccionar una Cuenta Contable de Contrapartida.');
       return;
@@ -779,16 +1344,16 @@ export function QuickVoucherModal({
       return;
     }
 
-    // Check if new Auxiliary needs to be saved to master list
+    // Check if new Auxiliary needs to be saved to master list (SOLO si la cuenta requiere auxiliar)
     let newAuxToSave: Auxiliary | undefined;
-    if (selectedAuxiliaryRut.trim()) {
+    if (selectedAccount.requiereAuxiliarRUT && selectedAuxiliaryRut.trim()) {
       const cleanRut = selectedAuxiliaryRut.trim().toUpperCase();
       const existing = auxiliaries.find(a => a.rut.replace(/\./g, '').toUpperCase() === cleanRut.replace(/\./g, '').toUpperCase());
       if (!existing) {
         newAuxToSave = {
           id: `aux_${Date.now()}`,
-          rut: selectedAuxiliaryRut.trim(),
-          name: selectedAuxiliaryName.trim() || selectedAuxiliaryRut.trim(),
+          rut: cleanRut,
+          name: (selectedAuxiliaryName.trim() || cleanRut).toUpperCase(),
           role: isAP ? 'Acreedor' : 'Deudor',
           estado: 'Activo'
         };
@@ -797,7 +1362,7 @@ export function QuickVoucherModal({
 
     // Construct Voucher Lines
     const lines: VoucherLine[] = [];
-    const defaultGloss = quickGloss.trim() || quickVoucherLine.description;
+    const defaultGloss = (quickGloss.trim() || quickVoucherLine.description).toUpperCase();
 
     // Line 1: Bank Account Line
     if (isCharge) {
@@ -809,8 +1374,8 @@ export function QuickVoucherModal({
         accountName: selectedBankAccount.name,
         debit: 0,
         credit: bankAmount,
-        documentRef: quickVoucherLine.documentNumber || 'BANCO',
-        bankDocRef: quickVoucherLine.documentNumber || 'BANCO',
+        documentRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
+        bankDocRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
         gloss: defaultGloss
       });
     } else {
@@ -822,8 +1387,8 @@ export function QuickVoucherModal({
         accountName: selectedBankAccount.name,
         debit: bankAmount,
         credit: 0,
-        documentRef: quickVoucherLine.documentNumber || 'BANCO',
-        bankDocRef: quickVoucherLine.documentNumber || 'BANCO',
+        documentRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
+        bankDocRef: (quickVoucherLine.documentNumber || 'BANCO').toUpperCase(),
         gloss: defaultGloss
       });
     }
@@ -837,8 +1402,8 @@ export function QuickVoucherModal({
         if (amt <= 0) return;
 
         const docRefValue = docItem ? docItem.docNumber : documentRef;
-        const auxRutValue = docItem ? docItem.auxiliaryRut : selectedAuxiliaryRut;
-        const auxNameValue = docItem ? docItem.auxiliaryName : selectedAuxiliaryName;
+        const auxRutValue = selectedAccount.requiereAuxiliarRUT ? (docItem ? docItem.auxiliaryRut : selectedAuxiliaryRut) : undefined;
+        const auxNameValue = selectedAccount.requiereAuxiliarRUT ? (docItem ? docItem.auxiliaryName : selectedAuxiliaryName) : undefined;
 
         lines.push({
           id: `line_counter_${index + 1}`,
@@ -847,16 +1412,16 @@ export function QuickVoucherModal({
           accountName: selectedAccount.name,
           debit: isCharge ? amt : 0,
           credit: isCharge ? 0 : amt,
-          auxiliaryRut: auxRutValue,
-          auxiliaryName: auxNameValue,
-          documentRef: docRefValue,
+          auxiliaryRut: auxRutValue ? auxRutValue.toUpperCase() : undefined,
+          auxiliaryName: auxNameValue ? auxNameValue.toUpperCase() : undefined,
+          documentRef: docRefValue ? docRefValue.toUpperCase() : undefined,
           dueDate: docItem?.dueDate || dueDate || undefined,
-          costCenter: costCenter || undefined,
-          expenseItem: expenseItem || undefined,
-          project: project || undefined,
-          product: product || undefined,
+          costCenter: costCenter ? costCenter.toUpperCase() : undefined,
+          expenseItem: expenseItem ? expenseItem.toUpperCase() : undefined,
+          project: project ? project.toUpperCase() : undefined,
+          product: product ? product.toUpperCase() : undefined,
           customAnalyses: Object.keys(customAnalyses).length > 0 ? customAnalyses : undefined,
-          gloss: `Pago ${docItem?.docType || 'Doc'} N° ${docRefValue} - ${defaultGloss}`
+          gloss: `Pago ${docItem?.docType || 'Doc'} N° ${docRefValue} - ${defaultGloss}`.toUpperCase()
         });
       });
     } else {
@@ -868,12 +1433,12 @@ export function QuickVoucherModal({
         accountName: selectedAccount.name,
         debit: isCharge ? bankAmount : 0,
         credit: isCharge ? 0 : bankAmount,
-        auxiliaryRut: selectedAuxiliaryRut || undefined,
-        auxiliaryName: selectedAuxiliaryName || undefined,
-        documentRef: documentRef || quickVoucherLine.documentNumber || 'S/N',
+        auxiliaryRut: selectedAccount.requiereAuxiliarRUT && selectedAuxiliaryRut ? selectedAuxiliaryRut.toUpperCase() : undefined,
+        auxiliaryName: selectedAccount.requiereAuxiliarRUT && selectedAuxiliaryName ? selectedAuxiliaryName.toUpperCase() : undefined,
+        documentRef: (documentRef || quickVoucherLine.documentNumber || 'S/N').toUpperCase(),
         dueDate: dueDate || undefined,
-        costCenter: costCenter || undefined,
-        expenseItem: expenseItem || undefined,
+        costCenter: costCenter ? costCenter.toUpperCase() : undefined,
+        expenseItem: expenseItem ? expenseItem.toUpperCase() : undefined,
         project: project || undefined,
         product: product || undefined,
         customAnalyses: Object.keys(customAnalyses).length > 0 ? customAnalyses : undefined,
@@ -881,9 +1446,17 @@ export function QuickVoucherModal({
       });
     }
 
+    // Period closing validation
+    const pCheck = checkIsPeriodClosed(quickVoucherPeriod, fiscalYears);
+    if (pCheck.isClosed) {
+      setValidationError(`⚠️ Acción Bloqueada:\n\n${pCheck.errorMsg}\n\nNo puedes registrar comprobantes en un período cerrado.`);
+      return;
+    }
+
     if (onPostVoucherWithLines) {
       await onPostVoucherWithLines({
         period: quickVoucherPeriod,
+        date: voucherDate || effectiveShiftInfo?.date || quickVoucherLine.date,
         gloss: defaultGloss,
         counterAccountId: selectedAccount.id,
         lines,
@@ -916,6 +1489,22 @@ export function QuickVoucherModal({
         </div>
 
         <div className="p-5 overflow-y-auto space-y-5 flex-1 text-xs">
+          {/* Notification banner if original bank statement period is closed */}
+          {effectiveShiftInfo?.wasShifted && (
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-2.5 text-amber-900 text-xs shadow-2xs">
+              <span className="text-base leading-none">🔒</span>
+              <div className="space-y-0.5">
+                <div className="font-bold text-amber-950 flex items-center gap-1.5">
+                  <span>Período de Cartola ({effectiveShiftInfo.originalPeriod}) Cerrado Contablemente</span>
+                  <span className="bg-amber-200 text-amber-900 font-mono text-[10px] px-1.5 py-0.2 rounded font-bold">Imputación Automática</span>
+                </div>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  El movimiento bancario original es del <strong>{effectiveShiftInfo.originalDate}</strong> ({effectiveShiftInfo.originalPeriod}), el cual se encuentra cerrado contablemente. Conforme a las normas contables, el registro contable se imputa automáticamente al <strong>día 1 del siguiente mes abierto: {effectiveShiftInfo.date} (Período {effectiveShiftInfo.period})</strong>.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Bank Movement Card */}
           <div className="bg-gradient-to-r from-slate-50 to-indigo-50/40 p-3.5 rounded-xl border border-indigo-100 flex flex-wrap justify-between items-center gap-3">
             <div className="space-y-1">
@@ -929,7 +1518,7 @@ export function QuickVoucherModal({
                 <span className="font-bold">Glosa Banco:</span> {quickVoucherLine.description}
               </div>
               <div className="text-slate-500 text-[11px]">
-                <span className="font-bold">Fecha Movimiento:</span> {quickVoucherLine.date} |{' '}
+                <span className="font-bold">Fecha Movimiento Cartola:</span> {quickVoucherLine.date} |{' '}
                 <span className="font-bold">N° Transf / Folio:</span> {quickVoucherLine.documentNumber || 'S/N'}
               </div>
             </div>
@@ -944,45 +1533,381 @@ export function QuickVoucherModal({
             </div>
           </div>
 
+          {/* Mode Selector: Cuenta Única vs Multi-Cuentas (Previred, Leyes Sociales, etc.) */}
+          <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setVoucherMode('SINGLE')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                voucherMode === 'SINGLE'
+                  ? 'bg-white text-indigo-950 shadow-xs border border-slate-300'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>📄</span>
+              <span>Cuenta Única / Facturas Abiertas</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setVoucherMode('MULTI');
+                if (multiLines.length === 0) {
+                  handleLoadPreviredTemplate();
+                }
+              }}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                voucherMode === 'MULTI'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Split className="w-3.5 h-3.5" />
+              <span>Pago Multi-Cuentas (Previred, Leyes Sociales, Impuestos)</span>
+              {isLikelyPrevired && (
+                <span className="bg-amber-400 text-amber-950 text-[10px] px-1.5 py-0.2 rounded uppercase font-black animate-pulse">
+                  Previred Detectado
+                </span>
+              )}
+            </button>
+          </div>
+
           {/* Account & Period Selection */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
             <div>
               <label className="block font-bold text-slate-800 mb-1">
-                📅 Período Contable Imputación:
+                📅 Período Imputación:
               </label>
               <input
                 type="month"
                 value={quickVoucherPeriod}
-                onChange={(e) => setQuickVoucherPeriod(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setQuickVoucherPeriod(val);
+                  if (voucherDate && !voucherDate.startsWith(val)) {
+                    setVoucherDate(`${val}-01`);
+                  }
+                }}
                 className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 font-bold text-xs focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
-            <div className="md:col-span-2">
+            <div>
               <label className="block font-bold text-slate-800 mb-1">
-                📊 Cuenta Contable de Contrapartida: <span className="text-rose-600 font-bold">*</span>
+                📆 Fecha Asiento:
               </label>
-              <select
-                value={quickExpenseAccountId}
+              <input
+                type="date"
+                value={voucherDate}
                 onChange={(e) => {
-                  setQuickExpenseAccountId(e.target.value);
-                  setValidationError(null);
-                  setSelectedDocIds({});
+                  const val = e.target.value;
+                  setVoucherDate(val);
+                  if (val) {
+                    setQuickVoucherPeriod(val.substring(0, 7));
+                  }
                 }}
-                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 font-medium text-xs focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">-- Seleccionar Cuenta de Contrapartida --</option>
-                {accounts.map(acc => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.code} - {acc.name} ({acc.type})
-                  </option>
-                ))}
-              </select>
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 font-bold text-xs focus:ring-2 focus:ring-indigo-500 font-mono"
+              />
             </div>
+
+            {voucherMode === 'SINGLE' ? (
+              <div className="md:col-span-2">
+                <label className="block font-bold text-slate-800 mb-1">
+                  📊 Cuenta Contable de Contrapartida: <span className="text-rose-600 font-bold">*</span>
+                </label>
+                <select
+                  value={quickExpenseAccountId}
+                  onChange={(e) => {
+                    const newAccId = e.target.value;
+                    setQuickExpenseAccountId(newAccId);
+                    setValidationError(null);
+                    setSelectedDocIds({});
+                    const acc = accounts.find(a => a.id === newAccId);
+                    if (!acc || !acc.requiereAuxiliarRUT) {
+                      setSelectedAuxiliaryRut('');
+                      setSelectedAuxiliaryName('');
+                    }
+                  }}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 font-medium text-xs focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Seleccionar Cuenta de Contrapartida --</option>
+                  {accounts.map(acc => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.code} - {acc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="md:col-span-2 flex flex-col justify-center bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-100 text-xs">
+                <div className="font-bold text-indigo-950 flex items-center gap-1.5">
+                  <Split className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Modo Multi-Cuentas Activado</span>
+                </div>
+                <p className="text-[11px] text-indigo-800 mt-0.5">
+                  Agrega y distribuye el monto del banco entre las cuentas contables en la tabla inferior.
+                </p>
+              </div>
+            )}
           </div>
 
+          {/* Multi-Account Workspace (Previred, Leyes Sociales, Impuestos TGR) */}
+          {voucherMode === 'MULTI' && (
+            <div className="space-y-3.5">
+              {/* Presets & Actions Toolbar */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Plantillas Rápidas:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleLoadPreviredTemplate}
+                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 hover:border-indigo-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs active:scale-95"
+                    title="Cargar automáticamente AFP, Fonasa/Salud, AFC, Mutual de Seguridad y CCAF con RUT Previred"
+                  >
+                    <span>⚡ Previred (Leyes Sociales)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLoadTGRTemplate}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs active:scale-95"
+                    title="Cargar automáticamente IVA F29, PPM y Retención de Honorarios con RUT TGR"
+                  >
+                    <span>🏛️ Impuestos TGR (F29)</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleAddMultiLine()}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all flex items-center gap-1.5 shadow-xs active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Agregar Cuenta</span>
+                </button>
+              </div>
+
+              {/* Balance & Cuadratura Progress Bar */}
+              <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 ${
+                multiDifference === 0
+                  ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
+                  : 'bg-amber-50/70 border-amber-300 text-amber-950'
+              }`}>
+                <div className="flex items-center gap-4 flex-wrap text-xs">
+                  <div>
+                    <span className="text-slate-500 font-bold block text-[10px] uppercase">Monto Banco Cartola</span>
+                    <span className="font-mono font-black text-sm text-slate-900">${bankAmount.toLocaleString('es-CL')}</span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-300 hidden sm:block" />
+                  <div>
+                    <span className="text-slate-500 font-bold block text-[10px] uppercase">Total Distribuido</span>
+                    <span className="font-mono font-black text-sm text-indigo-950">${multiTotalAmount.toLocaleString('es-CL')}</span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-300 hidden sm:block" />
+                  <div>
+                    <span className="text-slate-500 font-bold block text-[10px] uppercase">Diferencia Pendiente</span>
+                    <span className={`font-mono font-black text-sm ${multiDifference === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      ${multiDifference.toLocaleString('es-CL')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {multiDifference === 0 ? (
+                    <span className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-black text-xs flex items-center gap-1 shadow-2xs">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Cuadrado 100%</span>
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-amber-800">
+                        {multiDifference > 0 ? `Falta asignar $${multiDifference.toLocaleString('es-CL')}` : `Excedido por $${Math.abs(multiDifference).toLocaleString('es-CL')}`}
+                      </span>
+                      {multiLines.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleFillRemaining(multiLines.length - 1)}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-black transition-all shadow-2xs flex items-center gap-1 active:scale-95"
+                          title="Ajusta el monto de la última cuenta para cuadrar exactamente con el banco"
+                        >
+                          <Calculator className="w-3 h-3" />
+                          <span>Ajustar Resto a Última</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Multi-Account Lines Table */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs bg-white">
+                <div className="overflow-x-auto max-h-[380px]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 text-[11px]">
+                      <tr>
+                        <th className="py-2.5 px-2.5 w-8 text-center">#</th>
+                        <th className="py-2.5 px-3 min-w-[220px]">Cuenta Contable <span className="text-rose-600">*</span></th>
+                        <th className="py-2.5 px-3 w-40 text-right">Monto ($) <span className="text-rose-600">*</span></th>
+                        <th className="py-2.5 px-3 min-w-[180px]">Glosa Específica</th>
+                        <th className="py-2.5 px-3 min-w-[240px]">Atributos Requeridos (Auxiliar / Doc / CC)</th>
+                        <th className="py-2.5 px-2.5 w-12 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {multiLines.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                            No has agregado cuentas contables. Haz clic en "⚡ Previred (Leyes Sociales)" o en "+ Agregar Cuenta".
+                          </td>
+                        </tr>
+                      ) : (
+                        multiLines.map((line, idx) => {
+                          const acc = accounts.find(a => a.id === line.accountId);
+                          const reqRut = acc?.requiereAuxiliarRUT;
+                          const reqDoc = acc?.requiereDocumento;
+                          const reqCC = acc?.requiereCentroCosto;
+
+                          return (
+                            <tr key={line.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2.5 px-2.5 text-center font-mono font-bold text-slate-400 text-xs">
+                                {idx + 1}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <select
+                                  value={line.accountId}
+                                  onChange={(e) => handleUpdateMultiLine(line.id, 'accountId', e.target.value)}
+                                  className={`w-full p-1.5 rounded-lg border text-xs font-medium ${
+                                    !line.accountId ? 'border-rose-400 bg-rose-50/40 text-rose-900 font-bold' : 'border-slate-300 bg-white'
+                                  }`}
+                                >
+                                  <option value="">-- Seleccionar Cuenta Contable --</option>
+                                  {accounts.map(a => (
+                                    <option key={a.id} value={a.id}>
+                                      {a.code} - {a.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {acc && (
+                                  <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                                    {reqRut && <span className="text-indigo-700 font-bold bg-indigo-50 px-1 rounded">Exige RUT</span>}
+                                    {reqDoc && <span className="text-amber-700 font-bold bg-amber-50 px-1 rounded">Exige Doc</span>}
+                                    {reqCC && <span className="text-cyan-700 font-bold bg-cyan-50 px-1 rounded">Exige CC</span>}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <div className="space-y-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={line.amount || ''}
+                                    onChange={(e) => handleUpdateMultiLine(line.id, 'amount', Math.max(0, Number(e.target.value) || 0))}
+                                    placeholder="0"
+                                    className={`w-full p-1.5 rounded-lg border text-right font-mono font-bold text-xs ${
+                                      (Number(line.amount) || 0) <= 0 ? 'border-rose-400 bg-rose-50/40 text-rose-900' : 'border-slate-300 bg-white text-slate-900'
+                                    }`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFillRemaining(idx)}
+                                    className="w-full py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded text-[10px] font-black transition-all flex items-center justify-center gap-1"
+                                    title="Calcular y rellenar automáticamente con el saldo restante del banco"
+                                  >
+                                    <Calculator className="w-2.5 h-2.5" />
+                                    <span>⚡ Resto</span>
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <input
+                                  type="text"
+                                  value={line.gloss}
+                                  onChange={(e) => handleUpdateMultiLine(line.id, 'gloss', e.target.value)}
+                                  placeholder="Glosa de la línea..."
+                                  className="w-full p-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium uppercase"
+                                />
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="space-y-1.5">
+                                  {/* Auxiliar RUT & Name */}
+                                  <div className="grid grid-cols-2 gap-1">
+                                    <input
+                                      type="text"
+                                      placeholder={reqRut ? "RUT * (Requerido)" : "RUT Auxiliar (Opcional)"}
+                                      value={line.auxiliaryRut}
+                                      onChange={(e) => handleUpdateMultiLine(line.id, 'auxiliaryRut', e.target.value.toUpperCase())}
+                                      className={`p-1 rounded text-[11px] font-mono uppercase border ${
+                                        reqRut && !line.auxiliaryRut ? 'border-rose-400 bg-rose-50/40 text-rose-900 font-bold' : 'border-slate-200 bg-white'
+                                      }`}
+                                    />
+                                    <input
+                                      type="text"
+                                      placeholder="Razón Social / Nombre"
+                                      value={line.auxiliaryName}
+                                      onChange={(e) => handleUpdateMultiLine(line.id, 'auxiliaryName', e.target.value.toUpperCase())}
+                                      className="p-1 rounded text-[11px] uppercase border border-slate-200 bg-white"
+                                    />
+                                  </div>
+
+                                  {/* Document Ref & Centro de Costo */}
+                                  <div className="grid grid-cols-2 gap-1">
+                                    <input
+                                      type="text"
+                                      placeholder={reqDoc ? "N° Doc / Folio *" : "N° Doc / Folio (Opcional)"}
+                                      value={line.documentRef}
+                                      onChange={(e) => handleUpdateMultiLine(line.id, 'documentRef', e.target.value.toUpperCase())}
+                                      className={`p-1 rounded text-[11px] uppercase border ${
+                                        reqDoc && !line.documentRef ? 'border-rose-400 bg-rose-50/40 text-rose-900 font-bold' : 'border-slate-200 bg-white'
+                                      }`}
+                                    />
+                                    {sortedCostCenters.length > 0 ? (
+                                      <select
+                                        value={line.costCenter}
+                                        onChange={(e) => handleUpdateMultiLine(line.id, 'costCenter', e.target.value)}
+                                        className={`p-1 rounded text-[11px] uppercase border ${
+                                          reqCC && !line.costCenter ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-white'
+                                        }`}
+                                      >
+                                        <option value="">-- C. Costo --</option>
+                                        {sortedCostCenters.map(cc => (
+                                          <option key={cc.id} value={cc.code}>{cc.code} - {cc.name}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        placeholder="C. Costo (Opcional)"
+                                        value={line.costCenter}
+                                        onChange={(e) => handleUpdateMultiLine(line.id, 'costCenter', e.target.value.toUpperCase())}
+                                        className="p-1 rounded text-[11px] uppercase border border-slate-200 bg-white"
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-2.5 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveMultiLine(line.id)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                  title="Eliminar esta línea"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Account Requirements Summary Bar */}
-          {selectedAccount && (
+          {voucherMode === 'SINGLE' && selectedAccount && (
             <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-1.5">
               <div className="font-bold text-indigo-950 flex items-center gap-1.5">
                 <span>📋 Exigencias de Análisis según Plan de Cuentas:</span>
@@ -1057,10 +1982,24 @@ export function QuickVoucherModal({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2">
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs uppercase flex items-center gap-1.5">
-                    <span>📑</span> Composición de la Cuenta / Documentos Pendientes por {isAP ? 'Pagar (Proveedores)' : 'Cobrar (Clientes / Préstamos)'}
+                    <span>📑</span> Composición de la Cuenta / {
+                      isHonorarios
+                        ? 'Boletas de Honorarios Pendientes por Pagar (BHE)'
+                        : isProveedores
+                        ? 'Facturas de Proveedores Pendientes por Pagar'
+                        : isClientes
+                        ? 'Facturas de Clientes Pendientes por Cobrar'
+                        : `Documentos Pendientes en ${selectedAccount.name}`
+                    }
                   </h5>
                   <p className="text-[11px] text-slate-500">
-                    Selecciona una o más facturas/documentos para registrarlos como pagados por este movimiento bancario
+                    {isHonorarios
+                      ? 'Selecciona una o más boletas de honorarios para imputar el pago al líquido del profesional'
+                      : isProveedores
+                      ? 'Selecciona una o más facturas de proveedores para registrarlas como pagadas por este movimiento bancario'
+                      : isClientes
+                      ? 'Selecciona una o más facturas de clientes para registrarlas como cobradas por este movimiento bancario'
+                      : 'Selecciona una o más partidas pendientes asociadas a esta cuenta para imputar el movimiento bancario'}
                   </p>
                 </div>
 
@@ -1104,7 +2043,13 @@ export function QuickVoucherModal({
                     {filteredOpenItems.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-6 text-center text-slate-400 font-sans italic">
-                          No se encontraron facturas o comprobantes pendientes en esta cuenta. Puedes ingresar el pago o préstamo directamente completando los análisis a continuación.
+                          {isHonorarios
+                            ? `No se encontraron boletas de honorarios pendientes en la cuenta [${selectedAccount.code}] ${selectedAccount.name}. Puedes ingresar el comprobante directamente completando los datos a continuación.`
+                            : isProveedores
+                            ? `No se encontraron facturas de compra pendientes en la cuenta [${selectedAccount.code}] ${selectedAccount.name}. Puedes ingresar el pago directamente completando los datos a continuación.`
+                            : isClientes
+                            ? `No se encontraron facturas de venta pendientes en la cuenta [${selectedAccount.code}] ${selectedAccount.name}. Puedes ingresar el cobro directamente completando los datos a continuación.`
+                            : `No se encontraron documentos o partidas pendientes en la cuenta [${selectedAccount.code}] ${selectedAccount.name}. Puedes ingresar el movimiento directamente completando los análisis a continuación.`}
                         </td>
                       </tr>
                     ) : (
@@ -1126,9 +2071,23 @@ export function QuickVoucherModal({
                               />
                             </td>
                             <td className="p-2 font-bold text-indigo-900">
-                              {item.docType} {item.docNumber}
-                              {item.source === 'RCV' && (
-                                <span className="ml-1 text-[9px] font-sans font-semibold bg-blue-100 text-blue-800 px-1 rounded">RCV</span>
+                              <span className="font-semibold">
+                                {item.docNumber && item.docType && item.docNumber.toUpperCase().includes(item.docType.toUpperCase())
+                                  ? item.docNumber
+                                  : `${item.docType ? item.docType + ' ' : ''}${item.docNumber}`}
+                              </span>
+                              {item.source === 'RCV' ? (
+                                <span className={`ml-1.5 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded ${
+                                  item.docType === 'BHE' || item.docType === '70'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}>
+                                  {item.docType === 'BHE' || item.docType === '70' ? 'BHE SII' : 'RCV SII'}
+                                </span>
+                              ) : (
+                                <span className="ml-1.5 text-[9px] font-sans font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                  Contabilizado
+                                </span>
                               )}
                             </td>
                             <td className="p-2 font-sans truncate max-w-[200px]" title={`${item.auxiliaryRut} - ${item.auxiliaryName}`}>
@@ -1202,67 +2161,28 @@ export function QuickVoucherModal({
               </h5>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* 1. Auxiliar RUT & Nombre */}
-                <div>
-                  <label className="font-bold text-slate-800 block mb-1">
-                    👤 Auxiliar (RUT y Razón Social):
-                    {selectedAccount.requiereAuxiliarRUT && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
-                  </label>
-                  {auxiliaries.length > 0 ? (
-                    <div className="space-y-1.5">
-                      <select
-                        value={selectedAuxiliaryRut}
-                        onChange={(e) => handleRutChange(e.target.value)}
-                        className={`border p-2 w-full rounded-lg text-xs ${
-                          selectedAccount.requiereAuxiliarRUT && !selectedAuxiliaryRut ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
-                        }`}
-                      >
-                        <option value="">-- Seleccionar Auxiliar Existente --</option>
-                        {auxiliaries.map(aux => (
-                          <option key={aux.id || aux.rut} value={aux.rut}>
-                            {aux.rut} - {aux.name} ({aux.role})
-                          </option>
-                        ))}
-                      </select>
-
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <input
-                          type="text"
-                          placeholder="RUT Ej. 76.123.456-7"
-                          value={selectedAuxiliaryRut}
-                          onChange={(e) => setSelectedAuxiliaryRut(e.target.value)}
-                          className="border border-slate-300 p-1.5 rounded text-xs bg-white font-mono"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Razón Social / Nombre"
-                          value={selectedAuxiliaryName}
-                          onChange={(e) => setSelectedAuxiliaryName(e.target.value)}
-                          className="border border-slate-300 p-1.5 rounded text-xs bg-white"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <input
-                        type="text"
-                        placeholder="RUT Ej. 76.123.456-7"
-                        value={selectedAuxiliaryRut}
-                        onChange={(e) => setSelectedAuxiliaryRut(e.target.value)}
-                        className={`border p-2 w-full rounded-lg font-mono ${
-                          selectedAccount.requiereAuxiliarRUT && !selectedAuxiliaryRut ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
-                        }`}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Razón Social / Nombre"
-                        value={selectedAuxiliaryName}
-                        onChange={(e) => setSelectedAuxiliaryName(e.target.value)}
-                        className="border border-slate-300 p-2 w-full rounded-lg bg-white"
-                      />
-                    </div>
-                  )}
-                </div>
+                {/* 1. Auxiliar RUT & Nombre - SOLO si la cuenta seleccionada tiene marcado el casillero auxiliar en el Plan de Cuentas */}
+                {selectedAccount.requiereAuxiliarRUT && (
+                  <div>
+                    <label className="font-bold text-slate-800 block mb-1">
+                      👤 Auxiliar (RUT y Razón Social):
+                      <span className="text-rose-600 font-bold ml-1">* (Obligatorio según Plan de Cuentas)</span>
+                    </label>
+                    <SearchableAuxiliarySelect
+                      auxiliaries={auxiliaries}
+                      valueRut={selectedAuxiliaryRut}
+                      valueName={selectedAuxiliaryName}
+                      onSelect={(aux) => {
+                        setSelectedAuxiliaryRut((aux.rut || '').toUpperCase());
+                        setSelectedAuxiliaryName((aux.name || '').toUpperCase());
+                      }}
+                      onManualRutChange={(rut) => setSelectedAuxiliaryRut(rut)}
+                      onManualNameChange={(name) => setSelectedAuxiliaryName(name)}
+                      required={true}
+                      placeholder="Buscar por RUT o Nombre de Auxiliar..."
+                    />
+                  </div>
+                )}
 
                 {/* 2. N° Documento de Referencia */}
                 <div>
@@ -1274,8 +2194,8 @@ export function QuickVoucherModal({
                     type="text"
                     placeholder="Ej. Factura N° 1024, Folio 55, Préstamo 101"
                     value={documentRef}
-                    onChange={(e) => setDocumentRef(e.target.value)}
-                    className={`border p-2 w-full rounded-lg text-xs ${
+                    onChange={(e) => setDocumentRef(e.target.value.toUpperCase())}
+                    className={`border p-2 w-full rounded-lg text-xs uppercase ${
                       selectedAccount.requiereDocumento && Object.keys(selectedDocIds).length === 0 && !documentRef ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
                     }`}
                   />
@@ -1297,22 +2217,22 @@ export function QuickVoucherModal({
                   />
                 </div>
 
-                {/* 4. Centro de Costos */}
+                {/* 4. Centro de Costos (Ordenados Alfabéticamente por Código) */}
                 <div>
                   <label className="font-bold text-slate-800 block mb-1">
                     🏢 Centro de Costos:
                     {selectedAccount.requiereCentroCosto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
                   </label>
-                  {costCenters.length > 0 ? (
+                  {sortedCostCenters.length > 0 ? (
                     <select
                       value={costCenter}
-                      onChange={(e) => setCostCenter(e.target.value)}
-                      className={`border p-2 w-full rounded-lg text-xs ${
+                      onChange={(e) => setCostCenter(e.target.value.toUpperCase())}
+                      className={`border p-2 w-full rounded-lg text-xs uppercase ${
                         selectedAccount.requiereCentroCosto && !costCenter ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
                       }`}
                     >
                       <option value="">-- Seleccionar Centro de Costo --</option>
-                      {costCenters.map(cc => (
+                      {sortedCostCenters.map(cc => (
                         <option key={cc.id} value={cc.code}>
                           {cc.code} - {cc.name}
                         </option>
@@ -1323,30 +2243,30 @@ export function QuickVoucherModal({
                       type="text"
                       placeholder="Ej. ADMINISTRACION, VENTAS"
                       value={costCenter}
-                      onChange={(e) => setCostCenter(e.target.value)}
-                      className={`border p-2 w-full rounded-lg text-xs ${
+                      onChange={(e) => setCostCenter(e.target.value.toUpperCase())}
+                      className={`border p-2 w-full rounded-lg text-xs uppercase ${
                         selectedAccount.requiereCentroCosto && !costCenter ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
                       }`}
                     />
                   )}
                 </div>
 
-                {/* 5. Ítem de Gasto */}
+                {/* 5. Ítem de Gasto (Ordenados Alfabéticamente por Código) */}
                 <div>
                   <label className="font-bold text-slate-800 block mb-1">
                     🏷️ Ítem de Gasto:
                     {selectedAccount.requiereItemGasto && <span className="text-rose-600 font-bold ml-1">* (Obligatorio)</span>}
                   </label>
-                  {expenseItems.length > 0 ? (
+                  {sortedExpenseItems.length > 0 ? (
                     <select
                       value={expenseItem}
-                      onChange={(e) => setExpenseItem(e.target.value)}
-                      className={`border p-2 w-full rounded-lg text-xs ${
+                      onChange={(e) => setExpenseItem(e.target.value.toUpperCase())}
+                      className={`border p-2 w-full rounded-lg text-xs uppercase ${
                         selectedAccount.requiereItemGasto && !expenseItem ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
                       }`}
                     >
                       <option value="">-- Seleccionar Ítem Gasto --</option>
-                      {expenseItems.map(item => (
+                      {sortedExpenseItems.map(item => (
                         <option key={item.id} value={item.code}>
                           {item.code} - {item.name}
                         </option>
@@ -1357,8 +2277,8 @@ export function QuickVoucherModal({
                       type="text"
                       placeholder="Ej. COMBUSTIBLES, ARRIENDOS"
                       value={expenseItem}
-                      onChange={(e) => setExpenseItem(e.target.value)}
-                      className={`border p-2 w-full rounded-lg text-xs ${
+                      onChange={(e) => setExpenseItem(e.target.value.toUpperCase())}
+                      className={`border p-2 w-full rounded-lg text-xs uppercase ${
                         selectedAccount.requiereItemGasto && !expenseItem ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300 bg-white'
                       }`}
                     />

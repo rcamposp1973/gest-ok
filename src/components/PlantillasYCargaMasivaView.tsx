@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Company, ChartOfAccount, Auxiliary, Voucher, VoucherLine } from '../types';
 import { db } from '../lib/firebase';
 import { collection, doc, writeBatch, setDoc } from 'firebase/firestore';
+import { Sparkles, FileSpreadsheet, Download, Upload } from 'lucide-react';
+import AuxiliaryUpgradeModal from './AuxiliaryUpgradeModal';
 
 interface PlantillasYCargaMasivaViewProps {
   studyId: string;
@@ -21,6 +23,7 @@ export default function PlantillasYCargaMasivaView({
   const [activeTab, setActiveTab] = useState<'descargas' | 'importarCuentas' | 'importarAuxiliares'>('descargas');
   const [importText, setImportText] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState<boolean>(false);
   const [importResults, setImportResults] = useState<{
     successCount: number;
     errorCount: number;
@@ -77,6 +80,7 @@ export default function PlantillasYCargaMasivaView({
     const headers = [
       'RUT',
       'RazonSocial',
+      'GlosaSugerida',
       'NombreFantasia',
       'Giro',
       'Direccion',
@@ -98,6 +102,7 @@ export default function PlantillasYCargaMasivaView({
       [
         '76.123.456-7',
         'DISTRIBUIDORA Y COMERCIAL SUR LIMITADA',
+        'Venta de Insumos y Mercaderías',
         'Comercial Sur',
         'Venta de Insumos',
         'Av Providencia 1234',
@@ -117,6 +122,7 @@ export default function PlantillasYCargaMasivaView({
       [
         '77.987.654-3',
         'PROVEEDORA INDUSTRIAL Y SERVICIOS SPA',
+        'Servicios de Mantención y Soporte Técnico',
         'Industrial SpA',
         'Servicios de Mantencion',
         'Calle Los Boldos 500',
@@ -136,6 +142,7 @@ export default function PlantillasYCargaMasivaView({
       [
         '15.432.109-8',
         'GONZALEZ PEREZ JUAN PABLO',
+        'Asesoría y Consultoría Profesional',
         'Consultoria Gonzalez',
         'Servicios Profesionales de Ingenieria',
         'Av El Bosque Norte 400',
@@ -334,6 +341,68 @@ export default function PlantillasYCargaMasivaView({
         startIndex = 1;
       }
 
+      let colIdx = {
+        rut: 0,
+        razonSocial: 1,
+        glosa: -1,
+        nombreFantasia: 2,
+        giro: 3,
+        direccion: 4,
+        comuna: 5,
+        ciudad: 6,
+        email: 7,
+        phone: 8,
+        isClient: 9,
+        isSupplier: 10,
+        isEmployee: 11,
+        banco: 12,
+        tipoCuenta: 13,
+        numeroCuenta: 14,
+        ctaCobrar: 15,
+        ctaPagar: 16
+      };
+
+      if (startIndex === 1) {
+        const headerRow = rows[0].map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+        headerRow.forEach((h, idx) => {
+          if (h.includes('rut')) colIdx.rut = idx;
+          else if (h.includes('glosa') || h.includes('descripcion')) colIdx.glosa = idx;
+          else if (h.includes('razon') || (h.includes('nombre') && !h.includes('fantasia'))) colIdx.razonSocial = idx;
+          else if (h.includes('fantasia')) colIdx.nombreFantasia = idx;
+          else if (h.includes('giro')) colIdx.giro = idx;
+          else if (h.includes('direccion')) colIdx.direccion = idx;
+          else if (h.includes('comuna')) colIdx.comuna = idx;
+          else if (h.includes('ciudad')) colIdx.ciudad = idx;
+          else if (h.includes('email') || h.includes('correo')) colIdx.email = idx;
+          else if (h.includes('tel') || h.includes('fono')) colIdx.phone = idx;
+          else if (h.includes('cliente')) colIdx.isClient = idx;
+          else if (h.includes('proveedor')) colIdx.isSupplier = idx;
+          else if (h.includes('empleado')) colIdx.isEmployee = idx;
+          else if (h.includes('banco')) colIdx.banco = idx;
+          else if (h.includes('tipocuenta')) colIdx.tipoCuenta = idx;
+          else if (h.includes('numerocuenta') || h.includes('nrocuenta') || h.includes('cuentanumero')) colIdx.numeroCuenta = idx;
+          else if (h.includes('cobrar') || h.includes('deudor')) colIdx.ctaCobrar = idx;
+          else if (h.includes('pagar') || h.includes('acreedor')) colIdx.ctaPagar = idx;
+        });
+      } else if (rows[0] && rows[0].length >= 18) {
+        colIdx.glosa = 2;
+        colIdx.nombreFantasia = 3;
+        colIdx.giro = 4;
+        colIdx.direccion = 5;
+        colIdx.comuna = 6;
+        colIdx.ciudad = 7;
+        colIdx.email = 8;
+        colIdx.phone = 9;
+        colIdx.isClient = 10;
+        colIdx.isSupplier = 11;
+        colIdx.isEmployee = 12;
+        colIdx.banco = 13;
+        colIdx.tipoCuenta = 14;
+        colIdx.numeroCuenta = 15;
+        colIdx.ctaCobrar = 16;
+        colIdx.ctaPagar = 17;
+      }
+
       const errors: string[] = [];
       let successCount = 0;
       const batch = writeBatch(db);
@@ -342,25 +411,26 @@ export default function PlantillasYCargaMasivaView({
         const row = rows[i];
         if (row.length < 2 || !row[0]) continue;
 
-        const rut = row[0];
-        const razonSocial = row[1];
-        const nombreFantasia = row[2] || '';
-        const giro = row[3] || '';
-        const direccion = row[4] || '';
-        const comuna = row[5] || '';
-        const ciudad = row[6] || '';
-        const email = row[7] || '';
-        const phone = row[8] || '';
+        const rut = (row[colIdx.rut] || '').trim();
+        const razonSocial = (row[colIdx.razonSocial] || '').trim();
+        const glosaSugerida = colIdx.glosa >= 0 ? (row[colIdx.glosa] || '').trim() : '';
+        const nombreFantasia = (row[colIdx.nombreFantasia] || '').trim();
+        const giro = (row[colIdx.giro] || '').trim();
+        const direccion = (row[colIdx.direccion] || '').trim();
+        const comuna = (row[colIdx.comuna] || '').trim();
+        const ciudad = (row[colIdx.ciudad] || '').trim();
+        const email = (row[colIdx.email] || '').trim();
+        const phone = (row[colIdx.phone] || '').trim();
 
-        const isClient = row[9]?.toUpperCase() === 'SI' || row[9]?.toUpperCase() === 'TRUE' || row[9] === '1';
-        const isSupplier = row[10]?.toUpperCase() === 'SI' || row[10]?.toUpperCase() === 'TRUE' || row[10] === '1';
-        const isEmployee = row[11]?.toUpperCase() === 'SI' || row[11]?.toUpperCase() === 'TRUE' || row[11] === '1';
+        const isClient = row[colIdx.isClient]?.toUpperCase() === 'SI' || row[colIdx.isClient]?.toUpperCase() === 'TRUE' || row[colIdx.isClient] === '1';
+        const isSupplier = row[colIdx.isSupplier]?.toUpperCase() === 'SI' || row[colIdx.isSupplier]?.toUpperCase() === 'TRUE' || row[colIdx.isSupplier] === '1';
+        const isEmployee = row[colIdx.isEmployee]?.toUpperCase() === 'SI' || row[colIdx.isEmployee]?.toUpperCase() === 'TRUE' || row[colIdx.isEmployee] === '1';
 
-        const banco = row[12] || '';
-        const tipoCuenta = (row[13] as any) || 'Corriente';
-        const numeroCuenta = row[14] || '';
-        const defaultDebtorAccountId = row[15] || undefined;
-        const defaultCreditorAccountId = row[16] || undefined;
+        const banco = (row[colIdx.banco] || '').trim();
+        const tipoCuenta = ((row[colIdx.tipoCuenta] || '').trim() as any) || 'Corriente';
+        const numeroCuenta = (row[colIdx.numeroCuenta] || '').trim();
+        const defaultDebtorAccountId = (row[colIdx.ctaCobrar] || '').trim() || undefined;
+        const defaultCreditorAccountId = (row[colIdx.ctaPagar] || '').trim() || undefined;
 
         if (!rut || !razonSocial) {
           errors.push(`Fila ${i + 1}: RUT o Razón Social vacía.`);
@@ -371,23 +441,27 @@ export default function PlantillasYCargaMasivaView({
         const auxRef = doc(companyRef, 'auxiliaries', auxId);
 
         const newAux: any = {
+          id: auxId,
           rut,
+          name: razonSocial,
           razonSocial,
-          nombreFantasia: nombreFantasia || undefined,
-          giro: giro || undefined,
-          direccion: direccion || undefined,
-          comuna: comuna || undefined,
-          ciudad: ciudad || undefined,
-          email: email || undefined,
-          phone: phone || undefined,
+          defaultGloss: glosaSugerida || '',
+          nombreFantasia: nombreFantasia || '',
+          giro: giro || '',
+          direccion: direccion || '',
+          comuna: comuna || '',
+          ciudad: ciudad || '',
+          email: email || '',
+          phone: phone || '',
+          role: (isClient && isSupplier) ? 'Ambos' : isSupplier ? 'Acreedor' : 'Deudor',
           isClient: isClient || (!isSupplier && !isEmployee), // Default to client if none set
           isSupplier: isSupplier,
           isEmployee: isEmployee,
-          banco: banco || undefined,
-          tipoCuenta: tipoCuenta || undefined,
-          numeroCuenta: numeroCuenta || undefined,
-          defaultDebtorAccountId,
-          defaultCreditorAccountId,
+          banco: banco || '',
+          tipoCuenta: tipoCuenta || '',
+          numeroCuenta: numeroCuenta || '',
+          defaultDebtorAccountId: defaultDebtorAccountId || '',
+          defaultCreditorAccountId: defaultCreditorAccountId || '',
           estado: 'Activo',
           createdAt: new Date().toISOString()
         };
@@ -526,8 +600,8 @@ export default function PlantillasYCargaMasivaView({
                   Formato para importar la cartera de clientes, proveedores y honorarios con sus datos bancarios y cuentas contables predeterminadas.
                 </p>
                 <div className="text-[11px] text-slate-500 bg-white p-2.5 rounded-lg border border-slate-200 space-y-1">
-                  <div><strong>Columnas:</strong> RUT, RazonSocial, Giro, Email, Banco, CtaBanco, CtaCobrar, CtaPagar</div>
-                  <div><strong>Uso típico:</strong> Migración de cartera y nóminas de transferencia.</div>
+                  <div><strong>Columnas:</strong> RUT, RazonSocial, GlosaSugerida, Giro, Email, Banco, CtaBanco, CtaCobrar, CtaPagar</div>
+                  <div><strong>Uso típico:</strong> Migración de cartera, glosas automáticas para asientos y nóminas de transferencia.</div>
                 </div>
               </div>
 
@@ -667,19 +741,28 @@ export default function PlantillasYCargaMasivaView({
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Importación Masiva de Clientes, Proveedores y Empleados (Auxiliares)
+                Importación y Upgrade Masivo de Auxiliares (Clientes, Proveedores y Empleados)
               </h4>
               <p className="text-xs text-slate-500">
-                Carga masiva de auxiliares con RUT chileno, razón social, contactos y datos de transferencia bancaria.
+                Carga masiva o actualización enriquecida de auxiliares con RUT chileno, cuentas predeterminadas y centros de costo.
               </p>
             </div>
-            <button
-              onClick={downloadAuxiliaresTemplate}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
-            >
-              <span>📥</span>
-              <span>Descargar Plantilla Auxiliares</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowUpgradeModal(true)}
+                className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white text-xs font-black rounded-lg shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+                <span>⚡ Asistente de Upgrade Excel</span>
+              </button>
+              <button
+                onClick={downloadAuxiliaresTemplate}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
+              >
+                <span>📥</span>
+                <span>Descargar Plantilla Auxiliares</span>
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -690,11 +773,11 @@ export default function PlantillasYCargaMasivaView({
               rows={9}
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="RUT	RazonSocial	NombreFantasia	Giro	Direccion	Comuna	Ciudad	Email	Telefono	EsCliente	EsProveedor	EsEmpleado	Banco	TipoCuenta	NumeroCuenta	CtaCobrar	CtaPagar&#10;76.123.456-7	COMERCIAL SUR LIMITADA	Comercial Sur	Insumos	Av Providencia 123	Providencia	Santiago	contacto@sur.cl	+56911223344	SI	NO	NO	Banco de Chile	Corriente	123456789	1.1.03.001	&#10;77.987.654-3	INDUSTRIAL SPA	Industrial	Servicios	Calle Los Boldos	Concepcion	Concepcion	pagos@industrial.cl	+56999887766	NO	SI	NO	Banco Santander	Corriente	987654321		2.1.01.001"
+              placeholder="RUT	RazonSocial	GlosaSugerida	NombreFantasia	Giro	Direccion	Comuna	Ciudad	Email	Telefono	EsCliente	EsProveedor	EsEmpleado	Banco	TipoCuenta	NumeroCuenta	CtaCobrar	CtaPagar&#10;76.123.456-7	COMERCIAL SUR LIMITADA	Venta Insumos Oficina	Comercial Sur	Insumos	Av Providencia 123	Providencia	Santiago	contacto@sur.cl	+56911223344	SI	NO	NO	Banco de Chile	Corriente	123456789	1.1.03.001	&#10;77.987.654-3	INDUSTRIAL SPA	Mantención de Equipos y Planta	Industrial	Servicios	Calle Los Boldos	Concepcion	Concepcion	pagos@industrial.cl	+56999887766	NO	SI	NO	Banco Santander	Corriente	987654321		2.1.01.001"
               className="w-full p-3 font-mono text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-slate-50"
             />
             <div className="flex justify-between items-center text-[11px] text-slate-500">
-              <span>Estructura: RUT; RazónSocial; NombreFantasía; Giro; Dirección; Comuna; Ciudad; Email; Teléfono; EsCliente; EsProveedor; EsEmpleado; Banco; TipoCuenta; NroCuenta; CtaCobrar; CtaPagar</span>
+              <span>Estructura: RUT; RazónSocial; GlosaSugerida; NombreFantasía; Giro; Dirección; Comuna; Ciudad; Email; Teléfono; EsCliente; EsProveedor; EsEmpleado; Banco; TipoCuenta; NroCuenta; CtaCobrar; CtaPagar</span>
               <span>{importText.trim() ? `${importText.trim().split('\n').length} líneas detectadas` : '0 líneas'}</span>
             </div>
           </div>
@@ -740,6 +823,21 @@ export default function PlantillasYCargaMasivaView({
           )}
         </div>
       )}
+
+      {/* MODAL DE UPGRADE / ACTUALIZACIÓN MASIVA DESDE EXCEL */}
+      <AuxiliaryUpgradeModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        studyId={studyId}
+        companyId={company.id}
+        companyName={company.name}
+        companyRut={company.rut}
+        auxiliaries={auxiliaries}
+        accounts={accounts}
+        onSuccess={async () => {
+          await onRefreshData();
+        }}
+      />
     </div>
   );
 }

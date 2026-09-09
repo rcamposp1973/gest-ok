@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { User, Company, UserRole, Assignment, Study, ChartOfAccount, Voucher, RCVDocument, BankReconciliation, FiscalPeriodYear } from '../types';
+import { User, Company, UserRole, Assignment, Study, ChartOfAccount, Voucher, RCVDocument, BankReconciliation, FiscalPeriodYear, DTEConfig } from '../types';
 import CompanyAccountingDashboard from './CompanyAccountingDashboard';
 import ClientExecutiveManagementView from './ClientExecutiveManagementView';
-import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Lock, Eye, EyeOff, FileText, Upload, Sparkles, Server, Check, ArrowRight } from 'lucide-react';
 import ChangePasswordModal from './ChangePasswordModal';
 import { isTestStudy, executeTestStudyDataPurge, TestStudyPurgeStats } from '../utils/testStudyPurgeUtils';
 
@@ -114,7 +114,11 @@ export default function StudyAdminDashboard({
   const [selectedCompanyForAccounting, setSelectedCompanyForAccounting] = useState<Company | null>(null);
 
   // Company form section tabs & controlled state to preserve inputs across tabs
-  const [companySection, setCompanySection] = useState<'society' | 'legal' | 'contact' | 'assigned'>('society');
+  const [companySection, setCompanySection] = useState<'society' | 'legal' | 'sii' | 'assigned'>('society');
+  const [showRepPass, setShowRepPass] = useState(false);
+  const [showCompPass, setShowCompPass] = useState(false);
+  const [showCertPass, setShowCertPass] = useState(false);
+
   const emptyCompanyFormData = {
     name: '',
     fantasyName: '',
@@ -131,11 +135,43 @@ export default function StudyAdminDashboard({
     contactPhone: '',
     estado: 'Activo' as 'Activo' | 'Inactivo',
     assignedAccountantIds: [] as string[],
+    // Credenciales SII y Certificado Digital
+    rutRepresentanteSii: '',
+    claveRepLegalSii: '',
+    claveEmpresaSii: '',
+    claveCertificadoDigital: '',
+    siiApiProvider: 'DIRECT_SII' as 'DIRECT_SII' | 'SIMPLE_API' | 'OPEN_FACTURA' | 'LIBRE_DTE' | 'CUSTOM_API',
+    siiApiKey: '',
+    siiApiUrl: '',
+    ambiente: 'Producción' as 'Producción' | 'Certificación' | 'SANDBOX',
+    certificadoNombre: '',
+    certificadoB64: '',
+    hasCertificadoDigital: false,
   };
   const [companyFormData, setCompanyFormData] = useState(emptyCompanyFormData);
 
+  const handleUploadCompanyPfx = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const res = ev.target?.result as string;
+      if (res) {
+        const base64 = res.includes(',') ? res.split(',')[1] : res;
+        setCompanyFormData(prev => ({
+          ...prev,
+          certificadoNombre: file.name,
+          certificadoB64: base64,
+          hasCertificadoDigital: true,
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   useEffect(() => {
     if (editingCompany) {
+      const dte = (editingCompany.dteConfig || {}) as Partial<DTEConfig>;
       setCompanyFormData({
         name: editingCompany.name || '',
         fantasyName: editingCompany.fantasyName || '',
@@ -145,13 +181,25 @@ export default function StudyAdminDashboard({
         comuna: editingCompany.comuna || '',
         email: editingCompany.email || '',
         phone: editingCompany.phone || '',
-        legalRepName: editingCompany.legalRepName || '',
-        legalRepRut: editingCompany.legalRepRut || '',
+        legalRepName: editingCompany.legalRepName || dte.nombreRepresentante || '',
+        legalRepRut: editingCompany.legalRepRut || dte.rutRepresentante || '',
         legalRepEmail: editingCompany.legalRepEmail || '',
         contactName: editingCompany.contactName || '',
         contactPhone: editingCompany.contactPhone || '',
         estado: editingCompany.estado || 'Activo',
         assignedAccountantIds: editingCompany.assignedAccountantIds || [],
+        // SII & DTE Credentials
+        rutRepresentanteSii: dte.rutRepresentante || editingCompany.legalRepRut || '',
+        claveRepLegalSii: dte.claveRepLegalSii || '',
+        claveEmpresaSii: dte.claveEmpresaSii || '',
+        claveCertificadoDigital: dte.claveCertificadoDigital || '',
+        siiApiProvider: (dte.siiApiProvider as any) || 'DIRECT_SII',
+        siiApiKey: dte.siiApiKey || '',
+        siiApiUrl: dte.siiApiUrl || '',
+        ambiente: (dte.ambiente as any) || 'Producción',
+        certificadoNombre: dte.certificadoNombre || '',
+        certificadoB64: dte.certificadoB64 || '',
+        hasCertificadoDigital: !!(dte.hasCertificadoDigital || dte.certificadoB64),
       });
     } else {
       setCompanyFormData(emptyCompanyFormData);
@@ -435,6 +483,34 @@ export default function StudyAdminDashboard({
 
     setIsSavingCompany(true);
     try {
+      const existingDteConfig = (editingCompany?.dteConfig || {}) as Partial<DTEConfig>;
+      const repRutClean = (companyFormData.rutRepresentanteSii || legalRepRut || rut).trim();
+      const repClaveClean = companyFormData.claveRepLegalSii.trim();
+      const compClaveClean = companyFormData.claveEmpresaSii.trim();
+      const certClaveClean = companyFormData.claveCertificadoDigital.trim();
+
+      const dteConfigPayload: DTEConfig = {
+        rutEmisor: rut,
+        rutRepresentante: repRutClean,
+        nombreRepresentante: legalRepName || companyFormData.legalRepName || '',
+        claveRepLegalSii: repClaveClean || existingDteConfig.claveRepLegalSii || '',
+        claveEmpresaSii: compClaveClean || existingDteConfig.claveEmpresaSii || '',
+        claveCertificadoDigital: certClaveClean || existingDteConfig.claveCertificadoDigital || '',
+        claveRepLegalSiiMasked: (repClaveClean || existingDteConfig.claveRepLegalSii) ? '••••••••' : '',
+        claveEmpresaSiiMasked: (compClaveClean || existingDteConfig.claveEmpresaSii) ? '••••••••' : '',
+        claveSiiMasked: (repClaveClean || existingDteConfig.claveRepLegalSii) ? '••••••••' : '',
+        siiApiProvider: companyFormData.siiApiProvider || existingDteConfig.siiApiProvider || 'DIRECT_SII',
+        siiApiKey: companyFormData.siiApiKey?.trim() || existingDteConfig.siiApiKey || '',
+        siiApiUrl: companyFormData.siiApiUrl?.trim() || existingDteConfig.siiApiUrl || '',
+        ambiente: companyFormData.ambiente || existingDteConfig.ambiente || 'Producción',
+        hasCertificadoDigital: companyFormData.hasCertificadoDigital || !!companyFormData.certificadoB64 || !!existingDteConfig.hasCertificadoDigital,
+        certificadoNombre: companyFormData.certificadoNombre || existingDteConfig.certificadoNombre || '',
+        certificadoB64: companyFormData.certificadoB64 || existingDteConfig.certificadoB64 || '',
+        defaultCiudadEmisor: comuna || 'Santiago',
+        defaultComunaEmisor: comuna || 'Santiago',
+        siiConnectionStatus: (repClaveClean || existingDteConfig.claveRepLegalSii || companyFormData.hasCertificadoDigital || existingDteConfig.hasCertificadoDigital) ? 'Conectado' : 'No Configurado',
+      };
+
       const companyPayload = {
         studyId,
         name,
@@ -443,6 +519,7 @@ export default function StudyAdminDashboard({
         giro,
         address,
         comuna,
+        ciudad: comuna || 'Santiago',
         email,
         phone,
         legalRepName,
@@ -453,6 +530,8 @@ export default function StudyAdminDashboard({
         estado: editingCompany ? (editingCompany.estado || 'Activo') : estado,
         assignedAccountantIds,
         assignedAccountantEmails,
+        dteConfig: dteConfigPayload,
+        dteModuleEnabled: true,
         updatedAt: new Date()
       };
 
@@ -1025,19 +1104,20 @@ export default function StudyAdminDashboard({
                     onClick={() => setCompanySection('legal')}
                     className={`py-2 px-3 font-medium text-xs border-b-2 flex items-center gap-1.5 whitespace-nowrap ${companySection === 'legal' ? 'border-indigo-600 text-indigo-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                   >
-                    <span>2. Rep. Legal</span>
+                    <span>2. Rep. Legal & Contacto</span>
                     {companyFormData.legalRepName && (
                       <span className="w-2 h-2 rounded-full bg-indigo-400" title="Datos ingresados"></span>
                     )}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCompanySection('contact')}
-                    className={`py-2 px-3 font-medium text-xs border-b-2 flex items-center gap-1.5 whitespace-nowrap ${companySection === 'contact' ? 'border-indigo-600 text-indigo-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    onClick={() => setCompanySection('sii')}
+                    className={`py-2 px-3 font-medium text-xs border-b-2 flex items-center gap-1.5 whitespace-nowrap ${companySection === 'sii' ? 'border-indigo-600 text-indigo-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                   >
-                    <span>3. Contacto Operativo</span>
-                    {companyFormData.contactName && (
-                      <span className="w-2 h-2 rounded-full bg-indigo-400" title="Datos ingresados"></span>
+                    <Key className="w-3.5 h-3.5" />
+                    <span>3. Credenciales SII & Certificado</span>
+                    {(companyFormData.claveRepLegalSii || companyFormData.hasCertificadoDigital) && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" title="Credenciales SII configuradas"></span>
                     )}
                   </button>
                   <button
@@ -1081,7 +1161,7 @@ export default function StudyAdminDashboard({
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">RUT (minúsculas) *</label>
+                          <label className="block text-sm font-medium text-slate-700 mb-1">RUT Sociedad *</label>
                           <input
                             name="rut"
                             value={companyFormData.rut}
@@ -1162,7 +1242,7 @@ export default function StudyAdminDashboard({
                           onClick={() => setCompanySection('legal')}
                           className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2.5 rounded-lg transition-colors"
                         >
-                          Siguiente: Representante Legal &rarr;
+                          Siguiente: Rep. Legal & Contacto &rarr;
                         </button>
                       </div>
                     </div>
@@ -1170,38 +1250,68 @@ export default function StudyAdminDashboard({
 
                   {companySection === 'legal' && (
                     <div className="space-y-4 animate-fadeIn">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Nombre Completo Rep. Legal</label>
-                        <input
-                          name="legalRepName"
-                          value={companyFormData.legalRepName}
-                          onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepName: e.target.value }))}
-                          placeholder="Ej. María González"
-                          className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                        />
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">1. Representante Legal</h4>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Nombre Completo Rep. Legal</label>
+                            <input
+                              name="legalRepName"
+                              value={companyFormData.legalRepName}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepName: e.target.value }))}
+                              placeholder="Ej. María González"
+                              className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">RUT Rep. Legal</label>
+                              <input
+                                name="legalRepRut"
+                                value={companyFormData.legalRepRut}
+                                onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepRut: e.target.value, rutRepresentanteSii: prev.rutRepresentanteSii || e.target.value }))}
+                                placeholder="Ej. 12.345.678-9"
+                                className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Email Rep. Legal</label>
+                              <input
+                                type="email"
+                                name="legalRepEmail"
+                                value={companyFormData.legalRepEmail}
+                                onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepEmail: e.target.value }))}
+                                placeholder="mgonzalez@empresa.cl"
+                                className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">RUT Rep. Legal</label>
-                          <input
-                            name="legalRepRut"
-                            value={companyFormData.legalRepRut}
-                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepRut: e.target.value }))}
-                            placeholder="Ej. 12.345.678-9"
-                            className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Email Rep. Legal</label>
-                          <input
-                            type="email"
-                            name="legalRepEmail"
-                            value={companyFormData.legalRepEmail}
-                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepEmail: e.target.value }))}
-                            placeholder="mgonzalez@empresa.cl"
-                            className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                          />
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">2. Contacto Operativo</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Persona de Contacto</label>
+                            <input
+                              name="contactName"
+                              value={companyFormData.contactName}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, contactName: e.target.value }))}
+                              placeholder="Ej. Carlos Soto"
+                              className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Teléfono Contacto</label>
+                            <input
+                              name="contactPhone"
+                              value={companyFormData.contactPhone}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, contactPhone: e.target.value }))}
+                              placeholder="+56987654321"
+                              className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -1209,51 +1319,190 @@ export default function StudyAdminDashboard({
                         <button
                           type="button"
                           onClick={() => setCompanySection('society')}
-                          className="border border-slate-300 text-slate-700 font-medium px-5 py-2.5 rounded-lg hover:bg-slate-50 transition-colors"
+                          className="border border-slate-300 text-slate-700 font-medium px-5 py-2 rounded-lg hover:bg-slate-50 transition-colors text-xs"
                         >
                           &larr; Anterior
                         </button>
                         <div className="flex items-center gap-3">
                           <button
                             type="submit"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 py-2.5 rounded-lg transition-colors shadow-xs"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 py-2 rounded-lg transition-colors shadow-xs text-xs"
                           >
                             {editingCompany ? '💾 Guardar Cambios' : '💾 Guardar Empresa'}
                           </button>
                           <button
                             type="button"
-                            onClick={() => setCompanySection('contact')}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2.5 rounded-lg transition-colors"
+                            onClick={() => setCompanySection('sii')}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded-lg transition-colors text-xs flex items-center gap-1.5"
                           >
-                            Siguiente: Contacto &rarr;
+                            <span>Siguiente: Credenciales SII</span>
+                            <Key className="w-3.5 h-3.5" />
+                            <span>&rarr;</span>
                           </button>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {companySection === 'contact' && (
+                  {companySection === 'sii' && (
                     <div className="space-y-4 animate-fadeIn">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Persona de Contacto</label>
-                          <input
-                            name="contactName"
-                            value={companyFormData.contactName}
-                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, contactName: e.target.value }))}
-                            placeholder="Ej. Carlos Soto"
-                            className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                          />
+                      <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 flex items-start gap-3">
+                        <div className="p-2 bg-amber-500 text-white rounded-lg shrink-0 mt-0.5 shadow-xs">
+                          <Key className="w-5 h-5" />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Teléfono Contacto</label>
-                          <input
-                            name="contactPhone"
-                            value={companyFormData.contactPhone}
-                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, contactPhone: e.target.value }))}
-                            placeholder="+56987654321"
-                            className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                          />
+                          <h4 className="text-sm font-bold text-amber-950">Acceso Oficial al SII y Facturación DTE</h4>
+                          <p className="text-xs text-amber-800 leading-relaxed mt-0.5">
+                            Ingresa las credenciales tributarias del Representante Legal o de la Empresa y el Certificado Digital para sincronizar compras/ventas (RCV), consultar folios y emitir documentos tributarios electrónicos en vivo.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4 shadow-xs">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              RUT Representante Legal (SII) *
+                            </label>
+                            <input
+                              type="text"
+                              value={companyFormData.rutRepresentanteSii || companyFormData.legalRepRut}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, rutRepresentanteSii: e.target.value }))}
+                              placeholder="Ej. 12.345.678-9"
+                              className="w-full border border-slate-300 rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                            />
+                            <p className="text-[11px] text-slate-500 mt-1">RUT personal del titular o apoderado ante el SII.</p>
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-slate-700">
+                                Clave Tributaria SII Rep. Legal *
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => setShowRepPass(!showRepPass)}
+                                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                              >
+                                {showRepPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                <span>{showRepPass ? 'Ocultar' : 'Mostrar'}</span>
+                              </button>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type={showRepPass ? 'text' : 'password'}
+                                value={companyFormData.claveRepLegalSii}
+                                onChange={(e) => setCompanyFormData(prev => ({ ...prev, claveRepLegalSii: e.target.value }))}
+                                placeholder="Clave secreta SII (sii.cl)"
+                                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-1">Clave de acceso al portal del SII para consulta de RCV y DTE.</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-slate-700">
+                                Clave SII Empresa / Sociedad (Opcional)
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => setShowCompPass(!showCompPass)}
+                                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                              >
+                                {showCompPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                <span>{showCompPass ? 'Ocultar' : 'Mostrar'}</span>
+                              </button>
+                            </div>
+                            <input
+                              type={showCompPass ? 'text' : 'password'}
+                              value={companyFormData.claveEmpresaSii}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, claveEmpresaSii: e.target.value }))}
+                              placeholder="Clave tributaria del RUT empresa"
+                              className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
+                            />
+                            <p className="text-[11px] text-slate-500 mt-1">Para sociedades que cuenten con clave directa ante el SII.</p>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              Ambiente de Operación SII
+                            </label>
+                            <select
+                              value={companyFormData.ambiente}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, ambiente: e.target.value as any }))}
+                              className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                            >
+                              <option value="Producción">⚡ Producción Oficial (Emisión Real SII)</option>
+                              <option value="Certificación">🧪 Certificación / Pruebas (Sandbox SII)</option>
+                            </select>
+                            <p className="text-[11px] text-slate-500 mt-1">Selecciona Producción para sincronización real de libros y DTE.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Certificado Digital Section */}
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-indigo-600" />
+                            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                              Certificado Digital de Firma Electrónica (.pfx / .p12)
+                            </h4>
+                          </div>
+                          {companyFormData.hasCertificadoDigital ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Certificado Cargado
+                            </span>
+                          ) : (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-medium">
+                              Sin Certificado
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">
+                              Cargar Archivo .PFX o .P12
+                            </label>
+                            <input
+                              type="file"
+                              accept=".pfx,.p12"
+                              onChange={handleUploadCompanyPfx}
+                              className="w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 border border-slate-200 bg-white rounded-lg p-1.5"
+                            />
+                            {companyFormData.certificadoNombre && (
+                              <p className="text-[11px] text-indigo-700 font-mono mt-1 font-medium truncate">
+                                📄 {companyFormData.certificadoNombre}
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-medium text-slate-700">
+                                Clave del Certificado Digital
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => setShowCertPass(!showCertPass)}
+                                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                              >
+                                {showCertPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                <span>{showCertPass ? 'Ocultar' : 'Mostrar'}</span>
+                              </button>
+                            </div>
+                            <input
+                              type={showCertPass ? 'text' : 'password'}
+                              value={companyFormData.claveCertificadoDigital}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, claveCertificadoDigital: e.target.value }))}
+                              placeholder="Clave de la firma digital"
+                              className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono bg-white"
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -1261,21 +1510,21 @@ export default function StudyAdminDashboard({
                         <button
                           type="button"
                           onClick={() => setCompanySection('legal')}
-                          className="border border-slate-300 text-slate-700 font-medium px-5 py-2.5 rounded-lg hover:bg-slate-50 transition-colors text-xs"
+                          className="border border-slate-300 text-slate-700 font-medium px-5 py-2 rounded-lg hover:bg-slate-50 transition-colors text-xs"
                         >
                           &larr; Anterior
                         </button>
                         <div className="flex items-center gap-3">
                           <button
                             type="submit"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 py-2.5 rounded-lg transition-colors shadow-xs text-xs"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 py-2 rounded-lg transition-colors shadow-xs text-xs"
                           >
                             {editingCompany ? '💾 Guardar Cambios' : '💾 Guardar Empresa'}
                           </button>
                           <button
                             type="button"
                             onClick={() => setCompanySection('assigned')}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2.5 rounded-lg transition-colors text-xs"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded-lg transition-colors text-xs"
                           >
                             Siguiente: Personal Asignado &rarr;
                           </button>
@@ -1341,7 +1590,7 @@ export default function StudyAdminDashboard({
                       <div className="flex justify-between items-center pt-4 border-t border-slate-100">
                         <button
                           type="button"
-                          onClick={() => setCompanySection('contact')}
+                          onClick={() => setCompanySection('sii')}
                           className="border border-slate-300 text-slate-700 font-medium px-6 py-2.5 rounded-lg hover:bg-slate-50 transition-colors text-xs"
                         >
                           &larr; Anterior
@@ -1365,44 +1614,65 @@ export default function StudyAdminDashboard({
                   <p className="text-slate-500 text-sm">No hay empresas registradas en este estudio.</p>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                    {companies.map(c => (
-                      <div key={c.id} className="p-3 border border-slate-200 bg-slate-50 rounded-lg space-y-2">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="font-semibold text-slate-900">{c.name}</p>
-                            <p className="text-xs font-mono text-slate-600">RUT: {c.rut}</p>
-                            {c.fantasyName && <p className="text-xs text-slate-500">Fantasía: {c.fantasyName}</p>}
-                            <div className="mt-1.5 text-[11px] text-slate-600 bg-white p-2 rounded border border-slate-200">
-                              <span className="font-semibold text-slate-700">Personal Asignado: </span>
-                              {c.assignedAccountantIds && c.assignedAccountantIds.length > 0 ? (
-                                <span className="text-indigo-700 font-bold">
-                                  {users.filter(u => c.assignedAccountantIds?.includes(u.id)).map(u => u.name).join(', ') || `${c.assignedAccountantIds.length} usuario(s)`}
+                    {companies.map(c => {
+                      const hasSiiConfig = !!(c.dteConfig?.claveRepLegalSii || c.dteConfig?.hasCertificadoDigital || c.dteConfig?.siiConnectionStatus === 'Conectado');
+                      return (
+                        <div key={c.id} className="p-3 border border-slate-200 bg-slate-50 rounded-lg space-y-2">
+                          <div className="flex items-start justify-between">
+                            <div className="space-y-1">
+                              <p className="font-semibold text-slate-900">{c.name}</p>
+                              <p className="text-xs font-mono text-slate-600">RUT: {c.rut}</p>
+                              {c.fantasyName && <p className="text-xs text-slate-500">Fantasía: {c.fantasyName}</p>}
+                              <div className="mt-1.5 text-[11px] text-slate-600 bg-white p-2 rounded border border-slate-200">
+                                <span className="font-semibold text-slate-700">Personal Asignado: </span>
+                                {c.assignedAccountantIds && c.assignedAccountantIds.length > 0 ? (
+                                  <span className="text-indigo-700 font-bold">
+                                    {users.filter(u => c.assignedAccountantIds?.includes(u.id)).map(u => u.name).join(', ') || `${c.assignedAccountantIds.length} usuario(s)`}
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-600 font-medium italic">Sin contadores asignados</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 pt-1">
+                                <span className={`inline-block text-[10px] px-2 py-0.5 rounded font-medium ${c.estado === 'Inactivo' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                  {c.estado || 'Activo'}
                                 </span>
-                              ) : (
-                                <span className="text-amber-600 font-medium italic">Sin contadores asignados</span>
-                              )}
+                                {hasSiiConfig ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                    <Key className="w-3 h-3 text-emerald-600" /> SII Conectado
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded font-medium bg-amber-100 text-amber-800 border border-amber-300">
+                                    <AlertTriangle className="w-3 h-3 text-amber-600" /> SII Sin Claves
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded font-medium ${c.estado === 'Inactivo' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                              {c.estado || 'Activo'}
-                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 pt-2 border-t border-slate-200 text-xs font-medium">
+                            <button onClick={() => handleSelectCompany(c)} className="text-emerald-600 hover:text-emerald-800 font-bold">
+                              Contabilidad
+                            </button>
+                            <button 
+                              onClick={() => { setEditingCompany(c); setCompanySection('sii'); }} 
+                              className="text-amber-700 hover:text-amber-900 font-bold flex items-center gap-1"
+                              title="Configurar credenciales del SII y certificado digital"
+                            >
+                              <Key className="w-3 h-3" /> Credenciales SII
+                            </button>
+                            <button onClick={() => { setEditingCompany(c); setCompanySection('society'); }} className="text-indigo-600 hover:text-indigo-800">
+                              Editar
+                            </button>
+                            <button onClick={() => handleToggleCompanyEstado(c)} className="text-amber-600 hover:text-amber-800">
+                              {c.estado === 'Inactivo' ? 'Activar' : 'Desactivar'}
+                            </button>
+                            <button onClick={() => handleDeleteCompany(c.id)} className="text-red-500 hover:text-red-700">
+                              Eliminar
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 pt-2 border-t border-slate-200 text-xs font-medium">
-                          <button onClick={() => handleSelectCompany(c)} className="text-emerald-600 hover:text-emerald-800 font-bold">
-                            Contabilidad
-                          </button>
-                          <button onClick={() => { setEditingCompany(c); setCompanySection('society'); }} className="text-indigo-600 hover:text-indigo-800">
-                            Editar
-                          </button>
-                          <button onClick={() => handleToggleCompanyEstado(c)} className="text-amber-600 hover:text-amber-800">
-                            {c.estado === 'Inactivo' ? 'Activar' : 'Desactivar'}
-                          </button>
-                          <button onClick={() => handleDeleteCompany(c.id)} className="text-red-500 hover:text-red-700">
-                            Eliminar
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

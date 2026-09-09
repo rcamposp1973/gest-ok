@@ -34,23 +34,8 @@ import {
   UserCheck,
   Key
 } from 'lucide-react';
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend
-} from 'recharts';
+import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import JuniorAITrainingCenter from './JuniorAITrainingCenter';
 
 interface SuperAdminSystemMonitorProps {
   onSelectStudy?: (study: Study) => void;
@@ -73,7 +58,7 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
 
   // Time granularity for statistical charts
   const [timePeriod, setTimePeriod] = useState<'day' | 'week' | 'month'>('day');
-  const [activeTab, setActiveTab] = useState<'live' | 'stats' | 'studies' | 'users' | 'apiGateway'>('live');
+  const [activeTab, setActiveTab] = useState<'live' | 'stats' | 'studies' | 'users' | 'apiGateway' | 'copilotTraining'>('live');
 
   // Master System Gateway SII Settings (Super Admin Only)
   const [masterApiKey, setMasterApiKey] = useState<string>(() => {
@@ -694,6 +679,19 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
             <Key className="w-3.5 h-3.5 text-amber-400" />
             <span>Gateway SII Master</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('copilotTraining')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              activeTab === 'copilotTraining'
+                ? 'bg-indigo-900 text-white shadow-xs'
+                : 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Entrenar Junior (IA Contable)</span>
+            <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded font-black">SUPER</span>
+          </button>
         </div>
 
         {activeTab === 'stats' && (
@@ -1277,6 +1275,13 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 5. TAB: ENTRENAMIENTO DE JUNIOR (IA CONTABLE) */}
+      {activeTab === 'copilotTraining' && (
+        <div className="pt-2">
+          <JuniorAITrainingCenter />
         </div>
       )}
     </div>

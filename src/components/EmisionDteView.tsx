@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, updateDoc, doc, setDoc, deleteDoc } from '
 import { Company, Auxiliary, ChartOfAccount, DTEDocument, DTEConfig, DTEDocumentItem, Voucher, VoucherLine, RCVDocument } from '../types';
 import { sanitizeVoucherLines } from '../utils/voucherValidation';
 import { generateDteXml, downloadDteXml, simulateSiiConnectionTest, SiiConnectionDiagnostic } from '../utils/siiDteGenerator';
+import { fetchRcvFromSii } from '../utils/siiRcvClient';
 
 interface EmisionDteViewProps {
   studyId: string;
@@ -138,43 +139,29 @@ export default function EmisionDteView({
         }
       }
 
-      // CALL REAL BACKEND API ROUTE /api/sii/rescatar-rcv
-      const response = await fetch('/api/sii/rescatar-rcv', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyRut: company.rut,
-          year: yearToSync,
-          claveSii: config.claveEmpresaSii || config.claveRepLegalSii || company.dteConfig?.claveEmpresaSii || company.dteConfig?.claveRepLegalSii,
-          rutRepresentante: config.rutRepresentante || company.legalRepRut,
-          claveRepresentante: config.claveRepLegalSii || company.dteConfig?.claveRepLegalSii,
-          claveCertificadoDigital: config.claveCertificadoDigital || company.dteConfig?.claveCertificadoDigital || '',
-          siiApiUrl: apiUrl,
-          provider: chosenProvider,
-          apiKey: apiKeyVal,
-        })
+      // CALL RESILIENT RCV RESCUE (Backend + Direct Client Fallback)
+      const resData = await fetchRcvFromSii({
+        companyRut: company.rut,
+        companyName: company.name,
+        year: yearToSync,
+        month: 'ALL',
+        tipo: 'ALL',
+        rutRepresentante: config.rutRepresentante || company.legalRepRut,
+        claveRepresentante: config.claveRepLegalSii || company.dteConfig?.claveRepLegalSii,
+        claveCertificadoDigital: config.claveCertificadoDigital || company.dteConfig?.claveCertificadoDigital || '',
+        certificadoB64: config.certificadoB64 || company.dteConfig?.certificadoB64 || '',
+        apiKey: apiKeyVal,
+        provider: chosenProvider,
+        ambiente: config.ambiente || 'Producción'
       });
 
-      let resData: any = {};
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        resData = await response.json();
-      } else {
-        const rawText = await response.text();
-        const cleanMsg = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
-        resData = {
-          success: false,
-          error: `Respuesta de servidor no válida (HTTP ${response.status}): ${cleanMsg || response.statusText}`
-        };
-      }
-
-      if (!response.ok || !resData.success) {
+      if (!resData.success) {
         const errorMsg = resData.error || 'No se pudo autenticar con el portal del SII o la API del proveedor.';
         alert(
           `⚠️ SINCRONIZACIÓN AUTOMÁTICA SII / RCV:\n\n` +
           `${errorMsg}\n\n` +
           `----------------------------------------\n` +
-          `📌 PARA OBTENERNOS TUS DATOS 100% REALES HOY MISMO:\n\n` +
+          `📌 PARA OBTENER TUS DATOS 100% REALES:\n\n` +
           `1. Si posees una API Key de integración (SimpleAPI, OpenFactura, LibreDTE):\n` +
           `   Inscríbela en la pestaña "Credenciales & Firma Digital" de la empresa.\n\n` +
           `2. Si descargas tu RCV oficial de sii.cl:\n` +
@@ -202,6 +189,12 @@ export default function EmisionDteView({
       };
 
       const newFetchedDocs: DTEDocument[] = [];
+
+      // Read current Auxiliaries to auto-register new suppliers and customers
+      const currentAuxSnap = await getDocs(collection(companyRef, 'auxiliaries'));
+      const currentAuxs = currentAuxSnap.docs.map(d => ({ id: d.id, ...d.data() } as Auxiliary));
+      const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      let newAuxCount = 0;
 
       for (const d of realDocs) {
         const dteDoc: DTEDocument = {
@@ -245,6 +238,44 @@ export default function EmisionDteView({
         };
 
         newFetchedDocs.push(dteDoc);
+
+        // Auto-create Auxiliary if new
+        const docTipoReg = d.tipoRegistro || 'Venta';
+        let targetRut = '';
+        let targetName = '';
+        let targetRole: 'Deudor' | 'Acreedor' = 'Acreedor';
+
+        if (docTipoReg === 'Compra' || docTipoReg === 'Honorarios') {
+          targetRut = (d.rutEmisor || '').trim();
+          targetName = (d.razonSocialEmisor || '').trim();
+          targetRole = 'Acreedor';
+        } else {
+          targetRut = (d.rutReceptor || '').trim();
+          targetName = (d.razonSocialReceptor || '').trim();
+          targetRole = 'Deudor';
+        }
+
+        const cleanTargetRut = targetRut.replace(/[^0-9kK]/g, '').toUpperCase();
+        const isGenericRut = ['666666666', '111111111', '555555555', '777777777', '888888888', '999999999'].includes(cleanTargetRut);
+
+        if (cleanTargetRut && cleanTargetRut.length >= 7 && cleanTargetRut !== cleanCompRut && !isGenericRut) {
+          const existingAux = currentAuxs.find(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanTargetRut);
+          if (!existingAux) {
+            const newAuxData: Omit<Auxiliary, 'id'> = {
+              rut: targetRut,
+              name: targetName || (targetRole === 'Deudor' ? 'CLIENTE DTE' : 'PROVEEDOR DTE'),
+              role: targetRole,
+              estado: 'Activo',
+              defaultDebtorAccountIds: [],
+              defaultCreditorAccountIds: [],
+              creationMode: 'IMPORTACION_RCV',
+              createdAt: new Date().toISOString(),
+            };
+            const auxRef = await addDoc(collection(companyRef, 'auxiliaries'), newAuxData);
+            currentAuxs.push({ id: auxRef.id, ...newAuxData });
+            newAuxCount++;
+          }
+        }
 
         // Save DTE to Firestore
         const dRef = doc(companyRef, 'dteDocuments', dteDoc.id);

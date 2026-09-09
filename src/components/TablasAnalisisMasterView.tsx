@@ -178,8 +178,8 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
-    const area = (form.get('area') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
+    const area = (form.get('area') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
     if (!code || !name) {
@@ -223,8 +223,8 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
-    const category = (form.get('category') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
+    const category = (form.get('category') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
     if (!code || !name) {
@@ -268,8 +268,8 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
-    const description = (form.get('description') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
+    const description = (form.get('description') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
     if (!code || !name) {
@@ -313,8 +313,8 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
-    const clientOrLocation = (form.get('clientOrLocation') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
+    const clientOrLocation = (form.get('clientOrLocation') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
     if (!code || !name) {
@@ -358,7 +358,7 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
     const unit = (form.get('unit') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
@@ -403,8 +403,8 @@ export default function TablasAnalisisMasterView({
     if (isReadOnly || !selectedCustomCol) return;
     const form = new FormData(e.currentTarget);
     const code = (form.get('code') as string || '').trim().toUpperCase();
-    const name = (form.get('name') as string || '').trim();
-    const description = (form.get('description') as string || '').trim();
+    const name = (form.get('name') as string || '').trim().toUpperCase();
+    const description = (form.get('description') as string || '').trim().toUpperCase();
     const estado = (form.get('estado') as 'Activo' | 'Inactivo') || 'Activo';
 
     if (!code || !name) {

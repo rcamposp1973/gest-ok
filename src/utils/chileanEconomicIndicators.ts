@@ -15,7 +15,7 @@ export interface DailyIndicator {
 }
 
 // 1. TABLA OFICIAL CERTIFICADA DE UTM MENSUAL (SII) 2020 a 2026
-const OFFICIAL_MONTHLY_UTM: { [period: string]: number } = {
+export const OFFICIAL_MONTHLY_UTM: { [period: string]: number } = {
   // 2020
   '2020-01': 49673, '2020-02': 49723, '2020-03': 50021, '2020-04': 50221,
   '2020-05': 50372, '2020-06': 50372, '2020-07': 50322, '2020-08': 50272,
@@ -47,7 +47,7 @@ const OFFICIAL_MONTHLY_UTM: { [period: string]: number } = {
 };
 
 // 2. TABLA OFICIAL CERTIFICADA DE UF (PUNTOS MENSUALES CLAVE BANCO CENTRAL / SII)
-const OFFICIAL_UF_MONTHLY_START: { [period: string]: number } = {
+export const OFFICIAL_UF_MONTHLY_START: { [period: string]: number } = {
   // 2020
   '2020-01': 28309.94, '2020-02': 28339.75, '2020-03': 28509.61, '2020-04': 28648.22,
   '2020-05': 28713.56, '2020-06': 28713.56, '2020-07': 28693.47, '2020-08': 28664.79,
@@ -268,4 +268,45 @@ export async function syncOnlineChileanIndicators(): Promise<DailyIndicator[]> {
   }
 
   return fullSeries;
+}
+
+// TABLA OFICIAL DEL INGRESO MÍNIMO MENSUAL (IMM) - LEYES N° 21.456, 21.578 Y REAJUSTES LEY DE LA RENTA
+export const OFFICIAL_MONTHLY_IMM: { [period: string]: number } = {
+  // 2020 - 2022
+  '2020-01': 320000, '2020-09': 326500,
+  '2021-01': 326500, '2021-05': 337000, '2021-10': 350000,
+  '2022-01': 350000, '2022-05': 380000, '2022-08': 400000, '2022-12': 410000,
+  // 2023 (Ley N° 21.578)
+  '2023-01': 410000, '2023-02': 410000, '2023-03': 410000, '2023-04': 410000,
+  '2023-05': 440000, '2023-06': 440000, '2023-07': 440000, '2023-08': 440000,
+  '2023-09': 460000, '2023-10': 460000, '2023-11': 460000, '2023-12': 460000,
+  // 2024 (Ley N° 21.578: $500.000 a contar del 01 de julio de 2024)
+  '2024-01': 460000, '2024-02': 460000, '2024-03': 460000, '2024-04': 460000,
+  '2024-05': 460000, '2024-06': 460000, '2024-07': 500000, '2024-08': 500000,
+  '2024-09': 500000, '2024-10': 500000, '2024-11': 500000, '2024-12': 500000,
+  // 2025 (Reajuste IPC Ley N° 21.578 -> $520.000)
+  '2025-01': 520000, '2025-02': 520000, '2025-03': 520000, '2025-04': 520000,
+  '2025-05': 520000, '2025-06': 520000, '2025-07': 520000, '2025-08': 520000,
+  '2025-09': 520000, '2025-10': 520000, '2025-11': 520000, '2025-12': 520000,
+  // 2026 (Reajuste IPC proyectado / acordado -> $539.000)
+  '2026-01': 539000, '2026-02': 539000, '2026-03': 539000, '2026-04': 539000,
+  '2026-05': 539000, '2026-06': 539000, '2026-07': 539000, '2026-08': 539000,
+  '2026-09': 539000, '2026-10': 539000, '2026-11': 539000, '2026-12': 539000,
+};
+
+/**
+ * Obtiene el valor oficial del Ingreso Mínimo Mensual para un período 'YYYY-MM'
+ */
+export function getOfficialIMM(period: string): number {
+  if (OFFICIAL_MONTHLY_IMM[period]) {
+    return OFFICIAL_MONTHLY_IMM[period];
+  }
+  const [yearStr, monthStr] = period.split('-');
+  const year = parseInt(yearStr) || 2026;
+  const month = parseInt(monthStr) || 1;
+  if (year <= 2022) return 400000;
+  if (year === 2023) return month >= 9 ? 460000 : (month >= 5 ? 440000 : 410000);
+  if (year === 2024) return month >= 7 ? 500000 : 460000;
+  if (year === 2025) return 520000;
+  return 539000;
 }

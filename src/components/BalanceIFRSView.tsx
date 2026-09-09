@@ -1,11 +1,26 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
+import { 
+  Scale, 
+  Download, 
+  Printer, 
+  ChevronRight, 
+  ChevronDown, 
+  CheckCircle2, 
+  AlertTriangle,
+  FolderTree,
+  Eye,
+  EyeOff,
+  Layers,
+  ShieldCheck
+} from 'lucide-react';
 
 interface BalanceIFRSViewProps {
   company: Company;
   vouchers: Voucher[];
   accounts: ChartOfAccount[];
   fiscalYears: FiscalPeriodYear[];
+  onOpenAuditor?: () => void;
 }
 
 interface IFRSAccountLine {
@@ -14,103 +29,129 @@ interface IFRSAccountLine {
   name: string;
   debit: number;
   credit: number;
-  balance: number; // Saldo deudor para activos, saldo acreedor para pasivos y patrimonio
+  balance: number;
+}
+
+interface IFRSParentRubro {
+  id: string;
+  code: string;
+  name: string;
+  total: number;
+  accounts: IFRSAccountLine[];
 }
 
 export default function BalanceIFRSView({
   company,
   vouchers,
   accounts,
-  fiscalYears
+  fiscalYears,
+  onOpenAuditor
 }: BalanceIFRSViewProps) {
   const [periodFilter, setPeriodFilter] = useState<string>('Todos');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [showZeroBalances, setShowZeroBalances] = useState<boolean>(false);
+  const [showAccountDetails, setShowAccountDetails] = useState<boolean>(true);
+  const [expandedRubros, setExpandedRubros] = useState<Record<string, boolean>>({
+    '1101': true,
+    '1102': true,
+    '1103': true,
+    '1201': true,
+    '2101': true,
+    '2103': true,
+    '2301': true
+  });
 
-  // Available periods
+  const toggleRubro = (rubroId: string) => {
+    setExpandedRubros(prev => ({ ...prev, [rubroId]: !prev[rubroId] }));
+  };
+
+  // Available periods from vouchers
   const availablePeriods = useMemo(() => {
-    const set = new Set<string>();
+    const periodsSet = new Set<string>();
     vouchers.forEach(v => {
-      if (v.period) set.add(v.period);
+      if (v.date && v.date.length >= 7) {
+        periodsSet.add(v.date.slice(0, 7));
+      }
     });
-    return Array.from(set).sort().reverse();
+    return Array.from(periodsSet).sort().reverse();
   }, [vouchers]);
 
-  // Account Map
+  // Account map
   const accountMap = useMemo(() => {
     const map = new Map<string, ChartOfAccount>();
-    accounts.forEach(acc => {
-      map.set(acc.id, acc);
-      map.set(acc.code, acc);
+    accounts.forEach(a => {
+      map.set(a.id, a);
+      map.set(a.code, a);
     });
     return map;
   }, [accounts]);
 
-  // Compute Balances by Account
+  // Classification & Grouping by Parent Rubros (Cuentas Padre IFRS)
   const {
-    activosCorrientes,
-    activosNoCorrientes,
+    activosCorrientesRubros,
+    activosNoCorrientesRubros,
+    pasivosCorrientesRubros,
+    pasivosNoCorrientesRubros,
+    patrimonioRubros,
     totalActivosCorrientes,
     totalActivosNoCorrientes,
     totalActivos,
-    pasivosCorrientes,
-    pasivosNoCorrientes,
     totalPasivosCorrientes,
     totalPasivosNoCorrientes,
     totalPasivos,
-    patrimonio,
-    resultadoEjercicio,
     totalPatrimonioNeto,
+    resultadoEjercicio,
     totalPasivoMasPatrimonio,
     diferenciaCuadratura,
     isBalanced,
     descuadradosCount
   } = useMemo(() => {
+    // 1. Filtrar comprobantes válidos y equilibrados
+    const validVouchers: Voucher[] = [];
+    const descuadradosVouchers: Voucher[] = [];
+
+    vouchers.forEach(v => {
+      if (v.status === 'Anulado') return;
+
+      if (periodFilter !== 'Todos' && v.date && !v.date.startsWith(periodFilter)) return;
+      if (dateFrom && v.date && v.date < dateFrom) return;
+      if (dateTo && v.date && v.date > dateTo) return;
+
+      const vDebe = (v.lines || []).reduce((s, l) => s + (Number(l.debit) || 0), 0);
+      const vHaber = (v.lines || []).reduce((s, l) => s + (Number(l.credit) || 0), 0);
+
+      if (Math.abs(vDebe - vHaber) > 0.01) {
+        descuadradosVouchers.push(v);
+      } else {
+        validVouchers.push(v);
+      }
+    });
+
+    // 2. Acumular movimientos por cuenta
     const accSums = new Map<string, { debit: number; credit: number; account: ChartOfAccount }>();
 
-    // Inicializar cuentas
-    accounts.forEach(acc => {
-      accSums.set(acc.id, { debit: 0, credit: 0, account: acc });
-    });
-
-    // Sumar comprobantes válidos y perfectamente cuadrados (Partida Doble Estricta)
-    const descuadradosVouchers = vouchers.filter(v => {
-      if (v.status === 'Anulado') return false;
-      if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
-      if (dateFrom && v.date < dateFrom) return false;
-      if (dateTo && v.date > dateTo) return false;
-      return v.status === 'Descuadrado' || v.isDescuadrado || Math.abs((v.totalDebit || 0) - (v.totalCredit || 0)) > 0.01;
-    });
-
-    const validVouchers = vouchers.filter(v => {
-      if (v.status === 'Anulado') return false;
-      if (v.status === 'Descuadrado' || v.isDescuadrado) return false;
-      if (Math.abs((v.totalDebit || 0) - (v.totalCredit || 0)) > 0.01) return false;
-      if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
-      if (dateFrom && v.date < dateFrom) return false;
-      if (dateTo && v.date > dateTo) return false;
-      return true;
+    accounts.forEach(a => {
+      accSums.set(a.id, { debit: 0, credit: 0, account: a });
     });
 
     validVouchers.forEach(v => {
-      if (!v.lines) return;
-      v.lines.forEach(l => {
+      (v.lines || []).forEach(l => {
         const debit = Number(l.debit) || 0;
         const credit = Number(l.credit) || 0;
         if (debit === 0 && credit === 0) return;
 
         let targetAcc = accountMap.get(l.accountId) || accountMap.get(l.accountCode);
         if (!targetAcc) {
-          const accCodeStr = l.accountCode || 'S/C';
-          const prefix = accCodeStr.trim().charAt(0);
-          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Activo';
-          if (prefix === '1') inferredType = 'Activo';
-          else if (prefix === '2') {
-            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3') || accCodeStr.startsWith('2-3')) ? 'Patrimonio' : 'Pasivo';
+          const accCodeStr = (l.accountCode || '9999999').trim();
+          const p = accCodeStr.charAt(0);
+          let inferredType: 'Activo' | 'Pasivo' | 'Patrimonio' | 'Ingreso' | 'Gasto' = 'Gasto';
+          if (p === '1') inferredType = 'Activo';
+          else if (p === '2') {
+            inferredType = (accCodeStr.startsWith('23') || accCodeStr.startsWith('2.3')) ? 'Patrimonio' : 'Pasivo';
           }
-          else if (prefix === '3') inferredType = 'Ingreso';
-          else if (prefix === '4' || prefix === '5') inferredType = 'Gasto';
+          else if (p === '3') inferredType = 'Ingreso';
+          else if (p === '4' || p === '5') inferredType = 'Gasto';
 
           targetAcc = {
             id: l.accountId || l.accountCode || 'unknown',
@@ -136,31 +177,34 @@ export default function BalanceIFRSView({
       });
     });
 
-    // Subclasificación NIC 1 IFRS
-    // 1. Activo Corriente
-    const efectivoYEquivalentes: IFRSAccountLine[] = [];
-    const deudoresComerciales: IFRSAccountLine[] = [];
-    const inventarios: IFRSAccountLine[] = [];
-    const activosFinancierosCorrientes: IFRSAccountLine[] = [];
+    // 3. Estructura de Rubros Padre IFRS
+    // Activo Corriente (11xxxxx)
+    const rubroEfectivo: IFRSParentRubro = { id: '1101', code: '1101000', name: 'Efectivo y Equivalentes al Efectivo', total: 0, accounts: [] };
+    const rubroDeudores: IFRSParentRubro = { id: '1102', code: '1102000', name: 'Deudores Comerciales y Otras Cuentas por Cobrar', total: 0, accounts: [] };
+    const rubroInventarios: IFRSParentRubro = { id: '1103', code: '1103000', name: 'Inventarios / Existencias', total: 0, accounts: [] };
+    const rubroImpuestosActivos: IFRSParentRubro = { id: '1104', code: '1104000', name: 'Activos por Impuestos Corrientes (IVA CF, PPM, Remanente)', total: 0, accounts: [] };
+    const rubroOtrosActivosCorr: IFRSParentRubro = { id: '1105', code: '1105000', name: 'Otros Activos Financieros Corrientes', total: 0, accounts: [] };
 
-    // 2. Activo No Corriente
-    const propiedadesPlantaEquipo: IFRSAccountLine[] = [];
-    const activosIntangiblesPlusvalia: IFRSAccountLine[] = [];
-    const inversionesAsociadas: IFRSAccountLine[] = [];
+    // Activo No Corriente (12xxxxx)
+    const rubroPPE: IFRSParentRubro = { id: '1201', code: '1201000', name: 'Propiedades, Planta y Equipo (PPE)', total: 0, accounts: [] };
+    const rubroIntangibles: IFRSParentRubro = { id: '1202', code: '1202000', name: 'Activos Intangibles y Plusvalía', total: 0, accounts: [] };
+    const rubroInversionesNoCorr: IFRSParentRubro = { id: '1203', code: '1203000', name: 'Propiedades de Inversión y Otros Activos No Corrientes', total: 0, accounts: [] };
 
-    // 3. Pasivo Corriente
-    const cuentasPorPagarComerciales: IFRSAccountLine[] = [];
-    const prestamosCortoPlazo: IFRSAccountLine[] = [];
-    const provisionesImpuestosCorrientes: IFRSAccountLine[] = [];
+    // Pasivo Corriente (21xxxxx)
+    const rubroProveedores: IFRSParentRubro = { id: '2101', code: '2101000', name: 'Cuentas Comerciales y Otras Cuentas por Pagar', total: 0, accounts: [] };
+    const rubroPrestamosCorto: IFRSParentRubro = { id: '2102', code: '2102000', name: 'Obligaciones con Instituciones de Crédito a Corto Plazo', total: 0, accounts: [] };
+    const rubroImpuestosPasivos: IFRSParentRubro = { id: '2103', code: '2103000', name: 'Pasivos por Impuestos Corrientes (IVA DF, Retenciones, F29)', total: 0, accounts: [] };
+    const rubroProvisionesLaborales: IFRSParentRubro = { id: '2104', code: '2104000', name: 'Provisiones y Beneficios a los Empleados (Leyes Sociales)', total: 0, accounts: [] };
+    const rubroOtrosPasivosCorr: IFRSParentRubro = { id: '2105', code: '2105000', name: 'Otros Pasivos Corrientes', total: 0, accounts: [] };
 
-    // 4. Pasivo No Corriente
-    const deudasLargoPlazo: IFRSAccountLine[] = [];
-    const impuestosDiferidos: IFRSAccountLine[] = [];
+    // Pasivo No Corriente (22xxxxx)
+    const rubroDeudasLargo: IFRSParentRubro = { id: '2201', code: '2201000', name: 'Obligaciones Financieras a Largo Plazo', total: 0, accounts: [] };
+    const rubroPasivosDiferidos: IFRSParentRubro = { id: '2202', code: '2202000', name: 'Pasivos por Impuestos Diferidos y Otros a Largo Plazo', total: 0, accounts: [] };
 
-    // 5. Patrimonio Neto
-    const capitalEmitido: IFRSAccountLine[] = [];
-    const reservas: IFRSAccountLine[] = [];
-    const gananciasAcumuladas: IFRSAccountLine[] = [];
+    // Patrimonio (23xxxxx)
+    const rubroCapital: IFRSParentRubro = { id: '2301', code: '2301000', name: 'Capital Emitido y Pagado', total: 0, accounts: [] };
+    const rubroReservas: IFRSParentRubro = { id: '2302', code: '2302000', name: 'Reservas y Otras Ganancias Integrales', total: 0, accounts: [] };
+    const rubroResultadosAcum: IFRSParentRubro = { id: '2303', code: '2303000', name: 'Ganancias / Pérdidas Acumuladas de Ejercicios Anteriores', total: 0, accounts: [] };
 
     let totalIngresos = 0;
     let totalGastos = 0;
@@ -171,12 +215,11 @@ export default function BalanceIFRSView({
       const normType = (account.type || '').toLowerCase();
       const codePrefix = code.charAt(0);
 
-      // Criterios de Clasificación:
-      // 1 = Activos, 2 = Pasivo (salvedad: 23 = Patrimonio), 3 = Ingresos, 4 / 5 = Gastos
+      // Criterios IFRS Chilenos:
+      // Activos = 1, Pasivos = 2 (excepto 23), Patrimonio = 23, Ingresos = 3, Gastos/Costos = 4 ó 5
       const isPatrimonio = 
         code.startsWith('23') || 
         code.startsWith('2.3') || 
-        code.startsWith('2-3') || 
         normType.includes('patrimonio') || 
         normType.includes('capital');
 
@@ -197,12 +240,12 @@ export default function BalanceIFRSView({
         codePrefix === '5' || 
         (!['1', '2', '3'].includes(codePrefix) && (normType.includes('gasto') || normType.includes('costo') || normType.includes('perdida')));
 
-      // 1. ACTIVOS (Código 1)
+      // 1. ACTIVOS
       if (isActivo) {
         const balance = debit - credit;
         if (!showZeroBalances && balance === 0) return;
 
-        const item: IFRSAccountLine = {
+        const lineItem: IFRSAccountLine = {
           id: account.id,
           code: account.code,
           name: account.name,
@@ -211,39 +254,48 @@ export default function BalanceIFRSView({
           balance
         };
 
-        // Criterio Corriente vs No Corriente
         const isNoCorriente = 
-          code.startsWith('1.2') || code.startsWith('1-2') || code.startsWith('12') ||
+          code.startsWith('12') || code.startsWith('1.2') ||
           name.includes('fijo') || name.includes('propiedad') || name.includes('planta') || 
           name.includes('equipo') || name.includes('intangible') || name.includes('largo plazo') ||
-          name.includes('depreciaci') || name.includes('terreno') || name.includes('vehiculo') || name.includes('maquinaria') || name.includes('plusvalia');
+          name.includes('terreno') || name.includes('vehiculo') || name.includes('maquinaria');
 
         if (isNoCorriente) {
-          if (name.includes('intangible') || name.includes('plusvalia') || name.includes('software') || name.includes('marca') || code.startsWith('1.2.02')) {
-            activosIntangiblesPlusvalia.push(item);
-          } else if (name.includes('asociada') || name.includes('inversion') || name.includes('filial') || code.startsWith('1.2.03')) {
-            inversionesAsociadas.push(item);
+          if (name.includes('intangible') || name.includes('software') || name.includes('marca') || code.startsWith('1202') || code.startsWith('1.2.02')) {
+            rubroIntangibles.accounts.push(lineItem);
+            rubroIntangibles.total += balance;
+          } else if (name.includes('inversion') || name.includes('asociada') || code.startsWith('1203') || code.startsWith('1.2.03')) {
+            rubroInversionesNoCorr.accounts.push(lineItem);
+            rubroInversionesNoCorr.total += balance;
           } else {
-            propiedadesPlantaEquipo.push(item);
+            rubroPPE.accounts.push(lineItem);
+            rubroPPE.total += balance;
           }
         } else {
-          if (name.includes('caja') || name.includes('banco') || name.includes('efectivo') || name.includes('equivalente') || name.includes('tesoreria') || code.startsWith('1.1.01')) {
-            efectivoYEquivalentes.push(item);
-          } else if (name.includes('cliente') || name.includes('deudor') || name.includes('cobrar') || name.includes('anticipo') || code.startsWith('1.1.02')) {
-            deudoresComerciales.push(item);
-          } else if (name.includes('inventario') || name.includes('mercaderia') || name.includes('materia prima') || name.includes('existencia') || code.startsWith('1.1.03')) {
-            inventarios.push(item);
+          if (name.includes('caja') || name.includes('banco') || name.includes('efectivo') || name.includes('tesoreria') || code.startsWith('1101') || code.startsWith('1.1.01')) {
+            rubroEfectivo.accounts.push(lineItem);
+            rubroEfectivo.total += balance;
+          } else if (name.includes('iva') || name.includes('ppm') || name.includes('remanente') || name.includes('credito fiscal') || code.startsWith('1104') || code.startsWith('1.1.04')) {
+            rubroImpuestosActivos.accounts.push(lineItem);
+            rubroImpuestosActivos.total += balance;
+          } else if (name.includes('inventario') || name.includes('mercaderia') || name.includes('existencia') || name.includes('materia prima') || code.startsWith('1103') || code.startsWith('1.1.03')) {
+            rubroInventarios.accounts.push(lineItem);
+            rubroInventarios.total += balance;
+          } else if (name.includes('cliente') || name.includes('deudor') || name.includes('por cobrar') || name.includes('anticipo') || code.startsWith('1102') || code.startsWith('1.1.02')) {
+            rubroDeudores.accounts.push(lineItem);
+            rubroDeudores.total += balance;
           } else {
-            activosFinancierosCorrientes.push(item);
+            rubroOtrosActivosCorr.accounts.push(lineItem);
+            rubroOtrosActivosCorr.total += balance;
           }
         }
       }
-      // 2. PASIVOS (Código 2 excepto 23)
+      // 2. PASIVOS
       else if (isPasivo) {
         const balance = credit - debit;
         if (!showZeroBalances && balance === 0) return;
 
-        const item: IFRSAccountLine = {
+        const lineItem: IFRSAccountLine = {
           id: account.id,
           code: account.code,
           name: account.name,
@@ -253,31 +305,42 @@ export default function BalanceIFRSView({
         };
 
         const isNoCorriente = 
-          code.startsWith('2.2') || code.startsWith('2-2') || code.startsWith('22') ||
-          name.includes('largo plazo') || name.includes('l/p') || name.includes('hipotecario') || name.includes('bonos por pagar') || name.includes('diferido');
+          code.startsWith('22') || code.startsWith('2.2') ||
+          name.includes('largo plazo') || name.includes('hipotecario') || name.includes('diferido');
 
         if (isNoCorriente) {
-          if (name.includes('diferido') || name.includes('impuesto diferido') || code.startsWith('2.2.02')) {
-            impuestosDiferidos.push(item);
+          if (name.includes('diferido') || code.startsWith('2202') || code.startsWith('2.2.02')) {
+            rubroPasivosDiferidos.accounts.push(lineItem);
+            rubroPasivosDiferidos.total += balance;
           } else {
-            deudasLargoPlazo.push(item);
+            rubroDeudasLargo.accounts.push(lineItem);
+            rubroDeudasLargo.total += balance;
           }
         } else {
-          if (name.includes('proveedor') || name.includes('pagar comercial') || name.includes('factura por pagar') || code.startsWith('2.1.01')) {
-            cuentasPorPagarComerciales.push(item);
-          } else if (name.includes('prestamo') || name.includes('credito') || name.includes('linea de credito') || name.includes('deuda financiera') || code.startsWith('2.1.02')) {
-            prestamosCortoPlazo.push(item);
+          if (name.includes('iva') || name.includes('debito fiscal') || name.includes('retencion') || name.includes('impuesto') || name.includes('f29') || code.startsWith('2103') || code.startsWith('2.1.03')) {
+            rubroImpuestosPasivos.accounts.push(lineItem);
+            rubroImpuestosPasivos.total += balance;
+          } else if (name.includes('sueldo') || name.includes('leyes sociales') || name.includes('imposicion') || name.includes('previred') || name.includes('honorarios') || code.startsWith('2104') || code.startsWith('2.1.04')) {
+            rubroProvisionesLaborales.accounts.push(lineItem);
+            rubroProvisionesLaborales.total += balance;
+          } else if (name.includes('prestamo') || name.includes('credito') || name.includes('banco') || name.includes('linea') || code.startsWith('2102') || code.startsWith('2.1.02')) {
+            rubroPrestamosCorto.accounts.push(lineItem);
+            rubroPrestamosCorto.total += balance;
+          } else if (name.includes('proveedor') || name.includes('por pagar') || code.startsWith('2101') || code.startsWith('2.1.01')) {
+            rubroProveedores.accounts.push(lineItem);
+            rubroProveedores.total += balance;
           } else {
-            provisionesImpuestosCorrientes.push(item);
+            rubroOtrosPasivosCorr.accounts.push(lineItem);
+            rubroOtrosPasivosCorr.total += balance;
           }
         }
       }
-      // 3. PATRIMONIO (Código 23 / 2.3 o Tipo Patrimonio)
+      // 3. PATRIMONIO
       else if (isPatrimonio) {
         const balance = credit - debit;
         if (!showZeroBalances && balance === 0) return;
 
-        const item: IFRSAccountLine = {
+        const lineItem: IFRSAccountLine = {
           id: account.id,
           code: account.code,
           name: account.name,
@@ -286,41 +349,44 @@ export default function BalanceIFRSView({
           balance
         };
 
-        if (name.includes('capital') || code.startsWith('2.3.01') || code.startsWith('2301') || code.startsWith('3.1.01')) {
-          capitalEmitido.push(item);
-        } else if (name.includes('reserva') || code.startsWith('2.3.02') || code.startsWith('2302') || code.startsWith('3.1.02')) {
-          reservas.push(item);
+        if (name.includes('capital') || code.startsWith('2301') || code.startsWith('2.3.01')) {
+          rubroCapital.accounts.push(lineItem);
+          rubroCapital.total += balance;
+        } else if (name.includes('reserva') || code.startsWith('2302') || code.startsWith('2.3.02')) {
+          rubroReservas.accounts.push(lineItem);
+          rubroReservas.total += balance;
         } else {
-          gananciasAcumuladas.push(item);
+          rubroResultadosAcum.accounts.push(lineItem);
+          rubroResultadosAcum.total += balance;
         }
       }
-      // 4. INGRESOS (Código 3 o Tipo Ingreso)
+      // 4. INGRESOS
       else if (isIngreso) {
         totalIngresos += (credit - debit);
       }
-      // 5. GASTOS / COSTOS (Código 4 / 5 o Tipo Gasto)
+      // 5. GASTOS / COSTOS
       else if (isGasto) {
         totalGastos += (debit - credit);
       }
     });
 
-    const actCorr = [...efectivoYEquivalentes, ...deudoresComerciales, ...inventarios, ...activosFinancierosCorrientes];
-    const actNoCorr = [...propiedadesPlantaEquipo, ...activosIntangiblesPlusvalia, ...inversionesAsociadas];
+    const activosCorrientesRubros = [rubroEfectivo, rubroDeudores, rubroInventarios, rubroImpuestosActivos, rubroOtrosActivosCorr].filter(r => showZeroBalances || r.total !== 0 || r.accounts.length > 0);
+    const activosNoCorrientesRubros = [rubroPPE, rubroIntangibles, rubroInversionesNoCorr].filter(r => showZeroBalances || r.total !== 0 || r.accounts.length > 0);
 
-    const pasCorr = [...cuentasPorPagarComerciales, ...prestamosCortoPlazo, ...provisionesImpuestosCorrientes];
-    const pasNoCorr = [...deudasLargoPlazo, ...impuestosDiferidos];
+    const pasivosCorrientesRubros = [rubroProveedores, rubroPrestamosCorto, rubroImpuestosPasivos, rubroProvisionesLaborales, rubroOtrosPasivosCorr].filter(r => showZeroBalances || r.total !== 0 || r.accounts.length > 0);
+    const pasivosNoCorrientesRubros = [rubroDeudasLargo, rubroPasivosDiferidos].filter(r => showZeroBalances || r.total !== 0 || r.accounts.length > 0);
 
-    const patri = [...capitalEmitido, ...reservas, ...gananciasAcumuladas];
+    const patrimonioRubros = [rubroCapital, rubroReservas, rubroResultadosAcum].filter(r => showZeroBalances || r.total !== 0 || r.accounts.length > 0);
 
-    const totalActivosCorrientes = actCorr.reduce((s, a) => s + a.balance, 0);
-    const totalActivosNoCorrientes = actNoCorr.reduce((s, a) => s + a.balance, 0);
+    const totalActivosCorrientes = activosCorrientesRubros.reduce((s, r) => s + r.total, 0);
+    const totalActivosNoCorrientes = activosNoCorrientesRubros.reduce((s, r) => s + r.total, 0);
     const totalActivos = totalActivosCorrientes + totalActivosNoCorrientes;
 
-    const totalPasivosCorrientes = pasCorr.reduce((s, a) => s + a.balance, 0);
-    const totalPasivosNoCorrientes = pasNoCorr.reduce((s, a) => s + a.balance, 0);
+    const totalPasivosCorrientes = pasivosCorrientesRubros.reduce((s, r) => s + r.total, 0);
+    const totalPasivosNoCorrientes = pasivosNoCorrientesRubros.reduce((s, r) => s + r.total, 0);
     const totalPasivos = totalPasivosCorrientes + totalPasivosNoCorrientes;
 
-    const totalPatrimonioDirecto = patri.reduce((s, a) => s + a.balance, 0);
+    const totalPatrimonioDirecto = patrimonioRubros.reduce((s, r) => s + r.total, 0);
     const resultadoEjercicio = totalIngresos - totalGastos;
     const totalPatrimonioNeto = totalPatrimonioDirecto + resultadoEjercicio;
 
@@ -329,44 +395,19 @@ export default function BalanceIFRSView({
     const isBalanced = diferenciaCuadratura < 1;
 
     return {
-      // Activos NIC 1
-      efectivoYEquivalentes,
-      deudoresComerciales,
-      inventarios,
-      activosFinancierosCorrientes,
-      activosCorrientes: actCorr,
-      
-      propiedadesPlantaEquipo,
-      activosIntangiblesPlusvalia,
-      inversionesAsociadas,
-      activosNoCorrientes: actNoCorr,
-
+      activosCorrientesRubros,
+      activosNoCorrientesRubros,
+      pasivosCorrientesRubros,
+      pasivosNoCorrientesRubros,
+      patrimonioRubros,
       totalActivosCorrientes,
       totalActivosNoCorrientes,
       totalActivos,
-
-      // Pasivos NIC 1
-      cuentasPorPagarComerciales,
-      prestamosCortoPlazo,
-      provisionesImpuestosCorrientes,
-      pasivosCorrientes: pasCorr,
-
-      deudasLargoPlazo,
-      impuestosDiferidos,
-      pasivosNoCorrientes: pasNoCorr,
-
       totalPasivosCorrientes,
       totalPasivosNoCorrientes,
       totalPasivos,
-
-      // Patrimonio NIC 1
-      capitalEmitido,
-      reservas,
-      gananciasAcumuladas,
-      patrimonio: patri,
-      
-      resultadoEjercicio,
       totalPatrimonioNeto,
+      resultadoEjercicio,
       totalPasivoMasPatrimonio,
       diferenciaCuadratura,
       isBalanced,
@@ -377,27 +418,43 @@ export default function BalanceIFRSView({
   // Export CSV
   const handleExportCSV = () => {
     const rows = [
-      ['ESTADO DE SITUACIÓN FINANCIERA CLASIFICADO (IFRS / FECU)', `"${company.name}"`, `RUT: ${company.rut}`],
+      ['BALANCE CLASIFICADO IFRS / FECU (ESTADO DE SITUACIÓN FINANCIERA)', `"${company.name}"`, `RUT: ${company.rut}`],
       ['Período:', periodFilter !== 'Todos' ? periodFilter : 'Todo el Ejercicio'],
+      ['Principio Contable:', 'Partida Doble: Activo = Pasivo + Patrimonio Neto'],
       [''],
-      ['CÓDIGO', 'DESCRIPCIÓN IFRS', 'SALDO ($)'],
+      ['CÓDIGO RUBRO', 'RUBRO / CUENTA PADRE IFRS', 'SALDO ($)'],
       ['1. ACTIVOS', '', totalActivos.toString()],
-      ['1.1. ACTIVOS CORRIENTES (CIRCULANTES)', '', totalActivosCorrientes.toString()],
-      ...activosCorrientes.map(a => [`"${a.code}"`, `"${a.name}"`, a.balance.toString()]),
-      ['1.2. ACTIVOS NO CORRIENTES (FIJOS E INTANGIBLES)', '', totalActivosNoCorrientes.toString()],
-      ...activosNoCorrientes.map(a => [`"${a.code}"`, `"${a.name}"`, a.balance.toString()]),
+      ['1.1. ACTIVOS CORRIENTES', '', totalActivosCorrientes.toString()],
+      ...activosCorrientesRubros.flatMap(r => [
+        [`"${r.code}"`, `"${r.name}"`, r.total.toString()],
+        ...r.accounts.map(a => [`  "${a.code}"`, `  "${a.name}"`, a.balance.toString()])
+      ]),
+      ['1.2. ACTIVOS NO CORRIENTES', '', totalActivosNoCorrientes.toString()],
+      ...activosNoCorrientesRubros.flatMap(r => [
+        [`"${r.code}"`, `"${r.name}"`, r.total.toString()],
+        ...r.accounts.map(a => [`  "${a.code}"`, `  "${a.name}"`, a.balance.toString()])
+      ]),
       ['TOTAL ACTIVOS', '', totalActivos.toString()],
       [''],
       ['2. PASIVOS', '', totalPasivos.toString()],
-      ['2.1. PASIVOS CORRIENTES (CORTO PLAZO)', '', totalPasivosCorrientes.toString()],
-      ...pasivosCorrientes.map(a => [`"${a.code}"`, `"${a.name}"`, a.balance.toString()]),
-      ['2.2. PASIVOS NO CORRIENTES (LARGO PLAZO)', '', totalPasivosNoCorrientes.toString()],
-      ...pasivosNoCorrientes.map(a => [`"${a.code}"`, `"${a.name}"`, a.balance.toString()]),
+      ['2.1. PASIVOS CORRIENTES', '', totalPasivosCorrientes.toString()],
+      ...pasivosCorrientesRubros.flatMap(r => [
+        [`"${r.code}"`, `"${r.name}"`, r.total.toString()],
+        ...r.accounts.map(a => [`  "${a.code}"`, `  "${a.name}"`, a.balance.toString()])
+      ]),
+      ['2.2. PASIVOS NO CORRIENTES', '', totalPasivosNoCorrientes.toString()],
+      ...pasivosNoCorrientesRubros.flatMap(r => [
+        [`"${r.code}"`, `"${r.name}"`, r.total.toString()],
+        ...r.accounts.map(a => [`  "${a.code}"`, `  "${a.name}"`, a.balance.toString()])
+      ]),
       ['TOTAL PASIVOS', '', totalPasivos.toString()],
       [''],
       ['3. PATRIMONIO NETO', '', totalPatrimonioNeto.toString()],
-      ...patrimonio.map(a => [`"${a.code}"`, `"${a.name}"`, a.balance.toString()]),
-      ['3.9. RESULTADO DEL EJERCICIO (UTILIDAD / PÉRDIDA)', '', resultadoEjercicio.toString()],
+      ...patrimonioRubros.flatMap(r => [
+        [`"${r.code}"`, `"${r.name}"`, r.total.toString()],
+        ...r.accounts.map(a => [`  "${a.code}"`, `  "${a.name}"`, a.balance.toString()])
+      ]),
+      ['3.9. RESULTADO DEL EJERCICIO (GANANCIA/PÉRDIDA)', '', resultadoEjercicio.toString()],
       ['TOTAL PATRIMONIO NETO', '', totalPatrimonioNeto.toString()],
       ['TOTAL PASIVO + PATRIMONIO NETO', '', totalPasivoMasPatrimonio.toString()],
       ['DIFERENCIA CUADRATURA', '', diferenciaCuadratura.toString()]
@@ -413,53 +470,126 @@ export default function BalanceIFRSView({
     document.body.removeChild(link);
   };
 
+  // Renderizador de Rubros Padre con Cuentas Hijas
+  const renderRubroBlock = (rubro: IFRSParentRubro, colorTheme: 'indigo' | 'rose' | 'emerald') => {
+    const isExpanded = expandedRubros[rubro.id] ?? true;
+    const borderCls = colorTheme === 'indigo' ? 'border-indigo-100 hover:border-indigo-200' : colorTheme === 'rose' ? 'border-rose-100 hover:border-rose-200' : 'border-emerald-100 hover:border-emerald-200';
+    const bgHeaderCls = colorTheme === 'indigo' ? 'bg-indigo-50/70 text-indigo-950' : colorTheme === 'rose' ? 'bg-rose-50/70 text-rose-950' : 'bg-emerald-50/70 text-emerald-950';
+    const tagCls = colorTheme === 'indigo' ? 'bg-indigo-100 text-indigo-800' : colorTheme === 'rose' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800';
+
+    return (
+      <div key={rubro.id} className={`border rounded-lg overflow-hidden transition-all ${borderCls} mb-2 bg-white shadow-2xs`}>
+        {/* Cabecera del Rubro Padre */}
+        <div 
+          onClick={() => toggleRubro(rubro.id)}
+          className={`px-3 py-2 flex items-center justify-between cursor-pointer select-none transition-colors ${bgHeaderCls}`}
+        >
+          <div className="flex items-center gap-2">
+            <button className="text-slate-500 hover:text-slate-800 p-0.5">
+              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${tagCls}`}>
+              {rubro.code}
+            </span>
+            <span className="font-bold text-xs">
+              {rubro.name}
+            </span>
+            <span className="text-[10px] text-slate-500 font-sans font-normal">
+              ({rubro.accounts.length} {rubro.accounts.length === 1 ? 'cuenta' : 'cuentas'})
+            </span>
+          </div>
+
+          <div className="font-mono font-black text-xs">
+            ${rubro.total.toLocaleString('es-CL')}
+          </div>
+        </div>
+
+        {/* Cuentas Hijas Analíticas de 7 Dígitos */}
+        {isExpanded && showAccountDetails && rubro.accounts.length > 0 && (
+          <div className="divide-y divide-slate-100 bg-slate-50/40 text-[11px] font-mono">
+            {rubro.accounts.map(acc => (
+              <div key={acc.id} className="px-3 py-1.5 flex justify-between items-center hover:bg-slate-100/80 transition-colors pl-8">
+                <div className="flex items-center gap-2 truncate max-w-[320px]">
+                  <span className="text-slate-500 font-semibold">{acc.code}</span>
+                  <span className="font-sans text-slate-800 truncate">{acc.name}</span>
+                </div>
+                <div className="font-bold text-slate-900">
+                  ${acc.balance.toLocaleString('es-CL')}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 font-sans">
       {/* Header */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xl">⚖️</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">
-              Balance Clasificado IFRS / FECU
-            </h3>
+            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700">
+              <Scale className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">
+                Balance Clasificado IFRS / FECU
+              </h3>
+              <p className="text-xs text-slate-500">
+                Estado de Situación Financiera agrupado por Cuentas Padre IFRS ({company.name} - RUT: {company.rut})
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Estado de Situación Financiera clasificado en Corriente y No Corriente bajo estándar IFRS ({company.name} - RUT: {company.rut})
-          </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onOpenAuditor && (
+            <button
+              onClick={onOpenAuditor}
+              className="px-3 py-1.5 bg-indigo-900 hover:bg-indigo-950 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border border-indigo-700"
+              title="Auditar Balance Clasificado IFRS y emitir Dictamen Oficial"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-300" />
+              <span>Auditar Estados Financieros</span>
+            </button>
+          )}
+          <button
+            onClick={() => setShowAccountDetails(!showAccountDetails)}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+          >
+            {showAccountDetails ? <EyeOff className="w-3.5 h-3.5 text-slate-600" /> : <Eye className="w-3.5 h-3.5 text-slate-600" />}
+            <span>{showAccountDetails ? 'Ver Sólo Rubros Padre' : 'Mostrar Cuentas Analíticas'}</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"
           >
-            <span>📥</span>
+            <Download className="w-3.5 h-3.5 text-emerald-700" />
             <span>Exportar CSV / Excel</span>
           </button>
           <button
             onClick={() => window.print()}
             className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-lg border border-indigo-300 flex items-center gap-1.5 transition-colors shadow-2xs"
           >
-            <span>🖨️</span>
+            <Printer className="w-3.5 h-3.5 text-indigo-700" />
             <span>Imprimir</span>
           </button>
         </div>
       </div>
 
-      {/* Alerta de comprobantes excluidos por descuadratura */}
+      {/* Alerta de cuadratura */}
       {descuadradosCount > 0 && (
-        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl text-amber-900 text-xs flex items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-base">⚠️</span>
-            <div>
-              <span className="font-bold">Partida Doble Estricta (Normativa IFRS):</span> Se han excluido automáticamente <strong>{descuadradosCount}</strong> comprobante(s) que presentaban descuadre contable (Debe ≠ Haber) para garantizar un Estado de Situación Financiera 100% fidedigno y cuadrado.
-            </div>
+        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl text-amber-900 text-xs flex items-center gap-3 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+          <div>
+            <span className="font-bold">Partida Doble Estricta:</span> Se han excluido automáticamente <strong>{descuadradosCount}</strong> comprobante(s) con descuadre en el Libro Diario para garantizar un balance fidedigno bajo IFRS.
           </div>
         </div>
       )}
 
-      {/* Filters & Toggles */}
+      {/* Barra de Filtros */}
       <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-3 flex-wrap text-xs">
           <div className="flex items-center gap-1.5">
@@ -503,47 +633,57 @@ export default function BalanceIFRSView({
               onChange={(e) => setShowZeroBalances(e.target.checked)}
               className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
             />
-            <span>Mostrar cuentas con saldo $0</span>
+            <span>Mostrar rubros en $0</span>
           </label>
         </div>
 
-        {/* Cuadratura Indicator */}
-        <div className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border ${
-          isBalanced ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-rose-50 border-rose-300 text-rose-800 animate-pulse'
+        {/* Ecuación Fundamental del Balance IFRS */}
+        <div className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 border ${
+          isBalanced ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-rose-50 border-rose-300 text-rose-800'
         }`}>
-          <span>{isBalanced ? '✅ Cuadratura IFRS Exacta' : '⚠️ Descuadre Patrimonial'}</span>
+          <Scale className="w-4 h-4" />
+          <span>{isBalanced ? '✅ Ecuación IFRS Cuadrada: Activo = Pasivo + Patrimonio' : '⚠️ Descuadre Patrimonial'}</span>
           {!isBalanced && (
-            <span className="font-mono ml-1">Diff: ${diferenciaCuadratura.toLocaleString('es-CL')}</span>
+            <span className="font-mono ml-1 bg-rose-200 px-1.5 py-0.5 rounded text-[11px]">Diff: ${diferenciaCuadratura.toLocaleString('es-CL')}</span>
           )}
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
+      {/* KPI Cards de Resumen */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Total Activos</span>
-          <p className="text-xl font-black text-indigo-950 mt-0.5">${totalActivos.toLocaleString('es-CL')}</p>
-          <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-            <span>Corrientes: ${totalActivosCorrientes.toLocaleString('es-CL')}</span>
-            <span>No Corrientes: ${totalActivosNoCorrientes.toLocaleString('es-CL')}</span>
+        <div className="bg-white p-3.5 rounded-xl border border-indigo-200 shadow-2xs">
+          <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-wider text-indigo-700">
+            <span>1. Total Activos</span>
+            <span className="px-1.5 py-0.5 bg-indigo-50 rounded text-indigo-900 font-mono">1000000</span>
+          </div>
+          <p className="text-xl font-black text-indigo-950 mt-1 font-mono">${totalActivos.toLocaleString('es-CL')}</p>
+          <div className="flex justify-between text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 font-mono">
+            <span>Corr: ${totalActivosCorrientes.toLocaleString('es-CL')}</span>
+            <span>No Corr: ${totalActivosNoCorrientes.toLocaleString('es-CL')}</span>
           </div>
         </div>
 
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-rose-600">Total Pasivos</span>
-          <p className="text-xl font-black text-rose-950 mt-0.5">${totalPasivos.toLocaleString('es-CL')}</p>
-          <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-            <span>Corrientes: ${totalPasivosCorrientes.toLocaleString('es-CL')}</span>
-            <span>No Corrientes: ${totalPasivosNoCorrientes.toLocaleString('es-CL')}</span>
+        <div className="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs">
+          <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-wider text-rose-700">
+            <span>2. Total Pasivos</span>
+            <span className="px-1.5 py-0.5 bg-rose-50 rounded text-rose-900 font-mono">2000000</span>
+          </div>
+          <p className="text-xl font-black text-rose-950 mt-1 font-mono">${totalPasivos.toLocaleString('es-CL')}</p>
+          <div className="flex justify-between text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 font-mono">
+            <span>Corr: ${totalPasivosCorrientes.toLocaleString('es-CL')}</span>
+            <span>No Corr: ${totalPasivosNoCorrientes.toLocaleString('es-CL')}</span>
           </div>
         </div>
 
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">Total Patrimonio Neto</span>
-          <p className="text-xl font-black text-emerald-950 mt-0.5">${totalPatrimonioNeto.toLocaleString('es-CL')}</p>
-          <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-            <span>Resultado Ejercicio: ${resultadoEjercicio.toLocaleString('es-CL')}</span>
-            <span>Patrimonio Base: ${(totalPatrimonioNeto - resultadoEjercicio).toLocaleString('es-CL')}</span>
+        <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-2xs">
+          <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+            <span>3. Patrimonio Neto</span>
+            <span className="px-1.5 py-0.5 bg-emerald-50 rounded text-emerald-900 font-mono">2300000</span>
+          </div>
+          <p className="text-xl font-black text-emerald-950 mt-1 font-mono">${totalPatrimonioNeto.toLocaleString('es-CL')}</p>
+          <div className="flex justify-between text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 font-mono">
+            <span>Res. Ejercicio: ${resultadoEjercicio.toLocaleString('es-CL')}</span>
+            <span>Base: ${(totalPatrimonioNeto - resultadoEjercicio).toLocaleString('es-CL')}</span>
           </div>
         </div>
       </div>
@@ -554,144 +694,124 @@ export default function BalanceIFRSView({
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between">
           <div className="divide-y divide-slate-200 text-xs">
             <div className="bg-indigo-900 text-white p-3 font-bold uppercase tracking-wider text-xs flex justify-between items-center">
-              <span>1. ESTRUCTURA DE ACTIVOS (IFRS)</span>
-              <span className="font-mono text-sm">${totalActivos.toLocaleString('es-CL')}</span>
+              <span className="flex items-center gap-1.5">
+                <FolderTree className="w-4 h-4 text-indigo-300" />
+                <span>1. ESTRUCTURA DE ACTIVOS (IFRS)</span>
+              </span>
+              <span className="font-mono text-sm font-black">${totalActivos.toLocaleString('es-CL')}</span>
             </div>
 
             {/* 1.1 Activos Corrientes */}
             <div className="p-3 bg-slate-50/50">
-              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-200 pb-1">
-                <span className="text-indigo-900 uppercase font-black tracking-wide">1.1. ACTIVOS CORRIENTES (CIRCULANTES)</span>
-                <span className="font-mono text-indigo-900 font-bold">${totalActivosCorrientes.toLocaleString('es-CL')}</span>
+              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-indigo-200 pb-1.5">
+                <span className="text-indigo-900 uppercase font-black tracking-wide text-xs">1.1. ACTIVOS CORRIENTES (CIRCULANTES)</span>
+                <span className="font-mono text-indigo-900 font-bold text-xs">${totalActivosCorrientes.toLocaleString('es-CL')}</span>
               </div>
-              {activosCorrientes.length > 0 ? (
-                <div className="space-y-1.5 pl-2 font-mono">
-                  {activosCorrientes.map(acc => (
-                    <div key={acc.id} className="flex justify-between text-slate-600 hover:bg-slate-100/80 px-1.5 py-0.5 rounded">
-                      <span className="font-sans truncate max-w-[280px]">
-                        <span className="font-bold text-slate-800 mr-2 font-mono">{acc.code}</span>
-                        {acc.name}
-                      </span>
-                      <span className="font-bold text-slate-900">${acc.balance.toLocaleString('es-CL')}</span>
-                    </div>
-                  ))}
+              
+              {activosCorrientesRubros.length > 0 ? (
+                <div>
+                  {activosCorrientesRubros.map(rubro => renderRubroBlock(rubro, 'indigo'))}
                 </div>
               ) : (
-                <p className="text-slate-400 italic text-[11px] pl-2">Sin activos corrientes registrados</p>
+                <p className="text-slate-400 italic text-[11px] pl-2 py-2">Sin activos corrientes registrados en el período</p>
               )}
             </div>
 
             {/* 1.2 Activos No Corrientes */}
             <div className="p-3 bg-slate-50/50">
-              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-200 pb-1">
-                <span className="text-slate-800 uppercase font-black tracking-wide">1.2. ACTIVOS NO CORRIENTES (FIJOS E INTANGIBLES)</span>
-                <span className="font-mono text-slate-800 font-bold">${totalActivosNoCorrientes.toLocaleString('es-CL')}</span>
+              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-300 pb-1.5">
+                <span className="text-slate-800 uppercase font-black tracking-wide text-xs">1.2. ACTIVOS NO CORRIENTES (FIJOS E INTANGIBLES)</span>
+                <span className="font-mono text-slate-800 font-bold text-xs">${totalActivosNoCorrientes.toLocaleString('es-CL')}</span>
               </div>
-              {activosNoCorrientes.length > 0 ? (
-                <div className="space-y-1.5 pl-2 font-mono">
-                  {activosNoCorrientes.map(acc => (
-                    <div key={acc.id} className="flex justify-between text-slate-600 hover:bg-slate-100/80 px-1.5 py-0.5 rounded">
-                      <span className="font-sans truncate max-w-[280px]">
-                        <span className="font-bold text-slate-800 mr-2 font-mono">{acc.code}</span>
-                        {acc.name}
-                      </span>
-                      <span className="font-bold text-slate-900">${acc.balance.toLocaleString('es-CL')}</span>
-                    </div>
-                  ))}
+              
+              {activosNoCorrientesRubros.length > 0 ? (
+                <div>
+                  {activosNoCorrientesRubros.map(rubro => renderRubroBlock(rubro, 'indigo'))}
                 </div>
               ) : (
-                <p className="text-slate-400 italic text-[11px] pl-2">Sin activos no corrientes registrados</p>
+                <p className="text-slate-400 italic text-[11px] pl-2 py-2">Sin activos no corrientes registrados en el período</p>
               )}
             </div>
           </div>
 
-          <div className="bg-indigo-950 text-white p-3 flex justify-between items-center font-bold text-sm border-t border-indigo-900">
-            <span className="uppercase tracking-wide">TOTAL ACTIVOS:</span>
-            <span className="font-mono text-base font-black">${totalActivos.toLocaleString('es-CL')}</span>
+          <div className="bg-indigo-950 text-white p-3 font-black text-xs flex justify-between items-center uppercase tracking-wider">
+            <span>TOTAL ACTIVOS (1.1 + 1.2)</span>
+            <span className="font-mono text-base text-amber-300">${totalActivos.toLocaleString('es-CL')}</span>
           </div>
         </div>
 
-        {/* COLUMNA 2: PASIVOS Y PATRIMONIO */}
+        {/* COLUMNA 2: PASIVOS Y PATRIMONIO NETO */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between">
           <div className="divide-y divide-slate-200 text-xs">
             <div className="bg-slate-900 text-white p-3 font-bold uppercase tracking-wider text-xs flex justify-between items-center">
-              <span>2. PASIVOS Y PATRIMONIO NETO (IFRS)</span>
-              <span className="font-mono text-sm">${totalPasivoMasPatrimonio.toLocaleString('es-CL')}</span>
+              <span className="flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-emerald-300" />
+                <span>2. PASIVOS Y PATRIMONIO NETO (IFRS)</span>
+              </span>
+              <span className="font-mono text-sm font-black">${totalPasivoMasPatrimonio.toLocaleString('es-CL')}</span>
             </div>
 
             {/* 2.1 Pasivos Corrientes */}
             <div className="p-3 bg-slate-50/50">
-              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-200 pb-1">
-                <span className="text-rose-900 uppercase font-black tracking-wide">2.1. PASIVOS CORRIENTES (CORTO PLAZO)</span>
-                <span className="font-mono text-rose-900 font-bold">${totalPasivosCorrientes.toLocaleString('es-CL')}</span>
+              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-rose-200 pb-1.5">
+                <span className="text-rose-900 uppercase font-black tracking-wide text-xs">2.1. PASIVOS CORRIENTES (CORTO PLAZO)</span>
+                <span className="font-mono text-rose-900 font-bold text-xs">${totalPasivosCorrientes.toLocaleString('es-CL')}</span>
               </div>
-              {pasivosCorrientes.length > 0 ? (
-                <div className="space-y-1.5 pl-2 font-mono">
-                  {pasivosCorrientes.map(acc => (
-                    <div key={acc.id} className="flex justify-between text-slate-600 hover:bg-slate-100/80 px-1.5 py-0.5 rounded">
-                      <span className="font-sans truncate max-w-[280px]">
-                        <span className="font-bold text-slate-800 mr-2 font-mono">{acc.code}</span>
-                        {acc.name}
-                      </span>
-                      <span className="font-bold text-slate-900">${acc.balance.toLocaleString('es-CL')}</span>
-                    </div>
-                  ))}
+              
+              {pasivosCorrientesRubros.length > 0 ? (
+                <div>
+                  {pasivosCorrientesRubros.map(rubro => renderRubroBlock(rubro, 'rose'))}
                 </div>
               ) : (
-                <p className="text-slate-400 italic text-[11px] pl-2">Sin pasivos corrientes registrados</p>
+                <p className="text-slate-400 italic text-[11px] pl-2 py-2">Sin pasivos corrientes registrados en el período</p>
               )}
             </div>
 
             {/* 2.2 Pasivos No Corrientes */}
             <div className="p-3 bg-slate-50/50">
-              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-200 pb-1">
-                <span className="text-slate-800 uppercase font-black tracking-wide">2.2. PASIVOS NO CORRIENTES (LARGO PLAZO)</span>
-                <span className="font-mono text-slate-800 font-bold">${totalPasivosNoCorrientes.toLocaleString('es-CL')}</span>
+              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-slate-300 pb-1.5">
+                <span className="text-slate-800 uppercase font-black tracking-wide text-xs">2.2. PASIVOS NO CORRIENTES (LARGO PLAZO)</span>
+                <span className="font-mono text-slate-800 font-bold text-xs">${totalPasivosNoCorrientes.toLocaleString('es-CL')}</span>
               </div>
-              {pasivosNoCorrientes.length > 0 ? (
-                <div className="space-y-1.5 pl-2 font-mono">
-                  {pasivosNoCorrientes.map(acc => (
-                    <div key={acc.id} className="flex justify-between text-slate-600 hover:bg-slate-100/80 px-1.5 py-0.5 rounded">
-                      <span className="font-sans truncate max-w-[280px]">
-                        <span className="font-bold text-slate-800 mr-2 font-mono">{acc.code}</span>
-                        {acc.name}
-                      </span>
-                      <span className="font-bold text-slate-900">${acc.balance.toLocaleString('es-CL')}</span>
-                    </div>
-                  ))}
+              
+              {pasivosNoCorrientesRubros.length > 0 ? (
+                <div>
+                  {pasivosNoCorrientesRubros.map(rubro => renderRubroBlock(rubro, 'rose'))}
                 </div>
               ) : (
-                <p className="text-slate-400 italic text-[11px] pl-2">Sin pasivos de largo plazo registrados</p>
+                <p className="text-slate-400 italic text-[11px] pl-2 py-2">Sin pasivos no corrientes registrados en el período</p>
               )}
             </div>
 
             {/* 3. Patrimonio Neto */}
-            <div className="p-3 bg-emerald-50/40">
-              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-emerald-200 pb-1">
-                <span className="text-emerald-950 uppercase font-black tracking-wide">3. PATRIMONIO NETO</span>
-                <span className="font-mono text-emerald-950 font-bold">${totalPatrimonioNeto.toLocaleString('es-CL')}</span>
+            <div className="p-3 bg-emerald-50/30">
+              <div className="flex justify-between items-center font-bold text-slate-900 mb-2 border-b border-emerald-300 pb-1.5">
+                <span className="text-emerald-950 uppercase font-black tracking-wide text-xs">3. PATRIMONIO NETO</span>
+                <span className="font-mono text-emerald-950 font-bold text-xs">${totalPatrimonioNeto.toLocaleString('es-CL')}</span>
               </div>
-              <div className="space-y-1.5 pl-2 font-mono">
-                {patrimonio.map(acc => (
-                  <div key={acc.id} className="flex justify-between text-slate-600 hover:bg-slate-100/80 px-1.5 py-0.5 rounded">
-                    <span className="font-sans truncate max-w-[280px]">
-                      <span className="font-bold text-slate-800 mr-2 font-mono">{acc.code}</span>
-                      {acc.name}
-                    </span>
-                    <span className="font-bold text-slate-900">${acc.balance.toLocaleString('es-CL')}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between text-emerald-900 font-bold border-t border-emerald-200 pt-1">
-                  <span className="font-sans">Resultado del Ejercicio (Ganancia / Pérdida)</span>
-                  <span>${resultadoEjercicio.toLocaleString('es-CL')}</span>
+              
+              {patrimonioRubros.length > 0 && (
+                <div>
+                  {patrimonioRubros.map(rubro => renderRubroBlock(rubro, 'emerald'))}
                 </div>
+              )}
+
+              {/* Resultado del Ejercicio */}
+              <div className="border border-emerald-200 bg-white rounded-lg p-2.5 flex justify-between items-center mt-2 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">2304000</span>
+                  <span className="font-bold text-xs text-slate-900">Resultado del Ejercicio (Utilidad / Pérdida)</span>
+                </div>
+                <span className={`font-mono font-black text-xs ${resultadoEjercicio >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  ${resultadoEjercicio.toLocaleString('es-CL')}
+                </span>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-950 text-white p-3 flex justify-between items-center font-bold text-sm border-t border-slate-800">
-            <span className="uppercase tracking-wide">TOTAL PASIVO + PATRIMONIO:</span>
-            <span className="font-mono text-base font-black">${totalPasivoMasPatrimonio.toLocaleString('es-CL')}</span>
+          <div className="bg-slate-950 text-white p-3 font-black text-xs flex justify-between items-center uppercase tracking-wider">
+            <span>TOTAL PASIVO + PATRIMONIO (2 + 3)</span>
+            <span className="font-mono text-base text-amber-300">${totalPasivoMasPatrimonio.toLocaleString('es-CL')}</span>
           </div>
         </div>
       </div>

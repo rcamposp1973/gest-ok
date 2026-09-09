@@ -1,11 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
+import { printAndLogOfficialBook } from '../utils/folioService';
+import { ShieldCheck } from 'lucide-react';
 
 interface Balance8ColumnasViewProps {
+  studyId?: string;
   company: Company;
   vouchers: Voucher[];
   accounts: ChartOfAccount[];
   fiscalYears: FiscalPeriodYear[];
+  onOpenAuditor?: () => void;
 }
 
 interface BalanceRow {
@@ -23,15 +27,18 @@ interface BalanceRow {
 }
 
 export default function Balance8ColumnasView({
+  studyId,
   company,
   vouchers,
   accounts,
-  fiscalYears
+  fiscalYears,
+  onOpenAuditor
 }: Balance8ColumnasViewProps) {
   const [periodFilter, setPeriodFilter] = useState<string>('Todos');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [onlyWithMovements, setOnlyWithMovements] = useState<boolean>(true);
+  const [isPrintingOfficial, setIsPrintingOfficial] = useState<boolean>(false);
 
   // Handle date changes with cycle validation
   const handleDateFromChange = (date: string) => {
@@ -406,6 +413,108 @@ export default function Balance8ColumnasView({
     window.print();
   };
 
+  const handlePrintOfficialBook = async () => {
+    if (rows.length === 0) {
+      alert('No hay cuentas en el balance para emitir el Balance Oficial.');
+      return;
+    }
+
+    setIsPrintingOfficial(true);
+    try {
+      const columns = [
+        'Código',
+        'Cuenta Contable',
+        'Débitos ($)',
+        'Créditos ($)',
+        'S. Deudor ($)',
+        'S. Acreedor ($)',
+        'Activo ($)',
+        'Pasivo ($)',
+        'Pérdida ($)',
+        'Ganancia ($)'
+      ];
+
+      const data: string[][] = rows.map(r => [
+        r.code,
+        r.name,
+        r.sumDebit > 0 ? r.sumDebit.toLocaleString('es-CL') : '0',
+        r.sumCredit > 0 ? r.sumCredit.toLocaleString('es-CL') : '0',
+        r.balDebit > 0 ? r.balDebit.toLocaleString('es-CL') : '0',
+        r.balCredit > 0 ? r.balCredit.toLocaleString('es-CL') : '0',
+        r.invAsset > 0 ? r.invAsset.toLocaleString('es-CL') : '0',
+        r.invLiability > 0 ? r.invLiability.toLocaleString('es-CL') : '0',
+        r.resLoss > 0 ? r.resLoss.toLocaleString('es-CL') : '0',
+        r.resGain > 0 ? r.resGain.toLocaleString('es-CL') : '0'
+      ]);
+
+      // Fila de Subtotales
+      data.push([
+        '',
+        'SUBTOTALES',
+        subtotals.sumDebit.toLocaleString('es-CL'),
+        subtotals.sumCredit.toLocaleString('es-CL'),
+        subtotals.balDebit.toLocaleString('es-CL'),
+        subtotals.balCredit.toLocaleString('es-CL'),
+        subtotals.invAsset.toLocaleString('es-CL'),
+        subtotals.invLiability.toLocaleString('es-CL'),
+        subtotals.resLoss.toLocaleString('es-CL'),
+        subtotals.resGain.toLocaleString('es-CL')
+      ]);
+
+      // Fila de Resultado del Ejercicio
+      data.push([
+        '',
+        `RESULTADO DEL EJERCICIO (${result.isUtilidad ? 'UTILIDAD' : 'PÉRDIDA'})`,
+        '',
+        '',
+        '',
+        '',
+        result.invAsset > 0 ? result.invAsset.toLocaleString('es-CL') : '',
+        result.invLiability > 0 ? result.invLiability.toLocaleString('es-CL') : '',
+        result.resLoss > 0 ? result.resLoss.toLocaleString('es-CL') : '',
+        result.resGain > 0 ? result.resGain.toLocaleString('es-CL') : ''
+      ]);
+
+      // Fila de Totales Iguales
+      data.push([
+        '',
+        'TOTALES IGUALES',
+        finalTotals.sumDebit.toLocaleString('es-CL'),
+        finalTotals.sumCredit.toLocaleString('es-CL'),
+        finalTotals.balDebit.toLocaleString('es-CL'),
+        finalTotals.balCredit.toLocaleString('es-CL'),
+        finalTotals.invAsset.toLocaleString('es-CL'),
+        finalTotals.invLiability.toLocaleString('es-CL'),
+        finalTotals.resLoss.toLocaleString('es-CL'),
+        finalTotals.resGain.toLocaleString('es-CL')
+      ]);
+
+      const effectiveStudyId = studyId || 'default-study';
+      const resultBook = await printAndLogOfficialBook(effectiveStudyId, company, {
+        bookType: 'BALANCE_8_COLUMNAS',
+        title: 'BALANCE GENERAL TRIBUTARIO DE 8 COLUMNAS',
+        subtitle: `Período: ${periodFilter !== 'Todos' ? periodFilter : 'Ejercicio Completo'} - Formato Oficial SII (Res. Hojas Sueltas)`,
+        columns,
+        data,
+        orientation: 'landscape',
+        userNotes: `Emisión de Balance General Oficial timbrado (${rows.length} cuentas procesadas).`
+      });
+
+      alert(
+        `✅ Balance Oficial Emitido con Éxito\n\n` +
+        `• Folios SII Utilizados: N° ${resultBook.startFolio} al N° ${resultBook.endFolio} (${resultBook.pagesCount} página${resultBook.pagesCount > 1 ? 's' : ''})\n` +
+        `• Resolución SII: N° ${resultBook.resolutionNumber} del ${resultBook.resolutionDate}\n` +
+        `• Formato: Crystal Reports Oficial Horizontal con Cuadre y Timbraje Autorizado.\n` +
+        `• El consumo de folios ha sido registrado en el Control de Folios SII.`
+      );
+    } catch (err: any) {
+      console.error("Error generating official balance:", err);
+      alert('Error al generar Balance Oficial: ' + (err.message || err));
+    } finally {
+      setIsPrintingOfficial(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -429,6 +538,25 @@ export default function Balance8ColumnasView({
             <span>{isFullyBalanced ? '✓ Balance Cuadrado' : '⚠️ Descuadre Detectado'}</span>
           </div>
 
+          {onOpenAuditor && (
+            <button
+              onClick={onOpenAuditor}
+              className="px-3 py-1.5 bg-indigo-900 hover:bg-indigo-950 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border border-indigo-700"
+              title="Auditar este Balance de 8 Columnas y emitir Dictamen Oficial"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-300" />
+              <span>Auditar Estados Financieros</span>
+            </button>
+          )}
+          <button
+            onClick={handlePrintOfficialBook}
+            disabled={isPrintingOfficial}
+            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            title="Emisión de Balance General de 8 Columnas con numeración correlativa y folios timbrados por el SII"
+          >
+            <span>🖨️</span>
+            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Balance Oficial (Folios SII)'}</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"

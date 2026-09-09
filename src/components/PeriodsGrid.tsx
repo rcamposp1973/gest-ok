@@ -29,6 +29,8 @@ const MONTH_NAMES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 
+const AVAILABLE_YEARS = [2028, 2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
+
 export default function PeriodsGrid({
   selectedYear,
   setSelectedYear,
@@ -51,12 +53,27 @@ export default function PeriodsGrid({
     return fiscalYears.find(f => f.id === String(selectedYear));
   }, [fiscalYears, selectedYear]);
 
-  // Lista unificada de períodos (12 meses por año)
-  const periodRows = useMemo(() => {
-    if (!currentFy || !currentFy.months) return [];
+  // Si no existe el registro del año fiscal seleccionado, crearlo automáticamente
+  React.useEffect(() => {
+    if (!currentFy) {
+      onEnsureFiscalYear(selectedYear);
+    }
+  }, [selectedYear, currentFy, onEnsureFiscalYear]);
 
-    return Object.entries(currentFy.months).map(([mNumStr, status]) => {
-      const mNum = parseInt(mNumStr);
+  // Resetear filtro de año al cambiar de año fiscal activo
+  React.useEffect(() => {
+    setColumnFilters(prev => ({ ...prev, year: 'ALL' }));
+  }, [selectedYear]);
+
+  // Lista unificada de períodos (12 meses por año garantizados)
+  const periodRows = useMemo(() => {
+    const monthsData = currentFy?.months || {};
+
+    return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(mNum => {
+      // Por defecto en nuevo año solo mes 1 (Enero) abierto, resto cerrado salvo definición explícita
+      const status: 'Abierto' | 'Cerrado' = monthsData[mNum] !== undefined
+        ? monthsData[mNum]
+        : (mNum === 1 ? 'Abierto' : 'Cerrado');
       const periodCode = `${selectedYear}-${String(mNum).padStart(2, '0')}`;
       const monthName = MONTH_NAMES[mNum] || `Mes ${mNum}`;
 
@@ -76,7 +93,7 @@ export default function PeriodsGrid({
         monthNum: mNum,
         monthName,
         periodCode,
-        status: status as 'Abierto' | 'Cerrado',
+        status,
         voucherCount,
         rcvCount
       };
@@ -159,7 +176,7 @@ export default function PeriodsGrid({
               }}
               className="bg-white border border-slate-300 px-2 py-1 rounded text-xs font-bold font-mono text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
+              {AVAILABLE_YEARS.map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>
@@ -211,7 +228,7 @@ export default function PeriodsGrid({
                     className="w-full bg-slate-950 border border-slate-700 text-slate-200 px-1 py-0.5 rounded text-[10px] outline-none font-mono focus:ring-1 focus:ring-emerald-400"
                   >
                     <option value="ALL">Todos</option>
-                    {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
+                    {AVAILABLE_YEARS.map(y => (
                       <option key={y} value={String(y)}>{y}</option>
                     ))}
                   </select>

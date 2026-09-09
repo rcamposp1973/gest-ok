@@ -450,17 +450,17 @@ export default function CargaMasivaComprobantesView({
       const rawType = getSafeCellString(row, colIdxMap.vType);
       const vType = (['Ingreso', 'Egreso', 'Traspaso'].includes(rawType) ? rawType : 'Traspaso') as 'Ingreso' | 'Egreso' | 'Traspaso';
       
-      const vGloss = getSafeCellString(row, colIdxMap.vGloss) || 'Comprobante Importado';
+      const vGloss = (getSafeCellString(row, colIdxMap.vGloss) || 'COMPROBANTE IMPORTADO').toUpperCase();
 
-      const auxRut = getSafeCellString(row, colIdxMap.auxRut);
-      const auxName = getSafeCellString(row, colIdxMap.auxName);
-      const lineGloss = getSafeCellString(row, colIdxMap.lineGloss) || vGloss;
+      const auxRut = getSafeCellString(row, colIdxMap.auxRut).toUpperCase();
+      const auxName = getSafeCellString(row, colIdxMap.auxName).toUpperCase();
+      const lineGloss = (getSafeCellString(row, colIdxMap.lineGloss) || vGloss).toUpperCase();
       
       // Combine document type and number if split across columns
-      const docTypeVal = getSafeCellString(row, colIdxMap.docType);
-      const docNumVal = getSafeCellString(row, colIdxMap.docNum);
-      const refDteVal = getSafeCellString(row, colIdxMap.refDte);
-      const bankDocRefVal = getSafeCellString(row, colIdxMap.bankDocRef);
+      const docTypeVal = getSafeCellString(row, colIdxMap.docType).toUpperCase();
+      const docNumVal = getSafeCellString(row, colIdxMap.docNum).toUpperCase();
+      const refDteVal = getSafeCellString(row, colIdxMap.refDte).toUpperCase();
+      const bankDocRefVal = getSafeCellString(row, colIdxMap.bankDocRef).toUpperCase();
 
       let refDte = refDteVal;
       if (!refDte) {
@@ -473,11 +473,11 @@ export default function CargaMasivaComprobantesView({
         } else if (bankDocRefVal) {
           refDte = bankDocRefVal;
         }
-      } else if (docTypeVal && !refDte.toLowerCase().includes(docTypeVal.toLowerCase())) {
+      } else if (docTypeVal && !refDte.includes(docTypeVal)) {
         refDte = `${docTypeVal} ${refDte}`;
       }
 
-      const costCenter = getSafeCellString(row, colIdxMap.costCenter);
+      const costCenter = getSafeCellString(row, colIdxMap.costCenter).toUpperCase();
       let bankDocRef = bankDocRefVal;
       if (!bankDocRef && (docNumVal || refDte)) {
         bankDocRef = docNumVal || refDte;
@@ -486,16 +486,16 @@ export default function CargaMasivaComprobantesView({
       const rawDueDateCell = colIdxMap.dueDate >= 0 ? row[colIdxMap.dueDate] : null;
       const dueDate = rawDueDateCell ? parseDateToYYYYMMDD(rawDueDateCell) : '';
 
-      const expenseItem = getSafeCellString(row, colIdxMap.expenseItem);
-      const project = getSafeCellString(row, colIdxMap.project);
-      const product = getSafeCellString(row, colIdxMap.product);
+      const expenseItem = getSafeCellString(row, colIdxMap.expenseItem).toUpperCase();
+      const project = getSafeCellString(row, colIdxMap.project).toUpperCase();
+      const product = getSafeCellString(row, colIdxMap.product).toUpperCase();
 
       // Custom attributes extracted from row
       const customAnalyses: { [key: string]: string } = {};
       Object.entries(customColsMap).forEach(([colName, colIdx]) => {
         if (colIdx >= 0 && row[colIdx] !== undefined) {
           const val = getSafeCellString(row, colIdx);
-          if (val) customAnalyses[colName] = val;
+          if (val) customAnalyses[colName.toUpperCase()] = val.toUpperCase();
         }
       });
 
@@ -504,14 +504,14 @@ export default function CargaMasivaComprobantesView({
       const isMissing = !matchedAccount && Boolean(accCode);
 
       if (isMissing) {
-        missingSet.add(accCode);
+        missingSet.add(accCode.toUpperCase());
       }
 
       const voucherLine: VoucherLine & { isAccountMissing?: boolean; requiredErrors?: string[] } = {
         id: `line_${i}`,
         accountId: matchedAccount ? matchedAccount.id : `acc_${accCode}`,
-        accountCode: accCode || 'SIN_CUENTA',
-        accountName: matchedAccount ? matchedAccount.name : '❌ CUENTA NO CONFIGURADA EN PLAN DE CUENTAS',
+        accountCode: (accCode || 'SIN_CUENTA').toUpperCase(),
+        accountName: matchedAccount ? matchedAccount.name.toUpperCase() : '❌ CUENTA NO CONFIGURADA EN PLAN DE CUENTAS',
         debit,
         credit,
         auxiliaryRut: auxRut,

@@ -158,6 +158,12 @@ export default function PlanDeCuentasGrid({ studyId, company, onRefreshCompany }
 
   // Modificación de una celda en una fila
   const handleCellChange = (id: string, field: string, value: any) => {
+    // Forzar mayúsculas para campos de texto (código, nombre, IFRS, moneda, etc.)
+    let formattedVal = value;
+    if (typeof value === 'string' && ['name', 'code', 'codigoIFRS', 'moneda'].includes(field)) {
+      formattedVal = value.toUpperCase();
+    }
+
     setAccounts(prev => prev.map(acc => {
       if (acc.id !== id) return acc;
       const updated = { ...acc };
@@ -166,10 +172,10 @@ export default function PlanDeCuentasGrid({ studyId, company, onRefreshCompany }
         const colKey = field.replace('custom_', '');
         updated.customAttributes = {
           ...(updated.customAttributes || {}),
-          [colKey]: value
+          [colKey]: typeof value === 'string' ? value.toUpperCase() : value
         };
       } else {
-        (updated as any)[field] = value;
+        (updated as any)[field] = formattedVal;
 
         // Auto-sincronizar type si cambia blce8Columnas
         if (field === 'blce8Columnas') {
@@ -341,7 +347,7 @@ export default function PlanDeCuentasGrid({ studyId, company, onRefreshCompany }
             name: acc.name.trim().toUpperCase(),
             type: acc.type || inferTypeFromBalance(acc.blce8Columnas || 'ACTIVO', acc.code),
             isImputable: acc.isImputable ?? true,
-            moneda: acc.moneda || 'CLP',
+            moneda: (acc.moneda || 'CLP').toUpperCase(),
             requiereAuxiliarRUT: !!acc.requiereAuxiliarRUT,
             requiereConciliacionBancaria: !!acc.requiereConciliacionBancaria,
             requiereDocumento: !!acc.requiereDocumento,
@@ -354,7 +360,7 @@ export default function PlanDeCuentasGrid({ studyId, company, onRefreshCompany }
             requiereCMonetaria: !!acc.requiereCMonetaria,
             requiereDifCambio: !!acc.requiereDifCambio,
             blce8Columnas: (acc.blce8Columnas || 'ACTIVO').toUpperCase(),
-            codigoIFRS: (acc.codigoIFRS || '').trim(),
+            codigoIFRS: (acc.codigoIFRS || '').trim().toUpperCase(),
             customAttributes: acc.customAttributes || {},
             estado: acc.estado || 'Activo',
             creationMode: acc.creationMode || (isTempId ? (acc.id.startsWith('imported_') ? 'IMPORTACION_MASIVA' : 'MANUAL') : 'MANUAL'),

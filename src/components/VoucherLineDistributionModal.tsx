@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FormattedAmountInput } from './FormattedAmountInput';
 import {
   VoucherLine,
   ChartOfAccount,
@@ -67,6 +68,15 @@ export default function VoucherLineDistributionModal({
 
   const [mode, setMode] = useState<'percentage' | 'amount'>('percentage');
   const [subLines, setSubLines] = useState<DistributionSubLine[]>([]);
+
+  // Ordenar Centros de Costo e Ítems de Gasto alfabéticamente por código
+  const sortedCostCenters = useMemo(() => {
+    return [...costCenters].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [costCenters]);
+
+  const sortedExpenseItems = useMemo(() => {
+    return [...expenseItems].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [expenseItems]);
 
   // Initialize with 2 split lines
   useEffect(() => {
@@ -247,14 +257,14 @@ export default function VoucherLineDistributionModal({
         accountName: sl.accountName,
         debit: isDebit ? sl.amount : 0,
         credit: !isDebit ? sl.amount : 0,
-        costCenter: sl.costCenter,
-        expenseItem: sl.expenseItem,
-        project: sl.project,
-        product: sl.product,
-        auxiliaryRut: sl.auxiliaryRut,
-        auxiliaryName: sl.auxiliaryName,
-        documentRef: sl.documentRef,
-        gloss: sl.gloss || sourceLine.gloss || 'Distribución de costo',
+        costCenter: sl.costCenter ? sl.costCenter.toUpperCase() : undefined,
+        expenseItem: sl.expenseItem ? sl.expenseItem.toUpperCase() : undefined,
+        project: sl.project ? sl.project.toUpperCase() : undefined,
+        product: sl.product ? sl.product.toUpperCase() : undefined,
+        auxiliaryRut: sl.auxiliaryRut ? sl.auxiliaryRut.toUpperCase() : undefined,
+        auxiliaryName: sl.auxiliaryName ? sl.auxiliaryName.toUpperCase() : undefined,
+        documentRef: sl.documentRef ? sl.documentRef.toUpperCase() : undefined,
+        gloss: (sl.gloss || sourceLine.gloss || 'DISTRIBUCION DE COSTO').toUpperCase(),
         customAnalyses: sl.customAnalyses
       };
     });
@@ -450,12 +460,11 @@ export default function VoucherLineDistributionModal({
 
                     {/* Amount Input */}
                     <td className="p-2 text-right">
-                      <input
-                        type="number"
-                        min="0"
-                        value={sub.amount}
-                        onChange={e => handleAmountChange(idx, parseFloat(e.target.value) || 0)}
-                        className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-mono font-bold text-indigo-900 focus:ring-1 focus:ring-indigo-500"
+                      <FormattedAmountInput
+                        value={sub.amount || 0}
+                        placeholder="0"
+                        onChange={val => handleAmountChange(idx, val)}
+                        className="border border-slate-300 p-1.5 w-full rounded text-xs text-right font-mono font-bold text-indigo-900 focus:ring-1 focus:ring-indigo-500 bg-white"
                       />
                     </td>
 
@@ -473,24 +482,24 @@ export default function VoucherLineDistributionModal({
                           className="border border-slate-300 p-1 w-full rounded text-xs bg-white font-medium focus:ring-1 focus:ring-indigo-500"
                         >
                           <option value="">-- Sin Centro Costo --</option>
-                          {costCenters.map(cc => (
+                          {sortedCostCenters.map(cc => (
                             <option key={cc.id} value={cc.code}>
                               [{cc.code}] {cc.name}
                             </option>
                           ))}
                           <option value="CUSTOM">Otro / Escribir manual...</option>
                         </select>
-                        {!costCenters.some(c => c.code === sub.costCenter) && sub.costCenter !== '' && (
+                        {!sortedCostCenters.some(c => c.code === sub.costCenter) && sub.costCenter !== '' && (
                           <input
                             type="text"
                             placeholder="Escriba CC..."
                             value={sub.costCenter}
                             onChange={e => {
                               const updated = [...subLines];
-                              updated[idx] = { ...updated[idx], costCenter: e.target.value };
+                              updated[idx] = { ...updated[idx], costCenter: e.target.value.toUpperCase() };
                               setSubLines(updated);
                             }}
-                            className="border border-slate-300 p-1 w-full rounded text-[11px] font-mono"
+                            className="border border-slate-300 p-1 w-full rounded text-[11px] font-mono uppercase"
                           />
                         )}
                       </div>
@@ -500,7 +509,7 @@ export default function VoucherLineDistributionModal({
                     <td className="p-2">
                       <div className="space-y-1">
                         <select
-                          value={expenseItems.some(item => item.code === sub.expenseItem) ? sub.expenseItem : (sub.expenseItem ? 'CUSTOM' : '')}
+                          value={sortedExpenseItems.some(item => item.code === sub.expenseItem) ? sub.expenseItem : (sub.expenseItem ? 'CUSTOM' : '')}
                           onChange={e => {
                             const val = e.target.value;
                             const updated = [...subLines];
@@ -510,24 +519,24 @@ export default function VoucherLineDistributionModal({
                           className="border border-slate-300 p-1 w-full rounded text-xs bg-white font-medium focus:ring-1 focus:ring-indigo-500"
                         >
                           <option value="">-- Sin Ítem Gasto --</option>
-                          {expenseItems.map(exp => (
+                          {sortedExpenseItems.map(exp => (
                             <option key={exp.id} value={exp.code}>
                               [{exp.code}] {exp.name}
                             </option>
                           ))}
                           <option value="CUSTOM">Otro / Escribir manual...</option>
                         </select>
-                        {!expenseItems.some(item => item.code === sub.expenseItem) && sub.expenseItem !== '' && (
+                        {!sortedExpenseItems.some(item => item.code === sub.expenseItem) && sub.expenseItem !== '' && (
                           <input
                             type="text"
                             placeholder="Escriba Ítem Gasto..."
                             value={sub.expenseItem}
                             onChange={e => {
                               const updated = [...subLines];
-                              updated[idx] = { ...updated[idx], expenseItem: e.target.value };
+                              updated[idx] = { ...updated[idx], expenseItem: e.target.value.toUpperCase() };
                               setSubLines(updated);
                             }}
-                            className="border border-slate-300 p-1 w-full rounded text-[11px] font-mono"
+                            className="border border-slate-300 p-1 w-full rounded text-[11px] font-mono uppercase"
                           />
                         )}
                       </div>

@@ -72,17 +72,17 @@ export default function ExcelImportCenterModal({
       ].join('\n');
     } else if (type === 'clientes') {
       filename = `Plantilla_Clientes_${company.rut}.csv`;
-      headers = 'RUT;RazonSocial;Rol;Email;Telefono;Banco;TipoCuenta;NumeroCuenta;CodigoCuentaCliente;CodigoCuentaIngreso;Estado';
+      headers = 'RUT;RazonSocial;GlosaSugerida;Rol;Email;Telefono;Banco;TipoCuenta;NumeroCuenta;CodigoCuentaCliente;CodigoCuentaIngreso;Estado';
       sampleRows = [
-        '76123456-7;DISTRIBUIDORA Y COMERCIAL NORTE SPA;Deudor;contacto@disnorte.cl;+56912345678;Banco de Chile;Corriente;1234567890;1.1.02.001;4.1.01;Activo',
-        '77987654-3;AGRICOLA SAN ISIDRO LIMITADA;Deudor;pagos@sanisidro.cl;+56987654321;Banco Santander;Vista;987654321;1.1.02.001;4.1.01;Activo'
+        '76123456-7;DISTRIBUIDORA Y COMERCIAL NORTE SPA;Ventas y Distribución Mayorista;Deudor;contacto@disnorte.cl;+56912345678;Banco de Chile;Corriente;1234567890;1.1.02.001;4.1.01;Activo',
+        '77987654-3;AGRICOLA SAN ISIDRO LIMITADA;Venta de Productos Agrícolas;Deudor;pagos@sanisidro.cl;+56987654321;Banco Santander;Vista;987654321;1.1.02.001;4.1.01;Activo'
       ].join('\n');
     } else if (type === 'proveedores') {
       filename = `Plantilla_Proveedores_${company.rut}.csv`;
-      headers = 'RUT;RazonSocial;Rol;Email;Telefono;Banco;TipoCuenta;NumeroCuenta;CodigoCuentaProveedor;CodigoCuentaGasto;Estado';
+      headers = 'RUT;RazonSocial;GlosaSugerida;Rol;Email;Telefono;Banco;TipoCuenta;NumeroCuenta;CodigoCuentaProveedor;CodigoCuentaGasto;Estado';
       sampleRows = [
-        '76543210-K;SERVICIOS INDUSTRIALES DEL SUR SPA;Acreedor;facturas@serviciosur.cl;+56998765432;Banco Estado;Corriente;456789123;2.1.01.001;5.2.01;Activo',
-        '79111222-3;IMPORTADORA GLOBAL CHILE S.A.;Acreedor;cobranzas@globalchile.com;+56223334444;Banco BCI;Corriente;888777666;2.1.01.001;5.1.01;Activo'
+        '76543210-K;SERVICIOS INDUSTRIALES DEL SUR SPA;Servicios de Mantención y Soporte Técnico;Acreedor;facturas@serviciosur.cl;+56998765432;Banco Estado;Corriente;456789123;2.1.01.001;5.2.01;Activo',
+        '79111222-3;IMPORTADORA GLOBAL CHILE S.A.;Adquisición de Insumos y Repuestos;Acreedor;cobranzas@globalchile.com;+56223334444;Banco BCI;Corriente;888777666;2.1.01.001;5.1.01;Activo'
       ].join('\n');
     } else if (type === 'comprobantes') {
       filename = `Plantilla_Comprobantes_Contables_${company.rut}.csv`;
@@ -237,7 +237,24 @@ export default function ExcelImportCenterModal({
 
             for (let i = 0; i < rows.length; i++) {
               const row = rows[i];
-              const [rut, name, roleStr, email, phone, banco, tipoCtaStr, numCta, accCode1, accCode2, estadoStr] = row;
+              let rut = '';
+              let name = '';
+              let defaultGloss = '';
+              let roleStr = '';
+              let email = '';
+              let phone = '';
+              let banco = '';
+              let tipoCtaStr = '';
+              let numCta = '';
+              let accCode1 = '';
+              let accCode2 = '';
+              let estadoStr = '';
+
+              if (row.length >= 12) {
+                [rut, name, defaultGloss, roleStr, email, phone, banco, tipoCtaStr, numCta, accCode1, accCode2, estadoStr] = row;
+              } else {
+                [rut, name, roleStr, email, phone, banco, tipoCtaStr, numCta, accCode1, accCode2, estadoStr] = row;
+              }
 
               updateProgress({
                 current: i + 1,
@@ -269,6 +286,7 @@ export default function ExcelImportCenterModal({
               const auxPayload: Omit<Auxiliary, 'id'> = {
                 rut: rut.trim(),
                 name: name.trim(),
+                defaultGloss: defaultGloss ? defaultGloss.trim() : '',
                 role,
                 email: email || '',
                 phone: phone || '',

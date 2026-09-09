@@ -35,8 +35,22 @@ import {
   Layers, 
   ExternalLink,
   Download,
-  Award
+  Award,
+  Image as ImageIcon,
+  Loader2,
+  Eye,
+  Grid,
+  X,
+  Archive
 } from 'lucide-react';
+import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
+import { 
+  renderSlideToCanvas, 
+  getSlideDataUrl, 
+  downloadSlidePNGDirect, 
+  SLIDES_METADATA 
+} from '../utils/slideCanvasRenderer';
 import { APP_VERSION } from '../constants/version';
 import socialSquareImg from '../assets/images/gestok_social_square_1788373265590.jpg';
 import storyReelImg from '../assets/images/gestok_story_reel_1788373282275.jpg';
@@ -56,7 +70,12 @@ export default function PresentationView() {
   const [activeTab, setActiveTab] = useState<'whatsapp' | 'instagram' | 'facebook' | 'videotour'>('whatsapp');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const currentSlideCardRef = useRef<HTMLDivElement>(null);
+  const offscreenSlidesContainerRef = useRef<HTMLDivElement>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<string>('');
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
 
   // ESTADO INSTAGRAM: Selector de Carrusel (1:1) vs Reel/Story (9:16)
   const [instagramFormat, setInstagramFormat] = useState<'carousel' | 'reel'>('carousel');
@@ -76,27 +95,27 @@ export default function PresentationView() {
     {
       id: 1,
       durationSeconds: 6,
-      badge: "EL PROBLEMA",
-      hookText: "¿SIGUES DIGITANDO FACTURAS A MANO EN 2026?",
-      subText: "Softland y Nubox te cobran por todo y siguen atrapados en interfaces lentas.",
-      narration: "¿Sigues perdiendo horas digitando facturas y cuadrando cartolas a mano en tu estudio contable? Es momento de cambiar.",
-      highlightWords: ["DIGITANDO", "MANO", "CAMBIAR"]
+      badge: "EL DOLOR ACTUAL",
+      hookText: "¿SIGUES DIGITANDO FACTURAS A MANO?",
+      subText: "Los sistemas tradicionales te cobran por todo y siguen atrapados en interfaces lentas.",
+      narration: "¿Sigues perdiendo horas digitando facturas y cuadrando cartolas a mano en tu estudio contable? Es momento de automatizar.",
+      highlightWords: ["DIGITANDO", "MANO", "AUTOMATIZAR"]
     },
     {
       id: 2,
       durationSeconds: 7,
-      badge: "FACTURACIÓN SII",
-      hookText: "CONEXIÓN DUAL OFICIAL CON EL SII",
-      subText: "Emite Facturas 33/34 y NC 61 con XML y Timbre TED sin entrar a sii.cl.",
-      narration: "Gest_OK se conecta directamente al SII con credenciales duales de la empresa y del representante legal.",
-      highlightWords: ["CONEXIÓN DUAL", "SII", "TIMBRE TED"]
+      badge: "RESCATE RCV SEGURO",
+      hookText: "CONEXIÓN Y RESCATE RCV DESDE EL SII",
+      subText: "Rescata automáticamente compras, ventas y boletas BHE con total seguridad y confidencialidad.",
+      narration: "Conexión directa para rescatar tus registros de compras, ventas y boletas de honorarios con los más altos estándares de seguridad.",
+      highlightWords: ["RESCATE RCV", "SII", "SEGURIDAD"]
     },
     {
       id: 3,
       durationSeconds: 7,
       badge: "RCV & HONORARIOS",
       hookText: "CARGA MASIVA RCV EN 2 SEGUNDOS",
-      subText: "Arrastra los CSVs del SII: cero duplicados y creación automática de auxiliares.",
+      subText: "Importa los archivos del SII: cero duplicados y creación automática de auxiliares.",
       narration: "Arrastra tus compras, ventas y boletas de honorarios. El sistema valida duplicados y crea los asientos solos.",
       highlightWords: ["2 SEGUNDOS", "CERO DUPLICADOS", "ASIENTOS SOLOS"]
     },
@@ -105,15 +124,15 @@ export default function PresentationView() {
       durationSeconds: 7,
       badge: "BANCO Y TESORERÍA",
       hookText: "CONCILIACIÓN BANCARIA EN 1 CLIC",
-      subText: "Cruza cartolas de Santander, Chile o BCI contra facturas pendientes de cobro.",
-      narration: "Sube la cartola de cualquier banco chileno y concilia tus facturas en un solo clic manteniendo el banco cuadrado.",
-      highlightWords: ["1 CLIC", "SANTANDER", "BANCO CUADRADO"]
+      subText: "Cruza cartolas de cualquier banco contra tus facturas pendientes.",
+      narration: "Sube la cartola de cualquier banco y concilia tus facturas en un solo clic manteniendo el banco siempre cuadrado.",
+      highlightWords: ["1 CLIC", "CUALQUIER BANCO", "BANCO CUADRADO"]
     },
     {
       id: 5,
       durationSeconds: 6,
-      badge: "CIERRES & F29",
-      hookText: "F29 & BALANCE IFRS AUTOMÁTICOS",
+      badge: "CIERRES Y F29",
+      hookText: "F29 Y BALANCE IFRS AUTOMÁTICOS",
       subText: "Exigibilidad estricta: imposible guardar con descuadres de RUT o Centro de Costos.",
       narration: "Obtén tu Formulario 29 mensual y el Balance de 8 Columnas clasificado sin trasnoches ni errores.",
       highlightWords: ["F29 AUTOMÁTICO", "BALANCE IFRS", "SIN ERRORES"]
@@ -123,9 +142,9 @@ export default function PresentationView() {
       durationSeconds: 6,
       badge: "OFERTA LANZAMIENTO",
       hookText: "15 DÍAS DE PRUEBA GRATIS + MIGRACIÓN",
-      subText: "Súmate al Programa de Estudios Fundadores sin tarjeta de crédito.",
-      narration: "Pruébalo gratis por 15 días con migración asistida de tus datos. Agenda tu demo en gestok.cl.",
-      highlightWords: ["15 DÍAS GRATIS", "MIGRACIÓN", "GESTOK.CL"]
+      subText: "Súmate al Programa de Estudios Fundadores con migración asistida.",
+      narration: "Pruébalo gratis por 15 días con migración asistida de tus datos. Escríbenos al WhatsApp +56 9 4631 8783 o entra a app.pulsocontable.cl.",
+      highlightWords: ["15 DÍAS GRATIS", "MIGRACIÓN", "PULSOCONTABLE.CL"]
     }
   ];
 
@@ -235,48 +254,46 @@ export default function PresentationView() {
   // WHATSAPP: MENSAJE PARA GRUPOS
   const whatsappGroupText = `🇨🇱 *¿CUÁNTAS HORAS PIERDE TU ESTUDIO CONTABLE AL MES DIGITANDO FACTURAS Y CUADRANDO BANCOS A MANO?* ⏱️📊
 
-Colegas contadores y administradores, les presento *GEST_OK*, la plataforma contable en la nube creada en Chile *por contadores para contadores*:
+Colegas contadores y administradores, les presento *Pulso Contable*, la plataforma contable en la nube creada en Chile *por contadores para contadores*:
 
-⚡ *Conexión Dual Directa con el SII:* Emisión oficial de Facturas afectas (33), exentas (34) y Notas de Crédito (61) con XML y Timbre Electrónico TED sin entrar a sii.cl.
-📥 *Importación RCV y Boletas de Honorarios BHE:* Cargas el CSV oficial del SII en 2 segundos; el sistema detecta duplicados y crea los auxiliares automáticamente.
-🏦 *Conciliación Bancaria en 1 Clic:* Importas cartolas de Santander, Banco de Chile, BCI o BancoEstado y concilia facturas pendientes al instante.
+⚡ *Conexión y Rescate RCV Seguro del SII:* Rescata compras, ventas y boletas de honorarios en 2 segundos con máxima seguridad y confidencialidad.
+📥 *Importación Inteligente sin Duplicados:* Cargas los archivos del SII y el sistema detecta duplicados y crea los auxiliares automáticamente.
+🏦 *Conciliación Bancaria en 1 Clic:* Importas cartolas de cualquier banco y concilias facturas pendientes al instante.
 🛡️ *Exigibilidad Estricta de Análisis:* Cero descuadres de RUT o Centro de Costo en auditorías.
 📑 *Formulario 29 y Balance 8 Columnas IFRS:* Listos en tiempo real para cerrar el mes sin trasnoches.
 
 🎁 *LANZAMIENTO EXCLUSIVO:*
 Estamos abriendo cupos para el *Programa de Estudios Fundadores*:
-✅ *15 días de prueba 100% gratuita* (sin tarjeta).
+✅ *15 días de prueba 100% gratuita*.
 ✅ *Migración asistida* de tus empresas y plan de cuentas.
 ✅ *Tarifa preferencial congelada de por vida*.
 
 👉 Agenda una demo rápida de 15 minutos o solicita tu acceso aquí:
-📲 *WhatsApp Directo:* +56 9 8765 4321
-🌐 *Web:* https://gestok.cl`;
+📲 *WhatsApp Directo:* +56 9 4631 8783
+🌐 *Web:* https://app.pulsocontable.cl`;
 
   // WHATSAPP: MENSAJE DIRECTO 1 A 1
   const whatsappDirectText = `Hola [Nombre del Contador o Socio], ¿cómo estás? Te escribo porque sé lo desgastante que son los cierres mensuales y la digitación manual de facturas y cartolas bancarias.
 
-Desarrollamos *GEST_OK*, un software contable chileno en la nube que automatiza el 70% de la carga operativa:
-- Emite DTEs con conexión dual al SII (XML y Timbre TED automático).
-- Importa masivamente RCV y Honorarios sin duplicados.
-- Concilia cartolas bancarias en 1 clic.
-- Genera el F29 mensual y el Balance de 8 columnas al día.
+Desarrollamos *Pulso Contable*, un software contable chileno en la nube que automatiza el 70% de la carga operativa:
+- Rescata y carga masivamente RCV y Boletas de Honorarios BHE sin duplicados y con total seguridad.
+- Concilia cartolas de cualquier banco en 1 clic.
+- Genera el Formulario 29 mensual y el Balance de 8 columnas al día.
 
-Te invito a probarlo gratis por 15 días con migración asistida de tu primera empresa para que compares la velocidad frente a tu software actual.
+Te invito a probarlo gratis por 15 días con migración asistida de tu primera empresa para que compares la velocidad frente a sistemas tradicionales.
 
-¿Tienes 10 minutos esta semana para mostrarte una demo rápida por pantalla? Un abrazo.`;
+¿Tienes 10 minutos esta semana para mostrarte una demo rápida por pantalla? Escríbenos al WhatsApp +56 9 4631 8783 o entra a app.pulsocontable.cl. Un abrazo.`;
 
   // INSTAGRAM: COPY COMPLETO CON HASHTAGS
   const instagramPostCopy = `¿Sigues cerrando el mes a las 3 AM por culpa de la digitación manual? 😫📉
 
-Los sistemas contables tradicionales como Softland o Nubox se quedaron en interfaces lentas, con cobros abusivos por cada usuario extra y sin automatizaciones reales.
+Los sistemas contables tradicionales y softwares obsoletos se quedaron en interfaces lentas, con cobros abusivos por cada usuario extra y sin automatizaciones reales.
 
-Es momento de dar el salto a @gest_ok.cl 🚀
+Es momento de dar el salto a la contabilidad moderna 🚀
 
-Con Gest_OK gestionas tu estudio contable con tecnología de punta:
-⚡ Emisión DTE con conexión dual certificada al SII (Facturas 33, 34 y NC 61).
-📥 Importación en 2 segundos de Compras, Ventas y Boletas de Honorarios con validación anti-duplicados.
-🏦 Conciliación Bancaria en 1 clic de Santander, Banco de Chile, BCI y BancoEstado.
+Con Pulso Contable gestionas tu estudio contable con tecnología de punta:
+⚡ Rescate y carga automática de Compras, Ventas y Boletas de Honorarios desde el SII con validación anti-duplicados y total seguridad.
+🏦 Conciliación Bancaria en 1 clic de cualquier banco.
 🛡️ Exigibilidad estricta que previene descuadres de análisis antes de guardar.
 📊 Formulario 29 mensual y Balance IFRS de 8 columnas en tiempo real.
 
@@ -286,10 +303,11 @@ Súmate hoy al Programa de Estudios Fundadores:
 ✅ Migración asistida de tu plan de cuentas y empresas en menos de 48 hrs.
 ✅ Tarifa preferencial congelada de por vida.
 
-👉 Comenta la palabra "DEMO" o haz clic en el enlace de nuestra biografía para activar tu acceso inmediato.
+👉 Comenta la palabra "DEMO" o entra a app.pulsocontable.cl
+📲 Escríbenos directamente al WhatsApp: +56 9 4631 8783
 
 ---
-#ContadoresChile #ContabilidadChile #PymesChile #EmprendedoresChile #SoftwareContable #FacturaElectronica #SIIChile #OperacionRenta #EstudiosContables #FinanzasChile #GestionPyme #SoftlandChile #NuboxChile #ConciliacionBancaria #Formulario29`;
+#PulsoContable #ContadoresChile #ContabilidadChile #PymesChile #EmprendedoresChile #SoftwareContable #FacturaElectronica #SIIChile #OperacionRenta #EstudiosContables #FinanzasChile #GestionPyme #ConciliacionBancaria #Formulario29`;
 
   // FACEBOOK: POST PARA GRUPOS DE CONTADORES Y EMPRENDEDORES
   const facebookGroupPost = `🚨 ATENCIÓN CONTADORES Y SOCIOS DE ESTUDIOS EN CHILE: ¿Cuánto tiempo le dedican a tareas mecánicas que un software debería hacer solo?
@@ -299,59 +317,64 @@ Hicimos una encuesta con más de 40 contadores y encontramos 3 dolores comunes:
 2️⃣ Cruzar cartolas bancarias en Excel a fin de mes persiguiendo diferencias de centavos.
 3️⃣ Corregir descuadres de RUT y centros de costos justo antes de presentar el F29 o el Balance.
 
-Por eso creamos GEST_OK (https://gestok.cl), el ERP contable en la nube diseñado exclusivamente para la normativa chilena:
+Por eso creamos Pulso Contable (https://app.pulsocontable.cl), la plataforma contable en la nube diseñada exclusivamente para la normativa chilena:
 
-🔹 CONEXIÓN DUAL SII: Emisión de facturas y notas de crédito con Timbre TED y centralización contable automática sin salir del sistema.
+🔹 CONEXIÓN Y RESCATE RCV SEGURO: Carga en segundos compras, ventas y boletas de honorarios con respaldo protegido en la nube.
 🔹 IMPORTADOR INTELIGENTE RCV: Arrastras el archivo del SII y en 3 segundos tienes registradas las compras y ventas con creación automática de fichas de proveedores/clientes.
-🔹 CONCILIACIÓN BANCARIA EN 1 CLIC: Reconoce cargos/abonos de tu cartola y cruza contra tus facturas pendientes.
+🔹 CONCILIACIÓN BANCARIA EN 1 CLIC: Reconoce cargos y abonos de cualquier banco y cruza contra tus facturas pendientes.
 🔹 AUDITORÍA Y F29 EN VIVO: El débito, crédito y retenciones de honorarios se calculan en tiempo real.
 
 Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundadores":
-🎯 15 días de prueba sin costo ni compromiso.
+🎯 15 días de prueba gratuita.
 🎯 Te ayudamos personalmente a migrar tus planes de cuentas y auxiliares.
 🎯 Precio congelado de por vida con usuarios ilimitados.
 
-¿Te gustaría probarlo en tu estudio? Escribe "QUIERO DEMO" en los comentarios o envíame un mensaje privado y te agendo una presentación de 15 minutos.`;
+¿Te gustaría probarlo en tu estudio? Escribe "QUIERO DEMO" en los comentarios, entra a app.pulsocontable.cl o escríbenos al WhatsApp +56 9 4631 8783.`;
 
   // 6 LÁMINAS DEL CARRUSEL DE INSTAGRAM (1:1)
   const carouselSlides = [
     {
       slideNum: "1/6",
-      title: "¿SIGUES DIGITANDO FACTURAS A MANO EN 2026?",
-      subtitle: "Descubre cómo los estudios contables modernos en Chile automatizan el 70% de su trabajo.",
+      title: "¿SIGUES DIGITANDO FACTURAS A MANO?",
+      subtitle: "Descubre cómo Pymes y estudios contables modernos en Chile automatizan el 70% de su trabajo.",
       badge: "EL DOLOR ACTUAL",
       accentColor: "from-rose-600 to-amber-600",
       content: (
         <div className="space-y-4 text-center">
+          <div className="inline-flex items-center justify-center">
+            <span className="px-3 py-1 rounded-full bg-rose-900/80 border border-rose-500/50 text-rose-200 text-xs font-bold uppercase tracking-wider shadow-sm">
+              🚨 El Dolor Actual
+            </span>
+          </div>
           <div className="p-4 bg-rose-950/50 border border-rose-800/80 rounded-2xl">
-            <p className="text-sm text-rose-200 font-medium">
-              "Horas perdidas pasando datos de sii.cl a sistemas viejos, cuadrando bancos en Excel y persiguiendo descuadres a fin de año."
+            <p className="text-sm text-rose-200 font-medium leading-relaxed">
+              "Horas perdidas pasando datos del SII a sistemas lentos, cuadrando bancos en Excel y persiguiendo descuadres a fin de mes."
             </p>
           </div>
           <div className="flex items-center justify-center gap-2 text-xs text-amber-400 font-bold">
-            <span>Hay una forma mejor 👉 Desliza para conocerla</span>
+            <span>Hay una forma moderna y automática 👉 Desliza</span>
           </div>
         </div>
       )
     },
     {
       slideNum: "2/6",
-      title: "CONEXIÓN DUAL OFICIAL CON EL SII",
-      subtitle: "Emite Facturas 33/34 y Notas de Crédito 61 con Timbre Electrónico TED oficial.",
-      badge: "FACTURACIÓN DTE",
+      title: "CONEXIÓN Y RESCATE RCV DESDE EL SII",
+      subtitle: "Rescata compras, ventas y boletas BHE automáticamente con total seguridad.",
+      badge: "SEGURIDAD Y RESCATE SII",
       accentColor: "from-indigo-600 to-blue-600",
       content: (
         <div className="space-y-3">
           <div className="p-3 bg-indigo-950/60 border border-indigo-700/60 rounded-xl text-xs space-y-1">
             <p className="font-bold text-white flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-indigo-400" /> Bóveda Segura de Firma Digital PFX
+              <ShieldCheck className="w-4 h-4 text-indigo-400" /> Máxima Seguridad y Confidencialidad
             </p>
-            <p className="text-slate-300 text-[11px]">Validación del Representante Legal (Portal RCV) y de la Empresa (DTE / BHE).</p>
+            <p className="text-slate-300 text-[11px]">Tus datos tributarios protegidos y respaldados con los más altos estándares de seguridad en la nube.</p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-center text-xs">
             <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
-              <span className="text-[10px] text-slate-400 block">DOCUMENTOS</span>
-              <span className="font-bold text-indigo-300">Factura 33 / 34 / 61</span>
+              <span className="text-[10px] text-slate-400 block">RESCATE RCV</span>
+              <span className="font-bold text-indigo-300">Compras, Ventas & BHE</span>
             </div>
             <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
               <span className="text-[10px] text-slate-400 block">ASIENTO CONTABLE</span>
@@ -373,7 +396,7 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
             <p className="font-bold text-white flex items-center gap-1.5">
               <FileSpreadsheet className="w-4 h-4 text-teal-400" /> Cero Duplicados Garantizado
             </p>
-            <p className="text-slate-300 text-[11px]">El sistema detecta si un RUT, Tipo y Folio ya existe y auto-crea la ficha del auxiliar.</p>
+            <p className="text-slate-300 text-[11px]">El sistema valida si un RUT, Tipo y Folio ya existe y auto-crea la ficha del auxiliar.</p>
           </div>
           <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
             <span className="text-emerald-400 font-mono font-bold text-base block">100+ Documentos en 3 seg</span>
@@ -385,7 +408,27 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
     {
       slideNum: "4/6",
       title: "CONCILIACIÓN BANCARIA EN 1 CLIC",
-      subtitle: "Cruza cartolas de cualquier banco chileno contra tus facturas pendientes.",
+      customTitle: (
+        <div className="flex flex-col items-center justify-center gap-1">
+          <span className="text-xl md:text-2xl font-black text-white leading-tight">
+            CONCILIACIÓN BANCARIA EN 1
+          </span>
+          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/50 text-emerald-300 font-black text-xl md:text-2xl shadow-lg">
+            <span>CLIC</span>
+            <span className="relative flex items-center justify-center">
+              <span className="animate-ping absolute inline-flex h-4 w-4 rounded-full bg-emerald-400 opacity-75"></span>
+              <svg 
+                className="w-5 h-5 text-emerald-300 drop-shadow animate-bounce" 
+                viewBox="0 0 24 24" 
+                fill="currentColor"
+              >
+                <path d="M13.64 21.97C13.14 22.21 12.54 22 12.31 21.5L10.13 16.76L7.62 18.78C7.14 19.16 6.44 18.82 6.44 18.21V3.5C6.44 2.87 7.18 2.53 7.66 2.95L19.46 13.25C19.93 13.66 19.74 14.44 19.13 14.59L15.35 15.54L17.5 20.26C17.74 20.76 17.53 21.36 17.03 21.59L13.64 21.97Z" />
+              </svg>
+            </span>
+          </span>
+        </div>
+      ),
+      subtitle: "Cruza cartolas de cualquier banco contra tus facturas pendientes.",
       badge: "TESORERÍA INTELIGENTE",
       accentColor: "from-emerald-600 to-cyan-600",
       content: (
@@ -394,7 +437,7 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
             <p className="font-bold text-white flex items-center gap-1.5">
               <Zap className="w-4 h-4 text-emerald-400" /> Cruce Inteligente de Facturas
             </p>
-            <p className="text-slate-300 text-[11px]">Detecta abonos y cargos de Santander, Chile, BCI o BancoEstado y sugiere el match.</p>
+            <p className="text-slate-300 text-[11px]">Detecta abonos y cargos de cualquier banco y sugiere el match automáticamente.</p>
           </div>
           <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
             <span className="text-emerald-300 font-mono font-bold text-xs block">Saldo Cartola = Saldo Libro Mayor</span>
@@ -405,20 +448,24 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
     },
     {
       slideNum: "5/6",
-      title: "GRILLAS EXCEL & EXIGIBILIDAD ESTRICTA",
+      title: "GRILLAS EXCEL Y EXIGIBILIDAD ESTRICTA",
       subtitle: "La agilidad de una planilla con la seguridad de una base de datos blindada.",
       badge: "CALIDAD DE DATOS",
       accentColor: "from-purple-600 to-indigo-600",
       content: (
         <div className="space-y-3">
+          <div className="p-3.5 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border-2 border-purple-500/60 rounded-xl text-center shadow-lg">
+            <p className="font-black text-white text-sm tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white via-purple-100 to-indigo-200">
+              Formulario 29 Y Balance 8 Columnas IFRS
+            </p>
+            <p className="text-amber-300 font-semibold text-xs mt-1">
+              Calculados en tiempo real listos para exportar a Excel y PDF.
+            </p>
+          </div>
           <div className="flex flex-wrap gap-1.5 justify-center text-[10px] font-mono font-bold">
             <span className="px-2 py-1 bg-indigo-950 text-indigo-300 rounded border border-indigo-700">RUT* Bloqueante</span>
             <span className="px-2 py-1 bg-amber-950 text-amber-300 rounded border border-amber-700">DOC* Requerido</span>
             <span className="px-2 py-1 bg-emerald-950 text-emerald-300 rounded border border-emerald-700">CC* Obligatorio</span>
-          </div>
-          <div className="p-3 bg-purple-950/50 border border-purple-800/60 rounded-xl text-center text-xs">
-            <p className="font-bold text-white">Formulario 29 & Balance 8 Columnas IFRS</p>
-            <p className="text-slate-300 text-[11px]">Calculados en tiempo real listos para exportar a Excel y PDF.</p>
           </div>
         </div>
       )
@@ -430,21 +477,24 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
       badge: "OFERTA LIMITADA",
       accentColor: "from-emerald-500 to-teal-500",
       content: (
-        <div className="space-y-4 text-center">
-          <div className="p-4 bg-gradient-to-r from-emerald-950 to-teal-950 border border-emerald-700 rounded-2xl space-y-2">
+        <div className="space-y-3 text-center">
+          <div className="p-3.5 bg-gradient-to-r from-emerald-950 to-teal-950 border border-emerald-700 rounded-2xl space-y-2">
             <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 font-black text-xs rounded-full">
               CUPOS LIMITADOS
             </span>
             <ul className="text-xs text-slate-200 text-left space-y-1 list-disc list-inside">
-              <li>15 días de acceso total sin tarjeta de crédito.</li>
+              <li>15 días de acceso total gratuito.</li>
               <li>Migración asistida de tus empresas y auxiliares.</li>
               <li>Tarifa preferencial congelada para siempre.</li>
             </ul>
           </div>
-          <div className="pt-1">
-            <span className="text-emerald-400 font-bold text-xs">
-              Comenta "DEMO" o entra a gestok.cl 📲
-            </span>
+          <div className="p-2.5 bg-slate-900 rounded-xl border border-emerald-500/40 space-y-1">
+            <p className="text-emerald-400 font-bold text-xs">
+              Comenta "DEMO" o entra a app.pulsocontable.cl 📲
+            </p>
+            <p className="text-slate-300 text-[11px] font-medium">
+              Escríbenos al WhatsApp: <strong className="text-white">+56 9 4631 8783</strong>
+            </p>
           </div>
         </div>
       )
@@ -452,8 +502,19 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
   ];
 
   // =========================================================================
-  // FUNCIONES DE DESCARGA DIRECTA (IMÁGENES HD Y DOCUMENTOS DE TEXTO)
+  // FUNCIONES DE DESCARGA DIRECTA (IMÁGENES HD PNG, ZIP PACK, PDF Y DOCUMENTOS)
   // =========================================================================
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
   const downloadFile = (url: string, filename: string) => {
     const link = document.createElement('a');
     link.href = url;
@@ -463,12 +524,143 @@ Estamos recibiendo a los primeros 25 estudios en el "Programa de Estudios Fundad
     document.body.removeChild(link);
   };
 
-  const downloadTextKit = () => {
-    const content = `================================================================================
-GEST_OK - KIT COMERCIAL Y MATERIAL COMPLETO PARA REDES SOCIALES
-Software Contable en la Nube con Conexión Dual SII & Conciliación Bancaria
-Chile - 2026
-Web: https://gestok.cl
+  // 1. Descargar la lámina actualmente visible en formato PNG HD (1:1) instantáneo
+  const downloadCurrentSlidePNG = () => {
+    try {
+      downloadSlidePNGDirect(currentSlideIdx);
+    } catch (err) {
+      console.error('Error al descargar lámina PNG:', err);
+    }
+  };
+
+  // 2. Descargar las 6 láminas completas en un solo archivo ZIP comprimido
+  const downloadAllSlidesZip = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportProgress('Generando y empaquetando las 6 láminas HD en archivo ZIP...');
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder('Laminas_Instagram_PulsoContable');
+
+      for (let i = 0; i < 6; i++) {
+        setExportProgress(`Procesando Lámina ${i + 1} de 6 en alta definición...`);
+        const dataUrl = getSlideDataUrl(i);
+        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+        const meta = SLIDES_METADATA[i] || SLIDES_METADATA[0];
+        const cleanBadge = meta.badge.replace(/[^a-zA-Z0-9]/g, '_');
+        folder?.file(`Lamina_${i + 1}_${cleanBadge}.png`, base64Data, { base64: true });
+      }
+
+      // Añadir archivo con copys y hashtags
+      folder?.file('Copys_Y_Hashtags_Instagram.txt', instagramPostCopy);
+      folder?.file('Kit_Completo_Redes_Sociales.txt', getTextKitContent());
+
+      setExportProgress('Comprimiendo archivo ZIP...');
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(zipBlob, 'PulsoContable_Carrusel_Instagram_6_Laminas_HD.zip');
+
+      setExportProgress('¡Descarga completada con éxito!');
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress('');
+      }, 1500);
+    } catch (err) {
+      console.error('Error al generar ZIP:', err);
+      setIsExporting(false);
+      setExportProgress('');
+    }
+  };
+
+  // 3. Descargar las 6 láminas completas como archivos PNG individuales
+  const downloadAllSlidesPNG = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      for (let i = 0; i < 6; i++) {
+        setExportProgress(`Descargando Lámina ${i + 1} de 6 (PNG HD)...`);
+        downloadSlidePNGDirect(i);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      setExportProgress('¡Láminas descargadas!');
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress('');
+      }, 1500);
+    } catch (err) {
+      console.error('Error al exportar láminas:', err);
+      setIsExporting(false);
+      setExportProgress('');
+    }
+  };
+
+  // 4. Descargar el carrusel completo como documento PDF de 6 páginas cuadradas (1:1)
+  const downloadCarouselPDF = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportProgress('Generando carrusel en PDF de 6 páginas...');
+    try {
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'pt',
+        format: [1080, 1080]
+      });
+
+      for (let i = 0; i < 6; i++) {
+        setExportProgress(`Agregando Lámina ${i + 1} al PDF...`);
+        const imgData = getSlideDataUrl(i);
+        if (i > 0) {
+          pdf.addPage([1080, 1080], 'p');
+        }
+        pdf.addImage(imgData, 'PNG', 0, 0, 1080, 1080);
+      }
+
+      setExportProgress('Guardando documento PDF...');
+      pdf.save('PulsoContable_Carrusel_Instagram_6_Laminas.pdf');
+      
+      setExportProgress('¡PDF descargado con éxito!');
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress('');
+      }, 1500);
+    } catch (err) {
+      console.error('Error al exportar PDF del carrusel:', err);
+      setIsExporting(false);
+      setExportProgress('');
+    }
+  };
+
+  // 5. Copiar la lámina visual al portapapeles como imagen para pegar en WhatsApp Web o Canva
+  const copyCurrentSlideImage = async () => {
+    try {
+      const canvas = renderSlideToCanvas(currentSlideIdx);
+      canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        try {
+          if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+            await navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob })
+            ]);
+            setCopiedKey(`slide_img_${currentSlideIdx}`);
+            setTimeout(() => setCopiedKey(null), 2500);
+          } else {
+            downloadSlidePNGDirect(currentSlideIdx);
+          }
+        } catch (clipErr) {
+          // Si el navegador en iframe bloquea el portapapeles de imágenes, descarga directa
+          downloadSlidePNGDirect(currentSlideIdx);
+        }
+      }, 'image/png');
+    } catch (err) {
+      downloadSlidePNGDirect(currentSlideIdx);
+    }
+  };
+
+  const getTextKitContent = () => {
+    return `================================================================================
+PULSO CONTABLE - KIT COMERCIAL Y MATERIAL COMPLETO PARA REDES SOCIALES
+Software Contable en la Nube con Rescate RCV SII y Conciliación Bancaria
+Chile
+Web: https://app.pulsocontable.cl | WhatsApp: +56 9 4631 8783
 ================================================================================
 
 1. WHATSAPP - MENSAJE PARA GRUPOS DE CONTADORES Y PYMES
@@ -507,26 +699,16 @@ LOCUCIÓN / GUION DE VOZ: "${s.narration}"
 --------------------------------------------------------------------------------
 ${facebookGroupPost}
 `;
+  };
 
+  const downloadTextKit = () => {
+    const content = getTextKitContent();
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'GEST_OK_Kit_Redes_Sociales.txt';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, 'PulsoContable_Kit_Redes_Sociales.txt');
   };
 
   const downloadAllPack = () => {
-    downloadTextKit();
-    setTimeout(() => {
-      downloadFile(socialSquareImg, 'GEST_OK_Flyer_Cuadrado_1x1_Feed_WhatsApp.jpg');
-    }, 400);
-    setTimeout(() => {
-      downloadFile(storyReelImg, 'GEST_OK_Flyer_Vertical_9x16_Story_Reel.jpg');
-    }, 800);
+    downloadAllSlidesZip();
   };
 
   return (
@@ -540,7 +722,7 @@ ${facebookGroupPost}
       <div className="bg-slate-900/95 border-b border-slate-800 px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500 p-2 rounded-xl font-black text-slate-950 text-xs tracking-wider shadow-md">
-            GEST_OK
+            PULSO CONTABLE
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -682,7 +864,7 @@ ${facebookGroupPost}
                 <div className="bg-[#202c33] px-4 py-3 flex items-center justify-between border-b border-slate-700/50">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-emerald-600 text-slate-950 font-black flex items-center justify-center text-sm shadow">
-                      GO
+                      PC
                     </div>
                     <div>
                       <p className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
@@ -711,11 +893,11 @@ ${facebookGroupPost}
                     <div className="rounded-xl overflow-hidden border border-emerald-700/40 relative">
                       <img 
                         src={socialSquareImg} 
-                        alt="Gest_OK Portada WhatsApp" 
+                        alt="Pulso Contable Portada WhatsApp" 
                         className="w-full h-48 object-cover"
                       />
                       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-[11px] font-bold text-white">
-                        GEST_OK &bull; Software Contable en la Nube con SII Dual
+                        PULSO CONTABLE &bull; Software Contable en la Nube con Rescate RCV SII
                       </div>
                     </div>
 
@@ -849,7 +1031,10 @@ ${facebookGroupPost}
                 
                 {/* VISOR DE LA LÁMINA SELECCIONADA */}
                 <div className="lg:col-span-7 flex flex-col items-center space-y-4">
-                  <div className="w-full max-w-md aspect-square bg-gradient-to-b from-slate-900 to-slate-950 rounded-3xl border-2 border-slate-800 shadow-2xl p-6 flex flex-col justify-between relative overflow-hidden">
+                  <div 
+                    ref={currentSlideCardRef}
+                    className="w-full max-w-md aspect-square bg-gradient-to-b from-slate-900 to-slate-950 rounded-3xl border-2 border-slate-800 shadow-2xl p-6 flex flex-col justify-between relative overflow-hidden select-none"
+                  >
                     
                     {/* BARRAS DECORATIVAS */}
                     <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-amber-500"></div>
@@ -866,9 +1051,13 @@ ${facebookGroupPost}
 
                     {/* TÍTULOS Y CONTENIDO DINÁMICO */}
                     <div className="space-y-3 text-center my-auto py-4">
-                      <h2 className="text-xl md:text-2xl font-black text-white leading-tight">
-                        {carouselSlides[currentSlideIdx].title}
-                      </h2>
+                      {carouselSlides[currentSlideIdx].customTitle ? (
+                        carouselSlides[currentSlideIdx].customTitle
+                      ) : (
+                        <h2 className="text-xl md:text-2xl font-black text-white leading-tight">
+                          {carouselSlides[currentSlideIdx].title}
+                        </h2>
+                      )}
                       <p className="text-xs text-slate-300 font-light">
                         {carouselSlides[currentSlideIdx].subtitle}
                       </p>
@@ -880,9 +1069,9 @@ ${facebookGroupPost}
 
                     {/* PIE DE LÁMINA */}
                     <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-[10px] text-slate-400 font-mono">
-                      <span className="font-bold text-white flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        @gest_ok.cl
+                      <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Pulso Contable
                       </span>
                       <span className="text-purple-400 font-bold">
                         {currentSlideIdx < carouselSlides.length - 1 ? 'Desliza para ver más 👉' : '¡Guarda este post! 📌'}
@@ -896,7 +1085,8 @@ ${facebookGroupPost}
                     <button
                       onClick={() => setCurrentSlideIdx(prev => Math.max(prev - 1, 0))}
                       disabled={currentSlideIdx === 0}
-                      className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                      title="Lámina anterior"
                     >
                       <ChevronLeft className="w-5 h-5" />
                     </button>
@@ -909,6 +1099,7 @@ ${facebookGroupPost}
                           className={`w-3 h-3 rounded-full transition-all cursor-pointer ${
                             currentSlideIdx === idx ? 'bg-pink-500 scale-125' : 'bg-slate-700 hover:bg-slate-500'
                           }`}
+                          title={`Ir a lámina ${idx + 1}`}
                         />
                       ))}
                     </div>
@@ -916,28 +1107,90 @@ ${facebookGroupPost}
                     <button
                       onClick={() => setCurrentSlideIdx(prev => Math.min(prev + 1, carouselSlides.length - 1))}
                       disabled={currentSlideIdx === carouselSlides.length - 1}
-                      className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                      title="Lámina siguiente"
                     >
                       <ChevronRight className="w-5 h-5" />
                     </button>
                   </div>
 
-                  {/* BOTONES DE DESCARGA DIRECTA CARRUSEL */}
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <button
-                      onClick={() => downloadFile(socialSquareImg, 'GEST_OK_Instagram_Portada_1x1.jpg')}
-                      className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow cursor-pointer transition-all"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Descargar Portada Feed (1:1 HD)</span>
-                    </button>
-                    <button
-                      onClick={downloadTextKit}
-                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-2 border border-slate-800 cursor-pointer"
-                    >
-                      <FileText className="w-4 h-4 text-pink-400" />
-                      <span>Descargar 6 Láminas & Copys (.txt)</span>
-                    </button>
+                  {/* ESTADO DE EXPORTACIÓN */}
+                  {isExporting && (
+                    <div className="w-full max-w-md p-3 bg-purple-950/80 border border-purple-700/60 rounded-xl text-xs text-purple-200 flex items-center justify-center gap-2 shadow-lg animate-pulse">
+                      <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
+                      <span className="font-semibold">{exportProgress || 'Procesando imágenes...'}</span>
+                    </div>
+                  )}
+
+                  {/* PANEL COMPLETO DE DESCARGA MULTIFORMATO PARA EL CARRUSEL */}
+                  <div className="w-full max-w-md bg-slate-900/90 rounded-2xl border border-slate-800 p-3.5 space-y-2.5 shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Download className="w-3.5 h-3.5 text-pink-400" />
+                        <span>Descargar Carrusel para tu PC</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">1080x1080 HD (1:1)</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={downloadCurrentSlidePNG}
+                        className="p-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow cursor-pointer transition-all active:scale-95"
+                        title="Descarga la lámina visible como imagen PNG de 1080x1080 px"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5" />
+                        <span>Lámina Actual (PNG)</span>
+                      </button>
+
+                      <button
+                        onClick={downloadAllSlidesZip}
+                        disabled={isExporting}
+                        className="p-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow cursor-pointer transition-all disabled:opacity-50 active:scale-95"
+                        title="Descarga un solo archivo .ZIP con las 6 láminas en PNG HD + archivos de texto"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                        <span>Pack Completo (ZIP)</span>
+                      </button>
+
+                      <button
+                        onClick={downloadCarouselPDF}
+                        disabled={isExporting}
+                        className="p-2.5 bg-slate-950 hover:bg-slate-800 text-slate-200 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-800 cursor-pointer transition-all disabled:opacity-50 active:scale-95"
+                        title="Descarga un PDF con las 6 láminas en páginas cuadradas HD"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-pink-400" />
+                        <span>Carrusel PDF (6 Pág)</span>
+                      </button>
+
+                      <button
+                        onClick={() => setShowGalleryModal(true)}
+                        className="p-2.5 bg-slate-950 hover:bg-slate-800 text-slate-200 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-800 cursor-pointer transition-all active:scale-95"
+                        title="Ver todas las 6 láminas en pantalla completa para revisarlas y descargarlas"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-teal-400" />
+                        <span>Ver Galería Completa</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                      <button
+                        onClick={copyCurrentSlideImage}
+                        className="text-[11px] text-slate-300 hover:text-white flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Copia la lámina al portapapeles para pegarla en WhatsApp Web"
+                      >
+                        {copiedKey === `slide_img_${currentSlideIdx}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-pink-400" />}
+                        <span>{copiedKey === `slide_img_${currentSlideIdx}` ? '¡Imagen copiada!' : 'Copiar lámina'}</span>
+                      </button>
+
+                      <button
+                        onClick={downloadTextKit}
+                        className="text-[11px] text-slate-300 hover:text-white flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Descargar textos y copys en archivo .txt"
+                      >
+                        <FileText className="w-3 h-3 text-amber-400" />
+                        <span>Descargar Copys (.txt)</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1001,9 +1254,9 @@ ${facebookGroupPost}
                     <div className="relative z-10 px-4 pt-2 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 font-black text-xs flex items-center justify-center">
-                          GO
+                          PC
                         </div>
-                        <span className="text-xs font-bold text-white drop-shadow">gest_ok.cl</span>
+                        <span className="text-xs font-bold text-white drop-shadow">pulsocontable.cl</span>
                       </div>
                       <span className="text-[10px] bg-slate-900/80 px-2 py-0.5 rounded-full text-emerald-400 font-mono font-bold border border-slate-700">
                         {currentReel.badge}
@@ -1341,6 +1594,95 @@ ${facebookGroupPost}
         )}
 
       </div>
+
+      {/* ========================================================================= */}
+      {/* MODAL DE GALERÍA DE LAS 6 LÁMINAS EN ALTA DEFINICIÓN (1080x1080)          */}
+      {/* ========================================================================= */}
+      {showGalleryModal && (
+        <div className="fixed inset-0 z-[999999] bg-slate-950/95 backdrop-blur-md flex flex-col p-4 md:p-8 overflow-y-auto">
+          <div className="max-w-6xl mx-auto w-full space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-xl font-black text-white flex items-center gap-2">
+                  <Grid className="w-5 h-5 text-pink-400" />
+                  <span>Galería de las 6 Láminas de Instagram (1080x1080 HD)</span>
+                </h2>
+                <p className="text-xs text-slate-400">Haz clic en cualquier lámina para descargarla en PNG o descarga el Pack Completo en ZIP para tu PC.</p>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={downloadAllSlidesZip}
+                  disabled={isExporting}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow cursor-pointer transition-all disabled:opacity-50 active:scale-95"
+                >
+                  <Archive className="w-4 h-4" />
+                  <span>Descargar Pack ZIP (6 Láminas)</span>
+                </button>
+                <button
+                  onClick={downloadCarouselPDF}
+                  disabled={isExporting}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-2 border border-slate-700 cursor-pointer transition-all disabled:opacity-50 active:scale-95"
+                >
+                  <FileText className="w-4 h-4 text-pink-400" />
+                  <span>Descargar en PDF</span>
+                </button>
+                <button
+                  onClick={() => setShowGalleryModal(false)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl cursor-pointer"
+                  title="Cerrar galería"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[0, 1, 2, 3, 4, 5].map((idx) => {
+                const meta = SLIDES_METADATA[idx];
+                const slideImgUrl = getSlideDataUrl(idx);
+
+                return (
+                  <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-3 flex flex-col justify-between shadow-2xl hover:border-slate-700 transition-all">
+                    {/* Imagen HD pre-renderizada */}
+                    <div className="rounded-xl overflow-hidden border border-slate-800 aspect-square bg-slate-950 flex items-center justify-center relative group">
+                      <img 
+                        src={slideImgUrl} 
+                        alt={`Lámina ${idx + 1}: ${meta.title}`} 
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 backdrop-blur-[2px]">
+                        <button
+                          onClick={() => downloadSlidePNGDirect(idx)}
+                          className="px-3.5 py-2 bg-pink-600 hover:bg-pink-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transform scale-95 group-hover:scale-100 transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Descargar PNG</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs pt-1">
+                      <span className="font-bold text-slate-200">Lámina {idx + 1}/6</span>
+                      <span className="text-slate-400 font-mono text-[11px]">{meta.badge}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => downloadSlidePNGDirect(idx)}
+                        className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow cursor-pointer transition-all active:scale-95"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Descargar PNG (HD)</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

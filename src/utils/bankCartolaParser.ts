@@ -147,12 +147,13 @@ export function parseBankCartola(
   let depositColIdx = -1;
   let balanceColIdx = -1;
   let amountSingleColIdx = -1;
+  let typeColIdx = -1; // Cargo / Abono type indicator column (e.g. C vs A in Santander)
 
   let headerInitialBal: number | null = null;
   let headerFinalBal: number | null = null;
 
-  // Scan top 30 rows for metadata (Bank Name, Initial Balance, Final Balance, Period)
-  for (let r = 0; r < Math.min(rawMatrix.length, 30); r++) {
+  // Scan top 100 rows for metadata and headers (Santander tables often start around row 70)
+  for (let r = 0; r < Math.min(rawMatrix.length, 100); r++) {
     const row = rawMatrix[r] || [];
     const rowText = row.map(c => String(c || '').trim()).join(' ').toLowerCase();
 
@@ -188,19 +189,20 @@ export function parseBankCartola(
     });
 
     const hasDate = colMatches.some(m => m.txt === 'fecha' || m.txt === 'fec' || m.txt.includes('fecha mov') || m.txt.includes('f. operacion') || m.txt.includes('f. proceso'));
-    const hasDesc = colMatches.some(m => m.txt === 'descripcion' || m.txt === 'detalle' || m.txt === 'glosa' || m.txt === 'concepto' || m.txt === 'movimiento');
-    const hasAmount = colMatches.some(m => m.txt === 'cargo' || m.txt === 'abono' || m.txt === 'monto' || m.txt === 'cargos' || m.txt === 'abonos' || m.txt === 'debe' || m.txt === 'haber' || m.txt === 'saldo');
+    const hasDesc = colMatches.some(m => m.txt === 'descripcion' || m.txt === 'detalle' || m.txt === 'glosa' || m.txt === 'concepto' || m.txt === 'movimiento' || m.txt.includes('descripcion mov'));
+    const hasAmount = colMatches.some(m => m.txt === 'monto' || m.txt === 'cargo' || m.txt === 'abono' || m.txt === 'cargos' || m.txt === 'abonos' || m.txt === 'debe' || m.txt === 'haber' || m.txt === 'saldo');
 
     if (hasDate && (hasDesc || hasAmount)) {
       headerRowIdx = r;
       colMatches.forEach(m => {
         if (m.txt === 'fecha' || m.txt === 'fec' || m.txt.includes('fecha mov') || m.txt.includes('f. operacion') || m.txt.includes('f. proceso')) dateColIdx = m.cIdx;
-        else if (m.txt === 'descripcion' || m.txt === 'detalle' || m.txt === 'glosa' || m.txt === 'concepto' || m.txt === 'movimiento' || m.txt === 'transaccion') descColIdx = m.cIdx;
+        else if (m.txt === 'descripcion' || m.txt === 'detalle' || m.txt === 'glosa' || m.txt === 'concepto' || m.txt === 'movimiento' || m.txt === 'transaccion' || m.txt.includes('descripcion mov')) descColIdx = m.cIdx;
         else if (m.txt.includes('doc') || m.txt.includes('cheque') || m.txt.includes('comprobante') || m.txt === 'n°' || m.txt === 'n° doc') docColIdx = m.cIdx;
         else if (m.txt === 'cargo' || m.txt === 'cargos' || m.txt === 'debe' || m.txt === 'egreso' || m.txt === 'retiro' || m.txt === 'debitos') chargeColIdx = m.cIdx;
         else if (m.txt === 'abono' || m.txt === 'abonos' || m.txt === 'haber' || m.txt === 'ingreso' || m.txt === 'deposito' || m.txt === 'creditos') depositColIdx = m.cIdx;
         else if (m.txt === 'saldo' || m.txt === 'saldo final' || m.txt === 'saldo linea' || m.txt === 'balance') balanceColIdx = m.cIdx;
         else if (m.txt === 'monto' || m.txt === 'importe' || m.txt === 'valor') amountSingleColIdx = m.cIdx;
+        else if (m.txt === 'cargo/abono' || m.txt === 'c/a' || m.txt === 'tipo' || m.txt === 'tipo mov') typeColIdx = m.cIdx;
       });
       break;
     }
@@ -211,9 +213,6 @@ export function parseBankCartola(
   if (dateColIdx === -1) dateColIdx = 0;
   if (descColIdx === -1) descColIdx = 1;
   if (chargeColIdx === -1 && depositColIdx === -1 && amountSingleColIdx === -1) {
-    // If 4 columns: Fecha, Desc, Cargo, Abono
-    // If 5 columns: Fecha, Desc, NDoc, Cargo, Abono
-    // If 6 columns: Fecha, Desc, NDoc, Cargo, Abono, Saldo
     if (rawMatrix[startRow]?.length === 3) {
       amountSingleColIdx = 2;
     } else if (rawMatrix[startRow]?.length === 4) {
@@ -248,24 +247,58 @@ export function parseBankCartola(
     const row = rawMatrix[r];
     if (!row || row.length === 0) continue;
 
-    const rawDate = row[dateColIdx];
-    const rawDesc = descColIdx >= 0 ? row[descColIdx] : '';
-    
-    // Ignore summary or footer rows
-    const rowStr = row.join(' ').toLowerCase();
+    // Check string representation of the whole row
+    const rowStr = row.map(c => String(c || '').trim()).join(' ').toLowerCase();
+
+    // STOP CRITICAL: Stop parsing when encountering secondary summary sections
+    // E.g. Santander Excel files append "Resumen comisiones", "Saldos diarios", "Información adicional"
+    if (
+      rowStr.includes('saldos diarios') ||
+      rowStr.includes('saldo diario') ||
+      rowStr.includes('saldos al final del dia') ||
+      rowStr.includes('saldos al final del día') ||
+      rowStr.includes('resumen comisiones') ||
+      rowStr.includes('resumen de comisiones') ||
+      rowStr.includes('resumen de cargos') ||
+      rowStr.includes('resumen de abonos') ||
+      rowStr.includes('resumen de movimientos') ||
+      rowStr.includes('información adicional') ||
+      rowStr.includes('informacion adicional') ||
+      rowStr.includes('totales acumulados')
+    ) {
+      // Break out of loop immediately! Do not process daily balances or summary statistics as bank transactions.
+      break;
+    }
+
+    // Ignore summary or footer rows inside transaction block
     if (
       rowStr.includes('totales') ||
       rowStr.includes('total cargos') ||
       rowStr.includes('total abonos') ||
-      rowStr.includes('saldo final') && rawDate === undefined
+      (rowStr.includes('saldo final') && row[dateColIdx] === undefined)
     ) {
       continue;
     }
+
+    const rawDate = row[dateColIdx];
+    const rawDesc = descColIdx >= 0 ? row[descColIdx] : '';
 
     if (!rawDate && !rawDesc) continue;
 
     const date = normalizeDate(rawDate, selectedPeriod);
     const description = String(rawDesc || 'MOVIMIENTO BANCARIO').trim().replace(/\s+/g, ' ');
+    
+    // Ignore rows where description is header-like or section title
+    const upperDesc = description.toUpperCase();
+    if (
+      upperDesc.includes('SALDOS DIARIOS') ||
+      upperDesc.includes('RESUMEN COMISIONES') ||
+      upperDesc.includes('DESCRIPCION MOVIMIENTO') ||
+      upperDesc.includes('CARGO/ABONO')
+    ) {
+      continue;
+    }
+
     const documentNumber = docColIdx >= 0 && row[docColIdx] !== undefined ? String(row[docColIdx]).trim() : '';
 
     let charge = 0;
@@ -279,15 +312,24 @@ export function parseBankCartola(
       charge = Math.abs(parseChileanNumber(rawChg));
       deposit = Math.abs(parseChileanNumber(rawDep));
     } else {
-      // Single amount column (or signed column)
-      const targetColIdx = chargeColIdx >= 0 ? chargeColIdx : (depositColIdx >= 0 ? depositColIdx : amountSingleColIdx);
+      // Single amount column or signed column (with optional C/A indicator column)
+      const targetColIdx = amountSingleColIdx >= 0 ? amountSingleColIdx : (chargeColIdx >= 0 ? chargeColIdx : depositColIdx);
       if (targetColIdx >= 0) {
-        const val = parseChileanNumber(row[targetColIdx]);
-        if (val < 0) {
-          charge = Math.abs(val); // Negativo es Cargo bancario
+        const rawAmt = row[targetColIdx];
+        const val = parseChileanNumber(rawAmt);
+        const typeChar = typeColIdx >= 0 && row[typeColIdx] !== undefined ? String(row[typeColIdx]).trim().toUpperCase() : '';
+
+        if (typeChar === 'C' || typeChar === 'CARGO' || typeChar === 'EGRESO') {
+          charge = Math.abs(val);
+          deposit = 0;
+        } else if (typeChar === 'A' || typeChar === 'ABONO' || typeChar === 'INGRESO') {
+          deposit = Math.abs(val);
+          charge = 0;
+        } else if (val < 0) {
+          charge = Math.abs(val); // Negativo es Cargo
           deposit = 0;
         } else if (val > 0) {
-          deposit = val; // Positivo es Abono bancario
+          deposit = val; // Positivo es Abono
           charge = 0;
         }
       }
@@ -303,7 +345,7 @@ export function parseBankCartola(
     const fp = createLineFingerprint({ date, description, charge, deposit, documentNumber });
     if (existingFingerprints.has(fp)) {
       duplicateCount++;
-      continue; // Skip duplicate line, inject only pending
+      continue; // Skip duplicate line
     }
 
     parsedRawLines.push({

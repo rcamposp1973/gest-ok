@@ -7,7 +7,11 @@ import { logAuditEvent } from '../utils/auditLogger';
 import { APP_VERSION } from '../constants/version';
 import { MarketingPromoConfig } from '../types';
 
-export default function Login() {
+interface LoginProps {
+  onBackToLanding?: () => void;
+}
+
+export default function Login({ onBackToLanding }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -307,13 +311,23 @@ export default function Login() {
       <div className="max-w-sm w-full bg-white rounded-lg shadow-xl border border-slate-700/60 overflow-hidden">
         
         {/* Encabezado Corporativo Formal */}
-        <div className="bg-slate-950 p-6 text-white text-center border-b border-slate-800">
+        <div className="bg-slate-950 p-6 text-white text-center border-b border-slate-800 relative">
+          {onBackToLanding && (
+            <button
+              onClick={onBackToLanding}
+              className="absolute left-4 top-4 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer flex items-center gap-1 text-[11px]"
+              title="Volver a la página principal"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Inicio</span>
+            </button>
+          )}
           <div className="w-10 h-10 bg-slate-800 rounded-md border border-slate-700 flex items-center justify-center mx-auto mb-3 shadow-xs">
             <Building2 className="w-5 h-5 text-slate-100 stroke-[1.25]" />
           </div>
           <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">PLATAFORMA CORPORATIVA</div>
           <h1 className="text-xl font-bold tracking-tight text-white mt-1">Gest_OK</h1>
-          <p className="text-slate-400 text-xs mt-1 font-normal">Sistema Contable y Gestión Multi-Estudio Chile</p>
+          <p className="text-slate-400 text-xs mt-1 font-normal">Contabilidad y Gestión &bull; Impulsa la gestión de tus clientes</p>
         </div>
 
         <div className="p-6">

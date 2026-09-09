@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
 import { generateSIIReportPDF } from '../utils/pdfGenerator';
+import { printAndLogOfficialBook } from '../utils/folioService';
 
 interface LibroMayorViewProps {
+  studyId?: string;
   company: Company;
   vouchers: Voucher[];
   accounts: ChartOfAccount[];
@@ -37,6 +39,7 @@ interface AccountLedger {
 }
 
 export default function LibroMayorView({
+  studyId,
   company,
   vouchers,
   accounts,
@@ -49,6 +52,7 @@ export default function LibroMayorView({
   const [selectedAccountId, setSelectedAccountId] = useState<string>('ALL');
   const [searchAccountQuery, setSearchAccountQuery] = useState<string>('');
   const [hideZeroBalance, setHideZeroBalance] = useState<boolean>(true);
+  const [isPrintingOfficial, setIsPrintingOfficial] = useState<boolean>(false);
 
   // Available periods
   const availablePeriods = useMemo(() => {
@@ -308,6 +312,85 @@ export default function LibroMayorView({
     window.print();
   };
 
+  const handlePrintOfficialBook = async () => {
+    if (displayedLedgers.length === 0) {
+      alert('No hay movimientos en el Libro Mayor para emitir el libro oficial.');
+      return;
+    }
+
+    setIsPrintingOfficial(true);
+    try {
+      const columns = ['Cód. Cuenta', 'Nombre Cuenta / Asiento', 'Fecha', 'N° Vch', 'Glosa / Ref', 'Debe ($)', 'Haber ($)', 'Saldo ($)'];
+      const data: string[][] = [];
+
+      displayedLedgers.forEach(ledger => {
+        let runningBalance = 0;
+        
+        // Fila de encabezado de cuenta
+        data.push([
+          ledger.account.code,
+          `-- ${ledger.account.name.toUpperCase()} [${ledger.account.type}] --`,
+          '',
+          '',
+          'APERTURA / SALDO INICIAL',
+          '',
+          '',
+          '$ 0'
+        ]);
+
+        ledger.movements.forEach(mov => {
+          runningBalance += (mov.debit - mov.credit);
+          data.push([
+            '',
+            mov.lineGloss || mov.gloss || ledger.account.name,
+            mov.date,
+            mov.voucherNumber.toString(),
+            mov.documentRef || mov.auxiliaryName || '',
+            mov.debit > 0 ? mov.debit.toLocaleString('es-CL') : '0',
+            mov.credit > 0 ? mov.credit.toLocaleString('es-CL') : '0',
+            runningBalance.toLocaleString('es-CL')
+          ]);
+        });
+
+        // Fila de total de cuenta
+        data.push([
+          '',
+          `TOTAL ${ledger.account.code}`,
+          '',
+          '',
+          `SALDO FINAL: ${ledger.balanceType.toUpperCase()}`,
+          ledger.totalDebit.toLocaleString('es-CL'),
+          ledger.totalCredit.toLocaleString('es-CL'),
+          ledger.finalBalance.toLocaleString('es-CL')
+        ]);
+      });
+
+      const effectiveStudyId = studyId || 'default-study';
+      const result = await printAndLogOfficialBook(effectiveStudyId, company, {
+        bookType: 'LIBRO_MAYOR',
+        title: 'LIBRO MAYOR GENERAL OFICIAL',
+        subtitle: `Período: ${periodFilter !== 'Todos' ? periodFilter : 'General / Anual'} - Formato Oficial SII (Res. Hojas Sueltas)`,
+        columns,
+        data,
+        orientation: 'portrait',
+        userNotes: `Emisión de Libro Mayor Oficial con folios timbrados para ${displayedLedgers.length} cuentas con movimiento.`
+      });
+
+      alert(
+        `✅ Libro Mayor Oficial Emitido con Éxito\n\n` +
+        `• Folios SII Utilizados: N° ${result.startFolio} al N° ${result.endFolio} (${result.pagesCount} página${result.pagesCount > 1 ? 's' : ''})\n` +
+        `• Resolución SII: N° ${result.resolutionNumber} del ${result.resolutionDate}\n` +
+        `• Formato: Crystal Reports Oficial con Van / Vienen y Timbraje Autorizado.\n` +
+        `• El consumo de folios ha sido registrado en el Control de Folios SII.`
+      );
+    } catch (err: any) {
+      console.error("Error generating official mayor:", err);
+      alert('Error al generar Libro Mayor Oficial: ' + (err.message || err));
+    } finally {
+      setIsPrintingOfficial(false);
+    }
+  };
+
   const handleDownloadSIIReport = () => {
     if (displayedLedgers.length === 0) {
       alert('No hay movimientos en el Libro Mayor para generar el informe.');
@@ -350,6 +433,15 @@ export default function LibroMayorView({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handlePrintOfficialBook}
+            disabled={isPrintingOfficial}
+            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            title="Emisión oficial de Libro Mayor con folios correlativos timbrados por el SII"
+          >
+            <span>🖨️</span>
+            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Libro Mayor Oficial (Folios SII)'}</span>
+          </button>
           <button
             onClick={handleDownloadSIIReport}
             className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"

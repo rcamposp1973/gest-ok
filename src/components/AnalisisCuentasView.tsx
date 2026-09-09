@@ -755,7 +755,7 @@ export default function AnalisisCuentasView({
               >
                 {imputableAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
-                    {acc.code} - {acc.name} ({acc.type}) {acc.requiereAuxiliarRUT ? '• [Exige Auxiliar]' : ''}
+                    {acc.code} - {acc.name} {acc.requiereAuxiliarRUT ? '• [Exige Auxiliar]' : ''}
                   </option>
                 ))}
               </select>

@@ -24,6 +24,7 @@ import IndicadoresEconomicosView from './components/IndicadoresEconomicosView';
 import PresentationView from './components/PresentationView';
 import MarketingPromoManager from './components/MarketingPromoManager';
 import SuperAdminSystemMonitor from './components/SuperAdminSystemMonitor';
+import LandingHome from './components/LandingHome';
 import { logAuditEvent } from './utils/auditLogger';
 import { APP_VERSION } from './constants/version';
 import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles, LogOut, Megaphone, Activity } from 'lucide-react';
@@ -597,7 +598,7 @@ function Dashboard() {
       </main>
 
       <footer className="bg-white border-t border-slate-200 px-4 py-2 text-[10px] text-slate-400 text-center">
-        Gest_OK {APP_VERSION} - Build 20260903 | Sistema de Gestión Contable y Tributaria
+        Gest_OK {APP_VERSION} | Contabilidad y Gestión
       </footer>
 
       {/* Modal de Indicadores Económicos Oficiales Global */}
@@ -625,6 +626,16 @@ function Dashboard() {
       )}
     </div>
   );
+}
+
+function UnauthenticatedHome() {
+  const [showLogin, setShowLogin] = useState(false);
+
+  if (showLogin) {
+    return <Login onBackToLanding={() => setShowLogin(false)} />;
+  }
+
+  return <LandingHome onGoToLogin={() => setShowLogin(true)} />;
 }
 
 function AppContent() {
@@ -661,7 +672,8 @@ function AppContent() {
         <Route path="/login" element={currentUser ? <Navigate to="/" /> : <Login />} />
         <Route path="/register" element={currentUser ? <Navigate to="/" /> : <Register />} />
         <Route path="/create-study" element={currentUser ? <CreateStudy /> : <Navigate to="/login" />} />
-        <Route path="/" element={currentUser ? <Dashboard /> : <Navigate to="/login" />} />
+        <Route path="/" element={currentUser ? <Dashboard /> : <UnauthenticatedHome />} />
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
   );

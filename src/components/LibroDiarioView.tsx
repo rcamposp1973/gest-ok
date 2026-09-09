@@ -1,8 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
 import { generateSIIReportPDF } from '../utils/pdfGenerator';
+import { printAndLogOfficialBook } from '../utils/folioService';
+import { BookOpen, Printer, FileText, Download, LayoutList, CheckCircle2, AlertTriangle, Search, Filter, Calendar } from 'lucide-react';
 
 interface LibroDiarioViewProps {
+  studyId?: string;
   company: Company;
   vouchers: Voucher[];
   accounts: ChartOfAccount[];
@@ -12,6 +15,7 @@ interface LibroDiarioViewProps {
 }
 
 export default function LibroDiarioView({
+  studyId,
   company,
   vouchers,
   accounts,
@@ -29,6 +33,7 @@ export default function LibroDiarioView({
   const [statusFilter, setStatusFilter] = useState<'Valido' | 'Todos' | 'Anulado'>('Valido');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>('detailed');
+  const [isPrintingOfficial, setIsPrintingOfficial] = useState<boolean>(false);
 
   // Build list of unique periods available in vouchers
   const availablePeriods = useMemo(() => {
@@ -206,6 +211,76 @@ export default function LibroDiarioView({
     window.print();
   };
 
+  const handlePrintOfficialBook = async () => {
+    if (filteredVouchers.length === 0) {
+      alert('No hay asientos contables para emitir el Libro Diario Oficial.');
+      return;
+    }
+    
+    setIsPrintingOfficial(true);
+    try {
+      const columns = ['N° Asiento', 'Fecha', 'Tipo', 'Cód. Cuenta', 'Nombre Cuenta', 'Glosa / Ref', 'Debe', 'Haber'];
+      const data: string[][] = [];
+      
+      const accountMap = new Map<string, string>();
+      accounts.forEach(a => accountMap.set(a.code, a.name));
+
+      filteredVouchers.forEach(v => {
+        if (v.lines && v.lines.length > 0) {
+          v.lines.forEach((l, idx) => {
+            const accName = accountMap.get(l.accountCode) || l.accountName || '';
+            const glossText = l.gloss || v.gloss || '';
+            data.push([
+              idx === 0 ? v.voucherNumber.toString() : '',
+              idx === 0 ? v.date : '',
+              idx === 0 ? v.type : '',
+              l.accountCode || '',
+              accName,
+              glossText,
+              (Number(l.debit) || 0).toLocaleString('es-CL'),
+              (Number(l.credit) || 0).toLocaleString('es-CL')
+            ]);
+          });
+        } else {
+          data.push([
+            v.voucherNumber.toString(),
+            v.date,
+            v.type,
+            '-',
+            '-',
+            v.gloss || '',
+            (v.totalDebit || 0).toLocaleString('es-CL'),
+            (v.totalCredit || 0).toLocaleString('es-CL')
+          ]);
+        }
+      });
+
+      const effectiveStudyId = studyId || 'default-study';
+      const result = await printAndLogOfficialBook(effectiveStudyId, company, {
+        bookType: 'LIBRO_DIARIO',
+        title: 'LIBRO DIARIO OFICIAL',
+        subtitle: `Período: ${periodFilter !== 'Todos' ? periodFilter : 'General / Anual'} - Formato Oficial SII (Res. Hojas Sueltas)`,
+        columns,
+        data,
+        orientation: 'portrait',
+        userNotes: `Emisión oficial con folios timbrados de ${filteredVouchers.length} asientos contables.`
+      });
+
+      alert(
+        `✅ Libro Diario Oficial Emitido con Éxito\n\n` +
+        `• Folios SII Utilizados: N° ${result.startFolio} al N° ${result.endFolio} (${result.pagesCount} página${result.pagesCount > 1 ? 's' : ''})\n` +
+        `• Resolución SII: N° ${result.resolutionNumber} del ${result.resolutionDate}\n` +
+        `• Formato: Crystal Reports Oficial con Van / Vienen y Timbraje Autorizado.\n` +
+        `• El consumo de folios ha sido registrado en el Control de Folios SII.`
+      );
+    } catch (err: any) {
+      console.error("Error generating official book:", err);
+      alert('Error al generar Libro Diario Oficial: ' + (err.message || err));
+    } finally {
+      setIsPrintingOfficial(false);
+    }
+  };
+
   const handleDownloadSIIReport = () => {
     if (filteredVouchers.length === 0) {
       alert('No hay asientos contables para generar el informe.');
@@ -229,57 +304,69 @@ export default function LibroDiarioView({
   return (
     <div className="space-y-4">
       {/* Header & Controls */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-2xs flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xl">📖</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Libro Diario Contable</h3>
+            <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-slate-700 border border-slate-200">
+              <BookOpen className="w-4 h-4 text-slate-700" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 tracking-tight uppercase">Libro Diario Contable</h3>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Registro cronológico a partida doble de todas las transacciones y comprobantes ({company.name} - RUT: {company.rut})
+            Registro cronológico a partida doble de todas las transacciones y comprobantes • {company.name} (RUT: {company.rut})
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={handleDownloadSIIReport}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
+            onClick={handlePrintOfficialBook}
+            disabled={isPrintingOfficial}
+            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            title="Emisión oficial con numeración correlativa de folios timbrados por el SII"
           >
-            <span>📄</span>
+            <Printer className="w-3.5 h-3.5 text-slate-300" />
+            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Libro Diario Oficial (Folios SII)'}</span>
+          </button>
+          <button
+            onClick={handleDownloadSIIReport}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+          >
+            <FileText className="w-3.5 h-3.5 text-slate-600" />
             <span>Informe SII (PDF)</span>
           </button>
           <button
             onClick={() => setViewMode(viewMode === 'detailed' ? 'compact' : 'detailed')}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-colors"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors"
           >
-            {viewMode === 'detailed' ? '📋 Vista Compacta' : '🔍 Vista Detallada'}
+            <LayoutList className="w-3.5 h-3.5 text-slate-600" />
+            <span>{viewMode === 'detailed' ? 'Vista Compacta' : 'Vista Detallada'}</span>
           </button>
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
           >
-            <span>📥</span>
-            <span>Exportar CSV / Excel</span>
+            <Download className="w-3.5 h-3.5 text-slate-600" />
+            <span>Exportar CSV</span>
           </button>
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-lg border border-indigo-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
           >
-            <span>🖨️</span>
+            <Printer className="w-3.5 h-3.5 text-slate-600" />
             <span>Imprimir</span>
           </button>
         </div>
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between">
+      <div className="bg-slate-50/80 p-3 rounded-lg border border-slate-200 shadow-2xs flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-3 flex-wrap text-xs">
           <div className="flex items-center gap-1.5">
-            <label className="font-semibold text-slate-700">Período:</label>
+            <label className="font-semibold text-slate-600 text-[11px]">Período:</label>
             <select
               value={periodFilter}
               onChange={(e) => setPeriodFilter(e.target.value)}
-              className="bg-white border border-slate-300 rounded-md px-2.5 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-medium text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none font-mono"
             >
               <option value="Todos">Todos los Períodos</option>
               {availablePeriods.map(p => (
@@ -289,31 +376,31 @@ export default function LibroDiarioView({
           </div>
 
           <div className="flex items-center gap-1.5">
-            <label className="font-semibold text-slate-700">Desde:</label>
+            <label className="font-semibold text-slate-600 text-[11px]">Desde:</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-medium text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none font-mono"
             />
           </div>
 
           <div className="flex items-center gap-1.5">
-            <label className="font-semibold text-slate-700">Hasta:</label>
+            <label className="font-semibold text-slate-600 text-[11px]">Hasta:</label>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-medium text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none font-mono"
             />
           </div>
 
           <div className="flex items-center gap-1.5">
-            <label className="font-semibold text-slate-700">Tipo:</label>
+            <label className="font-semibold text-slate-600 text-[11px]">Tipo:</label>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-white border border-slate-300 rounded-md px-2.5 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-medium text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none"
             >
               <option value="Todos">Todos los Tipos</option>
               <option value="Ingreso">Ingreso</option>
@@ -323,11 +410,11 @@ export default function LibroDiarioView({
           </div>
 
           <div className="flex items-center gap-1.5">
-            <label className="font-semibold text-slate-700">Estado:</label>
+            <label className="font-semibold text-slate-600 text-[11px]">Estado:</label>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="bg-white border border-slate-300 rounded-md px-2.5 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-medium text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none"
             >
               <option value="Valido">Solo Válidos</option>
               <option value="Todos">Todos (Inc. Anulados)</option>
@@ -337,13 +424,16 @@ export default function LibroDiarioView({
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Buscar por glosa, cuenta, RUT, N°..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="bg-white border border-slate-300 rounded-md px-3 py-1 text-xs w-64 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-          />
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Buscar por glosa, cuenta, RUT, N°..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-white border border-slate-300 rounded pl-8 pr-3 py-1 text-xs w-64 text-slate-800 focus:ring-1 focus:ring-slate-700 focus:outline-none"
+            />
+          </div>
           {(periodFilter !== 'Todos' || dateFrom || dateTo || typeFilter !== 'Todos' || statusFilter !== 'Valido' || searchQuery) && (
             <button
               onClick={() => {
@@ -364,35 +454,47 @@ export default function LibroDiarioView({
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Asientos Registrados</span>
-          <p className="text-lg font-black text-slate-900 mt-0.5">{filteredVouchers.length} <span className="text-xs font-normal text-slate-500 font-sans">comprobantes</span></p>
+        <div className="bg-white p-3 rounded-md border border-slate-200 shadow-2xs">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">Asientos Registrados</span>
+          <p className="text-lg font-bold text-slate-900 font-mono tabular-nums mt-0.5">
+            {filteredVouchers.length} <span className="text-xs font-normal text-slate-500 font-sans">comprobantes</span>
+          </p>
         </div>
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Total Débitos (Debe)</span>
-          <p className="text-lg font-black text-indigo-900 mt-0.5">${totals.totalDebit.toLocaleString('es-CL')}</p>
+        <div className="bg-white p-3 rounded-md border border-slate-200 shadow-2xs">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 block">Total Débitos (Debe)</span>
+          <p className="text-lg font-bold text-indigo-950 font-mono tabular-nums mt-0.5">${totals.totalDebit.toLocaleString('es-CL')}</p>
         </div>
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">Total Créditos (Haber)</span>
-          <p className="text-lg font-black text-emerald-900 mt-0.5">${totals.totalCredit.toLocaleString('es-CL')}</p>
+        <div className="bg-white p-3 rounded-md border border-slate-200 shadow-2xs">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 block">Total Créditos (Haber)</span>
+          <p className="text-lg font-bold text-emerald-950 font-mono tabular-nums mt-0.5">${totals.totalCredit.toLocaleString('es-CL')}</p>
         </div>
-        <div className={`p-3 rounded-lg border shadow-2xs ${totals.difference === 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
-          <span className="text-[11px] font-bold uppercase tracking-wider">Cuadratura Período</span>
-          <p className="text-lg font-black mt-0.5 flex items-center gap-1.5">
-            <span>{totals.difference === 0 ? '✓ Cuadrado' : `⚠️ Descuadre: $${totals.difference.toLocaleString('es-CL')}`}</span>
+        <div className={`p-3 rounded-md border shadow-2xs ${totals.difference === 0 ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' : 'bg-rose-50/50 border-rose-200 text-rose-900'}`}>
+          <span className="text-[10px] font-semibold uppercase tracking-wider block">Cuadratura Período</span>
+          <p className="text-lg font-bold font-mono tabular-nums mt-0.5 flex items-center gap-1.5">
+            {totals.difference === 0 ? (
+              <span className="flex items-center gap-1 text-emerald-700">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Cuadrado</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-rose-700">
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                <span>Descuadre: ${totals.difference.toLocaleString('es-CL')}</span>
+              </span>
+            )}
           </p>
         </div>
       </div>
 
       {/* Main Journal Table */}
       {filteredVouchers.length === 0 ? (
-        <div className="bg-white p-12 text-center rounded-xl border border-slate-200 space-y-3">
-          <span className="text-4xl">📖</span>
+        <div className="bg-white p-12 text-center rounded-lg border border-slate-200 space-y-3">
+          <BookOpen className="w-8 h-8 text-slate-300 mx-auto" />
           <p className="text-slate-600 font-medium">No se encontraron asientos contables en el Libro Diario para los filtros seleccionados.</p>
           <p className="text-xs text-slate-400">Puedes generar comprobantes desde la pestaña Comprobantes Contables o contabilizando documentos del RCV.</p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {filteredVouchers.map((v) => {
             const vDebit = v.totalDebit || v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) || 0;
             const vCredit = v.totalCredit || v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) || 0;
@@ -402,29 +504,30 @@ export default function LibroDiarioView({
             return (
               <div
                 key={v.id}
-                className={`bg-white rounded-xl border transition-all shadow-xs overflow-hidden ${
+                className={`bg-white rounded-lg border transition-all shadow-2xs overflow-hidden ${
                   isAnulado ? 'border-red-200 bg-red-50/20 opacity-75' : isBalanced ? 'border-slate-200' : 'border-amber-300 ring-1 ring-amber-300'
                 }`}
               >
                 {/* Voucher Header Banner */}
-                <div className={`px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 border-b ${
-                  isAnulado ? 'bg-red-100/60 border-red-200' : 'bg-slate-100/90 border-slate-200'
+                <div className={`px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 border-b ${
+                  isAnulado ? 'bg-red-100/60 border-red-200' : 'bg-slate-50 border-slate-200'
                 }`}>
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="font-mono font-black text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-300 text-xs">
+                    <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-300 text-xs">
                       Asiento N° {v.voucherNumber}
                     </span>
-                    <span className="font-mono font-semibold text-slate-700 text-xs">
-                      📅 {v.date}
+                    <span className="font-mono text-slate-600 text-xs flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-slate-400" />
+                      {v.date}
                     </span>
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
                       v.type === 'Ingreso' ? 'bg-emerald-100 text-emerald-800' :
                       v.type === 'Egreso' ? 'bg-rose-100 text-rose-800' : 'bg-blue-100 text-blue-800'
                     }`}>
                       {v.type}
                     </span>
-                    <span className="text-xs font-mono text-slate-500 bg-slate-200/70 px-1.5 py-0.5 rounded">
-                      Período: {v.period}
+                    <span className="text-[11px] font-mono text-slate-600 bg-slate-200/60 px-1.5 py-0.5 rounded">
+                      {v.period}
                     </span>
                     {isAnulado && (
                       <span className="text-[10px] bg-red-600 text-white font-bold px-2 py-0.5 rounded uppercase">
@@ -439,14 +542,14 @@ export default function LibroDiarioView({
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <div className="text-xs font-mono">
-                      <span className="text-slate-500 mr-1">Total:</span>
+                    <div className="text-xs font-mono tabular-nums">
+                      <span className="text-slate-500 mr-1 font-sans">Total:</span>
                       <span className="font-bold text-slate-900">${vDebit.toLocaleString('es-CL')}</span>
                     </div>
                     {onEditVoucher && !isAnulado && (
                       <button
                         onClick={() => onEditVoucher(v)}
-                        className="text-[11px] text-indigo-600 hover:text-indigo-900 font-semibold underline"
+                        className="text-[11px] text-slate-600 hover:text-slate-900 font-semibold underline"
                       >
                         Editar Comprobante
                       </button>
@@ -456,8 +559,8 @@ export default function LibroDiarioView({
 
                 {/* Glosa Principal */}
                 {v.gloss && (
-                  <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-100 text-xs text-slate-700 font-medium flex items-center gap-1.5">
-                    <span className="text-slate-400 font-sans">Glosa:</span>
+                  <div className="px-3.5 py-1.5 bg-slate-50/40 border-b border-slate-100 text-xs text-slate-700 font-medium flex items-center gap-1.5">
+                    <span className="text-slate-400 font-normal">Glosa:</span>
                     <span>{v.gloss}</span>
                   </div>
                 )}
@@ -465,7 +568,7 @@ export default function LibroDiarioView({
                 {/* Voucher Lines (Double Entry Table) */}
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                    <thead className="bg-slate-50/80 text-slate-600 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
                         <th className="py-2 px-3 w-28">Código Cuenta</th>
                         <th className="py-2 px-3">Cuenta Contable</th>
@@ -476,7 +579,7 @@ export default function LibroDiarioView({
                         <th className="py-2 px-3 text-right w-28">Haber ($)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono">
+                    <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
                       {v.lines && v.lines.length > 0 ? (
                         v.lines.map((line, idx) => {
                           const acc = accountMap.get(line.accountId) || accountMap.get(line.accountCode);
@@ -484,8 +587,8 @@ export default function LibroDiarioView({
                           const accCode = line.accountCode || acc?.code || line.accountId;
 
                           return (
-                            <tr key={line.id || idx} className="hover:bg-slate-50/80">
-                              <td className="py-2 px-3 font-bold text-slate-800">{accCode}</td>
+                            <tr key={line.id || idx} className="hover:bg-slate-50/70">
+                              <td className="py-2 px-3 font-semibold text-slate-800">{accCode}</td>
                               <td className="py-2 px-3 font-sans font-medium text-slate-900">{accName}</td>
                               <td className="py-2 px-3 text-slate-600 font-sans">
                                 {line.auxiliaryRut ? (
@@ -499,10 +602,10 @@ export default function LibroDiarioView({
                               </td>
                               <td className="py-2 px-3 text-slate-600 font-sans">{line.documentRef || '-'}</td>
                               <td className="py-2 px-3 text-slate-500 font-sans italic">{line.gloss || '-'}</td>
-                              <td className="py-2 px-3 text-right font-bold text-slate-900">
+                              <td className="py-2 px-3 text-right font-semibold text-slate-900">
                                 {line.debit > 0 ? `$${Number(line.debit).toLocaleString('es-CL')}` : '-'}
                               </td>
-                              <td className="py-2 px-3 text-right font-bold text-slate-900">
+                              <td className="py-2 px-3 text-right font-semibold text-slate-900">
                                 {line.credit > 0 ? `$${Number(line.credit).toLocaleString('es-CL')}` : '-'}
                               </td>
                             </tr>
@@ -510,19 +613,19 @@ export default function LibroDiarioView({
                         })
                       ) : (
                         <tr>
-                          <td colSpan={7} className="py-2 px-3 text-center text-slate-400 italic">
+                          <td colSpan={7} className="py-2 px-3 text-center text-slate-400 italic font-sans">
                             Sin líneas detalladas
                           </td>
                         </tr>
                       )}
                     </tbody>
-                    <tfoot className="bg-slate-100/70 border-t border-slate-200 font-mono font-bold text-xs">
+                    <tfoot className="bg-slate-50/80 border-t border-slate-200 font-mono tabular-nums font-semibold text-xs">
                       <tr>
-                        <td colSpan={5} className="py-2 px-3 text-right font-sans uppercase tracking-wider text-slate-600 text-[10px]">
+                        <td colSpan={5} className="py-2 px-3 text-right font-sans uppercase tracking-wider text-slate-500 text-[10px]">
                           Totales Asiento N° {v.voucherNumber}:
                         </td>
-                        <td className="py-2 px-3 text-right text-indigo-950">${vDebit.toLocaleString('es-CL')}</td>
-                        <td className="py-2 px-3 text-right text-indigo-950">${vCredit.toLocaleString('es-CL')}</td>
+                        <td className="py-2 px-3 text-right text-slate-900 font-bold">${vDebit.toLocaleString('es-CL')}</td>
+                        <td className="py-2 px-3 text-right text-slate-900 font-bold">${vCredit.toLocaleString('es-CL')}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -530,10 +633,10 @@ export default function LibroDiarioView({
 
                 {/* Audit & Traceability Bar */}
                 {(v.createdBy || v.creationMode || v.createdAt || v.lastModifiedBy) && (
-                  <div className="px-4 py-1.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 font-mono">
+                  <div className="px-3.5 py-1.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 font-mono">
                     <div className="flex items-center gap-3 flex-wrap">
                       {v.creationMode && (
-                        <span className={`px-1.5 py-0.2 rounded font-semibold text-[9px] uppercase ${
+                        <span className={`px-1.5 py-0.5 rounded font-semibold text-[9px] uppercase ${
                           v.creationMode === 'MANUAL' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
                           v.creationMode === 'IMPORTACION_RCV' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                           'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -567,25 +670,25 @@ export default function LibroDiarioView({
 
       {/* Global Bottom Summary */}
       {filteredVouchers.length > 0 && (
-        <div className="bg-slate-900 text-white p-4 rounded-xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-mono">
+        <div className="bg-slate-900 text-white p-3.5 rounded-lg shadow-xs flex flex-col md:flex-row justify-between items-center gap-3 text-xs font-mono tabular-nums">
           <div className="flex items-center gap-3">
-            <span className="text-emerald-400 font-bold">TOTAL LIBRO DIARIO:</span>
+            <span className="text-slate-200 font-bold font-sans uppercase tracking-wider text-[11px]">Total Libro Diario:</span>
             <span>{filteredVouchers.length} asientos</span>
-            <span>•</span>
+            <span className="text-slate-600">•</span>
             <span>{totals.validCount} válidos</span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-5 flex-wrap">
             <div>
-              <span className="text-slate-400 mr-2">TOTAL DÉBITOS:</span>
-              <span className="text-emerald-400 font-bold">${totals.totalDebit.toLocaleString('es-CL')}</span>
+              <span className="text-slate-400 mr-2 font-sans text-[11px]">TOTAL DÉBITOS:</span>
+              <span className="text-white font-bold">${totals.totalDebit.toLocaleString('es-CL')}</span>
             </div>
             <div>
-              <span className="text-slate-400 mr-2">TOTAL CRÉDITOS:</span>
-              <span className="text-emerald-400 font-bold">${totals.totalCredit.toLocaleString('es-CL')}</span>
+              <span className="text-slate-400 mr-2 font-sans text-[11px]">TOTAL CRÉDITOS:</span>
+              <span className="text-white font-bold">${totals.totalCredit.toLocaleString('es-CL')}</span>
             </div>
             <div>
-              <span className="text-slate-400 mr-2">DIFERENCIA:</span>
+              <span className="text-slate-400 mr-2 font-sans text-[11px]">DIFERENCIA:</span>
               <span className={`font-bold ${totals.difference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 ${totals.difference.toLocaleString('es-CL')}
               </span>

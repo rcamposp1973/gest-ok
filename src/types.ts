@@ -180,6 +180,8 @@ export interface Company {
   assignedAccountantIds?: string[];
   assignedAccountantEmails?: string[];
   customAccountColumns?: string[]; // Lista de nombres de columnas de análisis adicionales (ej: ['REQUIERE SUCURSAL', 'REQUIERE ZONA'])
+  regimenTributario?: string;
+  tasaPpm?: number;
 }
 
 export interface Assignment {
@@ -212,6 +214,8 @@ export interface ChartOfAccount {
   requiereDifCambio?: boolean; // REQUIERE DIF. CAMBIO (SI/NO)
   blce8Columnas?: 'ACTIVO' | 'PASIVO' | 'PERDIDA' | 'GANANCIA' | 'Activo' | 'Pasivo' | 'Pérdida' | 'Ganancia' | string; // BLCE 8 COLUM
   codigoIFRS?: string; // IFRS (ej: 1101, 1103)
+  rubroBalance?: string; // Rubro Balance General / Clasificación IFRS Activo/Pasivo/Patrimonio (ej: Activo Corriente - Efectivo y Equivalentes)
+  rubroResultado?: string; // Rubro Estado de Resultados IFRS (ej: Ingresos de Actividades Ordinarias, Costo de Ventas)
 
   bankInstitution?: string; // Banco (ej. Banco de Chile, Santander, BCI, etc.)
   bankAccountNumber?: string; // N° Cuenta Corriente / Vista
@@ -256,6 +260,7 @@ export interface Auxiliary {
   defaultDebtorAccountId?: string; // Cuenta Contable de Deudor / Cliente (ej. Clientes por Cobrar)
   defaultCreditorAccountId?: string; // Cuenta Contable de Acreedor / Proveedor (ej. Proveedores por Pagar)
   defaultExpenseOrIncomeAccountId?: string; // Cuenta Contable de Ingreso o Costo/Gasto por Defecto
+  defaultGloss?: string; // Glosa Predeterminada / Sugerida para Asientos y Comprobantes Contables
   defaultCostCenter?: string;
   defaultExpenseItem?: string;
   defaultProject?: string;
@@ -454,6 +459,11 @@ export interface RCVAccountingParams {
   defaultSalesIncomeAccountId?: string; // Ingreso por Ventas por Defecto
   defaultCostOrExpenseAccountId?: string; // Costo / Gasto Compras por Defecto
   defaultHonorariosExpenseAccountId?: string; // Gasto Honorarios por Defecto
+  defaultCostCenter?: string; // Centro de Costos por Defecto (Fallback si auxiliar no tiene)
+  defaultExpenseItem?: string; // Ítem de Gasto por Defecto (Fallback si auxiliar no tiene)
+  defaultProject?: string; // Proyecto por Defecto (Fallback si auxiliar no tiene)
+  defaultProduct?: string; // Producto por Defecto (Fallback si auxiliar no tiene)
+  defaultCustomAnalyses?: { [key: string]: string };
 }
 
 export interface PaymentItem {
@@ -760,6 +770,438 @@ export interface MarketingPromoConfig {
   updatedAt?: string;
   updatedBy?: string;
 }
+
+// Control de Hojas Timbradas y Folios Autorizados por el SII
+export interface SiiFolioAuthorization {
+  id: string;
+  companyId: string;
+  resolutionNumber: string; // N° Resolución Timbraje SII
+  resolutionDate: string; // Fecha Resolución
+  startFolio: number; // Folio Inicial Autorizado (ej: 1)
+  endFolio: number; // Folio Final Autorizado (ej: 1000)
+  totalFolios: number; // Cantidad total
+  currentFolio: number; // Próximo Folio Disponible a Utilizar
+  status: 'Activa' | 'Agotada' | 'Anulada';
+  observations?: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
+// Historial / Registro de Consumo de Folios por Libro Oficial Impreso
+export interface FolioUsageLog {
+  id: string;
+  companyId: string;
+  studyId?: string;
+  authorizationId?: string;
+  resolutionNumber?: string;
+  bookType: 'Libro Diario' | 'Libro Mayor' | 'Balance 8 Columnas' | 'Balance IFRS' | 'Estado de Resultados' | 'Libro Inventarios y Balances' | 'RLI / Capital Propio' | 'DDJJ 1847' | string;
+  bookTitle?: string;
+  exerciseYear?: number;
+  periodLabel?: string;
+  period?: string;
+  startFolio: number;
+  endFolio: number;
+  pagesCount?: number;
+  totalFoliosUsed?: number;
+  printedAt: string;
+  printedBy?: string;
+  printedByUserEmail?: string;
+  electronicFileHash?: string;
+  status?: string;
+  notes?: string;
+}
+
+export interface ProductService {
+  id: string;
+  companyId?: string;
+  code: string; // SKU / Código interno
+  name: string;
+  type: 'PRODUCT' | 'SERVICE'; // Controla si mueve Kardex/Stock o no
+  unitOfMeasure: string; // UN, HRS, GL, KG, M, etc.
+  salesPrice: number; // Neto
+  purchaseCost: number; // Neto / PMP
+  
+  // Imputación contable y operativa
+  salesAccountId?: string; // Cuenta Ingreso (ej: 410101 Ventas Servicios)
+  purchaseAccountId?: string; // Cuenta Gasto/Activo (ej: 510201 Honorarios o 110601 Mercaderías)
+  defaultCostCenterId?: string; // Centro de Costo por defecto
+  defaultItemGastoId?: string; // Ítem / Clasificación de Gasto
+  
+  // Control de inventario (Solo aplica si type === 'PRODUCT')
+  currentStock: number;
+  minStock: number;
+  allowNegativeStock: boolean;
+  
+  category?: string;
+  barcode?: string;
+  taxExempt?: boolean;
+  estado?: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CommercialItemLine {
+  id: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  type: 'PRODUCT' | 'SERVICE';
+  quantity: number;
+  unitOfMeasure: string;
+  unitPriceNeto: number;
+  unitCostNeto: number; // Costo PMP en el momento de la venta
+  discountPct?: number;
+  subtotalNeto: number;
+  ivaAmount: number;
+  total: number;
+  
+  // Imputación contable específica
+  salesAccountId?: string;
+  purchaseAccountId?: string;
+  costCenterId?: string;
+  expenseItemId?: string;
+}
+
+export interface CommercialDocument {
+  id: string;
+  companyId: string;
+  operationType: 'VENTA' | 'COMPRA'; // Venta (Clientes) o Compra (Proveedores)
+  documentType: 'COTIZACION' | 'ORDEN_VENTA' | 'FACTURA_VENTA' | 'ORDEN_COMPRA' | 'RECEPCION_COMPRA' | 'FACTURA_COMPRA' | 'GUIA_DESPACHO';
+  folio: number | string;
+  date: string; // YYYY-MM-DD
+  dueDate?: string; // YYYY-MM-DD
+  period: string; // YYYY-MM
+  
+  // Contraparte
+  auxiliaryId?: string;
+  rutContraparte: string;
+  razonSocialContraparte: string;
+  giroContraparte?: string;
+  direccionContraparte?: string;
+  
+  // Detalle de ítems
+  items: CommercialItemLine[];
+  
+  // Totales
+  subtotalNeto: number;
+  ivaAmount: number;
+  totalAmount: number;
+  totalCostPmp?: number; // Costo total valorizado PMP de los productos
+  
+  // Estado y enlaces contables
+  status: 'Borrador' | 'Emitida' | 'Aprobada' | 'Facturada' | 'Contabilizada' | 'Anulada';
+  stockUpdated: boolean; // Si ya impactó el inventario/Kardex
+  voucherIdVentaCompra?: string; // Voucher de Venta o Compra (Ingreso/Gasto/CXC/CXP)
+  voucherIdCostoVentas?: string; // Asiento automático de Costo de Ventas (610101 Débito / 110601 Crédito)
+  
+  observations?: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
+export interface InventoryMovement {
+  id: string;
+  companyId: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  date: string;
+  type: 'IN' | 'OUT' | 'ADJUSTMENT';
+  movementReason: 'COMPRA' | 'VENTA' | 'GUIA_DESPACHO' | 'MERMA' | 'AJUSTE_INVENTARIO' | 'CONSUMO_INTERNO' | 'DEVOLUCION' | 'APERTURA';
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  previousStock: number;
+  resultingStock: number;
+  voucherId?: string;
+  commercialDocId?: string;
+  documentNumber?: string;
+  documentType?: string;
+  rutContraparte?: string;
+  razonSocialContraparte?: string;
+  observations?: string;
+  createdAt: string;
+  createdBy?: string;
+}
+
+export type ContractType = 'INDEFINIDO' | 'PLAZO_FIJO' | 'OBRA_FAENA' | 'PART_TIME';
+export type PensionSystem = 'CAPITAL' | 'CUPRUM' | 'HABITAT' | 'MODELO' | 'PLANVITAL' | 'PROVIDA' | 'UNO' | 'INP' | 'JUBILADO_COTIZA' | 'JUBILADO_NO_COTIZA';
+export type HealthSystem = 'FONASA' | 'BANMEDICA' | 'COLMENA' | 'CONSALUD' | 'CRUZ_BLANCA' | 'NUEVA_MASVIDA' | 'VIDA_TRES' | 'ESENCIAL' | 'ISALUD';
+export type HealthPlanType = 'FONASA_7' | 'ISAPRE_UF' | 'ISAPRE_PESOS' | 'ISAPRE_PORCENTAJE';
+export type ApvType = 'REGIMEN_A' | 'REGIMEN_B' | 'NINGUNO';
+export type TramoCargaFamiliar = 'A' | 'B' | 'C' | 'D' | 'SIN_TRAMO';
+
+export interface Employee {
+  id: string;
+  companyId: string;
+  rut: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  birthDate?: string;
+  gender?: 'M' | 'F' | 'OTRO';
+  nationality?: string;
+  hireDate: string;
+  terminationDate?: string;
+  position: string;
+  department?: string;
+  costCenterId?: string;
+  contractType: ContractType;
+  workHoursPerWeek: number;
+  baseSalary: number; // Sueldo Base Mensual en CLP
+  hasGratificacionLegal: boolean; // 25% con tope 4.75 IMM / 12 (Art. 50 Código del Trabajo)
+  gratificacionType?: 'ART_50' | 'CONVENIDA' | 'SIN_GRATIFICACION';
+  pensionSystem: PensionSystem;
+  pensionCommissionPercent?: number; // Comisión AFP
+  healthSystem: HealthSystem;
+  healthPlanType: HealthPlanType;
+  healthPlanValue: number; // Valor Isapre en UF o Pesos (0 si Fonasa)
+  hasCesantiaAFC: boolean; // Seguro de cesantía
+  apvType?: ApvType;
+  apvInstitution?: string;
+  apvAmount?: number; // Monto APV en Pesos
+  cargasFamiliares: number;
+  tramoCargaFamiliar: TramoCargaFamiliar;
+  colacionPactada?: number;
+  movilizacionPactada?: number;
+  viaticosPactados?: number;
+  bonosPactados?: number;
+  otrosImponiblesPactados?: number;
+  otrosNoImponiblesPactados?: number;
+  descuentoSeguroComplementario?: number;
+  descuentoAhorroBienestar?: number;
+  descuentoPrestamoCuota?: number;
+  otrosDescuentosPactados?: number;
+  contractText?: string;
+  contractStatus?: 'VIGENTE' | 'PENDIENTE_FIRMA' | 'TERMINADO';
+  contractGeneratedDate?: string;
+  contractObservations?: string;
+  bankName?: string;
+  bankAccountType?: 'CORRIENTE' | 'VISTA' | 'RUT' | 'AHORRO';
+  bankAccountNumber?: string;
+  salaryHistory?: SalaryHistoryEntry[];
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SalaryHistoryEntry {
+  id: string;
+  employeeId: string;
+  baseSalary: number; // Sueldo Base Mensual pactado en CLP
+  startDate: string; // YYYY-MM o YYYY-MM-DD
+  endDate?: string | null; // null si se encuentra vigente
+  isCurrent: boolean;
+  reason?: string; // ej: 'Contrato Inicial', 'Reajuste IPC', 'Ascenso y Nuevas Funciones', 'Ajuste Salarial'
+  documentFolio?: string;
+  observations?: string;
+  createdAt: string;
+}
+
+export interface PayrollParameters {
+  period: string; // YYYY-MM
+  uf: number;
+  utm: number;
+  imm: number; // Ingreso Mínimo Mensual ($500.000)
+  topeImponibleAfpUf: number; // 84.3 UF
+  topeImponibleAfcUf: number; // 126.6 UF
+  tasaSisPercent: number; // 1.49%
+  tasaMutualPercent: number; // 0.93%
+  afpCommissions: Record<string, number>;
+  tramosAsignacionFamiliar: {
+    tramoA: number; // $20.328
+    tramoB: number; // $12.475
+    tramoC: number; // $3.943
+    tramoD: number; // $0
+    limiteA: number; // Hasta $539.328
+    limiteB: number; // Hasta $787.746
+    limiteC: number; // Hasta $1.228.614
+  };
+}
+
+export interface PayrollSlip {
+  id: string;
+  companyId: string;
+  period: string; // YYYY-MM
+  year: number;
+  month: number;
+  employeeId: string;
+  employeeRut: string;
+  employeeName: string;
+  employeePosition: string;
+  employeeDepartment?: string;
+  employeeCostCenterId?: string;
+  contractType: ContractType;
+  
+  // Parámetros aplicados
+  ufValue: number;
+  utmValue: number;
+  immValue: number;
+  
+  // Días y Haberes Imponibles
+  diasTrabajados: number; // 1 a 30
+  diasLicencia?: number;
+  diasInasistencia?: number;
+  sueldoBasePactado: number;
+  sueldoBaseProporcional: number;
+  horasExtras50Qty: number;
+  montoHorasExtras50: number;
+  gratificacionLegal: number;
+  bonosImponibles: number;
+  comisionesVentas: number;
+  semanaCorrida?: number;
+  otrosImponibles: number;
+  totalHaberesImponibles: number;
+  
+  // Haberes No Imponibles
+  asignacionColacion: number;
+  asignacionMovilizacion: number;
+  asignacionFamiliar: number;
+  viaticos: number;
+  otrosNoImponibles: number;
+  totalHaberesNoImponibles: number;
+  
+  totalHaberes: number;
+  
+  // Descuentos Previsionales (Cargo Trabajador)
+  pensionSystem: PensionSystem;
+  afpTasa: number;
+  baseImponibleAfp: number;
+  afpMonto: number;
+  healthSystem: HealthSystem;
+  healthPlanType: HealthPlanType;
+  saludLegal7: number;
+  saludAdicionalIsapre: number;
+  saludMontoTotal: number;
+  afcTrabajadorTasa: number;
+  baseImponibleAfc: number;
+  afcTrabajadorMonto: number;
+  apvMonto: number;
+  apvType?: ApvType;
+  totalDescuentosPrevisionales: number;
+  
+  // Tributación Segunda Categoría
+  rentaAfectaImpuesto: number;
+  impuestoUnicoSegundaCategoria: number;
+  tramoImpuestoUnico?: string;
+  
+  // Otros Descuentos
+  anticipos: number;
+  prestamosEmpresa: number;
+  otrosDescuentos: number;
+  totalOtrosDescuentos: number;
+  
+  totalDescuentos: number;
+  alcanceLiquido: number;
+  liquidoAPagar: number;
+  
+  // Conceptos dinámicos del mes (código concepto -> monto)
+  conceptValues?: Record<string, number>;
+  
+  // Aportes Patronales (Costo Empleador)
+  sisMonto: number; // 1.49%
+  afcEmpleadorTasa: number; // 2.4% o 3.0%
+  afcEmpleadorMonto: number;
+  mutualMonto: number; // 0.93%
+  totalAportesPatronales: number;
+  costoTotalEmpresa: number;
+  
+  estado: 'BORRADOR' | 'APROBADA' | 'CENTRALIZADA';
+  voucherId?: string;
+  observations?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PayrollAccountingConfig {
+  gastoSueldosAccountId?: string; // 4201001 Sueldos y Gratificaciones
+  gastoColacionMovilizacionAccountId?: string; // 4201003 Asignaciones no imponibles
+  gastoLeyesSocialesAccountId?: string; // 4201004 Aportes Patronales SIS y AFC
+  sueldosPorPagarAccountId?: string; // 2103001 Sueldos por Pagar
+  impuestoUnicoPorPagarAccountId?: string; // 2104003 Retención Impuesto Único 2da Cat
+  afpPorPagarAccountId?: string; // 2105001 AFP por Pagar
+  saludPorPagarAccountId?: string; // 2105002 Fonasa / Isapres por Pagar
+  afcPorPagarAccountId?: string; // 2105003 AFC por Pagar (Trabajador + Empleador)
+  sisMutualPorPagarAccountId?: string; // 2105004 SIS y Mutual por Pagar
+  anticiposPersonalAccountId?: string; // 1105001 Anticipos al Personal
+  bonosAccountId?: string; // 4201002 Bonos y Comisiones
+  viaticosAccountId?: string; // 4201005 Viáticos y Asignaciones
+}
+
+export type PayrollConceptType = 'HABER_IMPONIBLE' | 'HABER_NO_IMPONIBLE' | 'DESCUENTO';
+
+export interface PayrollConcept {
+  id: string;
+  companyId: string;
+  code: string; // ej: 'BONO_PROD', 'COM_VTAS', 'VIATICO_ZONA', 'BONO_RESP'
+  name: string; // ej: 'Bono de Producción', 'Comisión de Ventas', 'Viático Faena'
+  type: PayrollConceptType;
+  tributable: boolean; // Si tributa Impuesto Único Art. 42/43 LIR
+  imponible: boolean; // Si cotiza AFP, Salud, AFC, SIS, Mutual
+  aplicaGratificacion: boolean; // Si suma a la base de cálculo de gratificación Art. 50
+  reliquidable: boolean; // Si es sujeto a reliquidación tributaria/previsional anual o periódica
+  accountingAccountId?: string; // Cuenta de gasto o pasivo para centralización contable
+  defaultAmount?: number;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EmployeeConceptValue {
+  employeeId: string;
+  conceptId: string;
+  conceptCode: string;
+  amount: number;
+}
+
+export interface ReliquidationMonthDetail {
+  month: string; // YYYY-MM
+  sueldoImponibleOriginal: number;
+  cuotaBono: number;
+  nuevoImponible: number;
+  topeAfpUf: number;
+  ufMes: number;
+  topeAfpPesos: number;
+  afpDiff: number;
+  saludDiff: number;
+  afcDiff: number;
+  totalCotizacionesDiff: number;
+  rentaAfectaOriginal: number;
+  rentaAfectaNueva: number;
+  impuestoUnicoOriginal: number;
+  impuestoUnicoNuevo: number;
+  impuestoUnicoDiff: number; // Retención fiscal diferencial calculada para ese mes
+}
+
+export interface AnnualReliquidation {
+  id: string;
+  companyId: string;
+  employeeId: string;
+  employeeRut: string;
+  employeeName: string;
+  periodPayment: string; // YYYY-MM en que se paga y declara la reliquidación
+  yearOrigin: number; // Año comercial al que corresponde el devengo (ej: 2025 o 2026)
+  monthsCount: number; // 12 o cantidad de meses en que se devengó
+  reliquidationType: 'BONO_ANUAL' | 'GRATIFICACION_ART47' | 'GRATIFICACION_ART50' | 'INCENTIVO_PERIODO';
+  conceptName: string;
+  montoTotalBruto: number;
+  totalCotizacionesPrevisionales: number;
+  totalImpuestoUnicoRetenido: number;
+  liquidoAPagar: number;
+  detallesMesAMes: ReliquidationMonthDetail[];
+  estado: 'BORRADOR' | 'APLICADA' | 'CENTRALIZADA';
+  voucherId?: string;
+  observations?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+
+
+
 
 
 

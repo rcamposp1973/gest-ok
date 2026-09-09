@@ -21,7 +21,9 @@ import {
   DollarSign,
   CreditCard,
   Mail,
-  Phone
+  Phone,
+  FileText,
+  Sparkles
 } from 'lucide-react';
 
 interface AuxiliaryModalProps {
@@ -65,6 +67,7 @@ export default function AuxiliaryModal({
   const [defaultDebtorAccountId, setDefaultDebtorAccountId] = useState('');
   const [defaultCreditorAccountId, setDefaultCreditorAccountId] = useState('');
   const [defaultExpenseOrIncomeAccountId, setDefaultExpenseOrIncomeAccountId] = useState('');
+  const [defaultGloss, setDefaultGloss] = useState('');
 
   const [defaultCostCenter, setDefaultCostCenter] = useState('');
   const [defaultExpenseItem, setDefaultExpenseItem] = useState('');
@@ -90,6 +93,7 @@ export default function AuxiliaryModal({
         setDefaultDebtorAccountId(editingAuxiliary.defaultDebtorAccountId || '');
         setDefaultCreditorAccountId(editingAuxiliary.defaultCreditorAccountId || '');
         setDefaultExpenseOrIncomeAccountId(editingAuxiliary.defaultExpenseOrIncomeAccountId || '');
+        setDefaultGloss(editingAuxiliary.defaultGloss || '');
         setDefaultCostCenter(editingAuxiliary.defaultCostCenter || '');
         setDefaultExpenseItem(editingAuxiliary.defaultExpenseItem || '');
         setDefaultProject(editingAuxiliary.defaultProject || '');
@@ -107,6 +111,7 @@ export default function AuxiliaryModal({
         setDefaultDebtorAccountId('');
         setDefaultCreditorAccountId('');
         setDefaultExpenseOrIncomeAccountId('');
+        setDefaultGloss('');
         setDefaultCostCenter('');
         setDefaultExpenseItem('');
         setDefaultProject('');
@@ -131,9 +136,18 @@ export default function AuxiliaryModal({
 
   const hasRequiredAnalysis = requiresCC || requiresItem || requiresProj || requiresProd;
 
+  // Ordenar Centros de Costo e Ítems de Gasto alfabéticamente por código
+  const sortedCostCenters = useMemo(() => {
+    return [...costCenters].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [costCenters]);
+
+  const sortedExpenseItems = useMemo(() => {
+    return [...expenseItems].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  }, [expenseItems]);
+
   // RUT Formatter
   const handleRutChange = (val: string) => {
-    setRut(val);
+    setRut(val.toUpperCase());
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -149,21 +163,22 @@ export default function AuxiliaryModal({
       setSaving(true);
       setErrorMessage('');
       await onSave({
-        rut: rut.trim(),
-        name: name.trim(),
+        rut: rut.trim().toUpperCase(),
+        name: name.trim().toUpperCase(),
         role,
-        email: email.trim(),
-        phone: phone.trim(),
-        banco: banco.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim().toUpperCase(),
+        banco: banco.trim().toUpperCase(),
         tipoCuenta: tipoCuenta || undefined,
-        numeroCuenta: numeroCuenta.trim(),
+        numeroCuenta: numeroCuenta.trim().toUpperCase(),
         defaultDebtorAccountId: defaultDebtorAccountId || undefined,
         defaultCreditorAccountId: defaultCreditorAccountId || undefined,
         defaultExpenseOrIncomeAccountId: defaultExpenseOrIncomeAccountId || undefined,
-        defaultCostCenter: defaultCostCenter || undefined,
-        defaultExpenseItem: defaultExpenseItem || undefined,
-        defaultProject: defaultProject || undefined,
-        defaultProduct: defaultProduct || undefined,
+        defaultGloss: defaultGloss.trim() || undefined,
+        defaultCostCenter: defaultCostCenter ? defaultCostCenter.toUpperCase() : undefined,
+        defaultExpenseItem: defaultExpenseItem ? defaultExpenseItem.toUpperCase() : undefined,
+        defaultProject: defaultProject ? defaultProject.toUpperCase() : undefined,
+        defaultProduct: defaultProduct ? defaultProduct.toUpperCase() : undefined,
         defaultCustomAnalyses
       });
       onClose();
@@ -245,11 +260,11 @@ export default function AuxiliaryModal({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej. Comercializadora e Inversiones SpA"
+                  onChange={(e) => setName(e.target.value.toUpperCase())}
+                  placeholder="Ej. COMERCIALIZADORA E INVERSIONES SPA"
                   required
                   disabled={isReadOnly}
-                  className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none uppercase"
                 />
               </div>
             </div>
@@ -324,7 +339,7 @@ export default function AuxiliaryModal({
                   <option value="">(Opcional - Usar cuenta por defecto RCV)</option>
                   {accounts.map(a => (
                     <option key={a.id} value={a.id}>
-                      [{a.code}] {a.name} ({a.type})
+                      [{a.code}] {a.name}
                     </option>
                   ))}
                 </select>
@@ -343,7 +358,7 @@ export default function AuxiliaryModal({
                   <option value="">(Opcional - Usar cuenta por defecto RCV)</option>
                   {accounts.map(a => (
                     <option key={a.id} value={a.id}>
-                      [{a.code}] {a.name} ({a.type})
+                      [{a.code}] {a.name}
                     </option>
                   ))}
                 </select>
@@ -353,12 +368,7 @@ export default function AuxiliaryModal({
             {/* CUENTA DE INGRESO O GASTO / COSTO */}
             <div>
               <label className="block text-xs font-bold text-indigo-900 mb-1 flex items-center justify-between">
-                <span>Cuenta Contable de Ingreso o Costo/Gasto por Defecto *</span>
-                {selectedIncomeExpenseAcc && (
-                  <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded border border-indigo-200">
-                    Tipo: {selectedIncomeExpenseAcc.type}
-                  </span>
-                )}
+                <span>Cuenta Contable de Ingreso o Costo/Gasto por Defecto</span>
               </label>
               <select
                 value={defaultExpenseOrIncomeAccountId}
@@ -369,12 +379,85 @@ export default function AuxiliaryModal({
                 <option value="">-- Seleccionar Cuenta de Ingreso, Gasto o Costo --</option>
                 {accounts.map(a => (
                   <option key={a.id} value={a.id}>
-                    [{a.code}] {a.name} ({a.type})
+                    [{a.code}] {a.name}
                   </option>
                 ))}
               </select>
               <p className="text-[11px] text-slate-500 mt-1">
                 Al imputar documentos RCV de este auxiliar, el sistema asignará automáticamente esta cuenta contable para la contrapartida de Gasto/Ingreso.
+              </p>
+            </div>
+
+            {/* GLOSA SUGERIDA / PREDETERMINADA */}
+            <div className="p-3.5 bg-gradient-to-br from-indigo-50/70 to-blue-50/50 rounded-xl border border-indigo-100 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Glosa Sugerida / Descripción por Defecto para Asientos</span>
+                </label>
+                <span className="text-[10px] text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200/60 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-indigo-500" />
+                  Autollenado inteligente
+                </span>
+              </div>
+              
+              <div className="relative">
+                <input
+                  type="text"
+                  value={defaultGloss}
+                  onChange={(e) => setDefaultGloss(e.target.value)}
+                  placeholder="Ej. Servicios de Mantención Mensual, Compra de Insumos Computacionales, Arriendo de Oficina..."
+                  disabled={isReadOnly}
+                  className="w-full px-3 py-2 text-xs bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-slate-800 placeholder-slate-400 font-medium"
+                />
+                {defaultGloss && (
+                  <button
+                    type="button"
+                    onClick={() => setDefaultGloss('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                    title="Borrar glosa"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Sugerencias Rápidas */}
+              {!isReadOnly && (
+                <div className="space-y-1.5 pt-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                    Sugerencias rápidas (haz clic para insertar):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      'Servicios de Mantención y Soporte',
+                      'Honorarios Asesoría Profesional',
+                      'Compra de Insumos y Mercaderías',
+                      'Arriendo de Oficinas e Instalaciones',
+                      'Servicios Básicos y Telecomunicaciones',
+                      'Fletes y Servicios de Transporte',
+                      'Venta de Mercaderías y Productos',
+                      'Servicios de Publicidad y Marketing'
+                    ].map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        onClick={() => setDefaultGloss(sug)}
+                        className={`text-[10.5px] px-2 py-1 rounded-md border transition-all text-left ${
+                          defaultGloss === sug
+                            ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs'
+                            : 'bg-white hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border-slate-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        + {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[10.5px] text-slate-500 leading-relaxed">
+                💡 Al ingresar comprobantes contables manuales, procesar facturas del RCV o realizar conciliaciones bancarias asociadas a este RUT, el sistema precompletará esta glosa automáticamente ahorrándote digitación.
               </p>
             </div>
 
@@ -480,7 +563,7 @@ export default function AuxiliaryModal({
                   }`}
                 >
                   <option value="">-- Seleccionar Centro de Costo --</option>
-                  {costCenters.map(cc => (
+                  {sortedCostCenters.map(cc => (
                     <option key={cc.id} value={cc.code || cc.name}>
                       [{cc.code}] {cc.name}
                     </option>
@@ -507,7 +590,7 @@ export default function AuxiliaryModal({
                   }`}
                 >
                   <option value="">-- Seleccionar Ítem de Gasto --</option>
-                  {expenseItems.map(item => (
+                  {sortedExpenseItems.map(item => (
                     <option key={item.id} value={item.code || item.name}>
                       [{item.code}] {item.name}
                     </option>
