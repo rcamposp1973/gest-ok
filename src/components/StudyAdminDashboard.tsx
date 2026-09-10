@@ -4,7 +4,7 @@ import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc } from '
 import { User, Company, UserRole, Assignment, Study, ChartOfAccount, Voucher, RCVDocument, BankReconciliation, FiscalPeriodYear, DTEConfig } from '../types';
 import CompanyAccountingDashboard from './CompanyAccountingDashboard';
 import ClientExecutiveManagementView from './ClientExecutiveManagementView';
-import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Lock, Eye, EyeOff, FileText, Upload, Sparkles, Server, Check, ArrowRight } from 'lucide-react';
+import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Lock, Eye, EyeOff, FileText, Upload, Sparkles, Server, Check, ArrowRight, Activity } from 'lucide-react';
 import ChangePasswordModal from './ChangePasswordModal';
 import { isTestStudy, executeTestStudyDataPurge, TestStudyPurgeStats } from '../utils/testStudyPurgeUtils';
 
@@ -808,12 +808,14 @@ export default function StudyAdminDashboard({
 
       return (
         <ClientExecutiveManagementView
+          studyId={studyId}
           company={selectedCompanyForAccounting}
           accounts={observerAccounts}
           vouchers={observerVouchers}
           rcvDocuments={observerRcvDocs}
           bankReconciliations={observerBankRecs}
           fiscalYears={observerFiscalYears}
+          auxiliaries={[]}
           onBack={() => handleSelectCompany(null)}
         />
       );
@@ -855,30 +857,45 @@ export default function StudyAdminDashboard({
         </div>
       )}
 
-      {/* Header del Estudio */}
-      <div className="bg-slate-900 text-white p-5 rounded-lg shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-slate-800">
-        <div>
-          <span className={`text-[11px] px-2.5 py-0.5 rounded font-mono font-bold uppercase ${
-            isAnalyst ? 'bg-amber-900/60 text-amber-200 border border-amber-700' :
-            isObserver ? 'bg-sky-900/60 text-sky-200 border border-sky-700' :
-            isAccountant ? 'bg-emerald-900/60 text-emerald-200 border border-emerald-700' :
-            isSuperUser ? 'bg-slate-800 text-slate-200 border border-slate-700' :
-            'bg-slate-800 text-slate-200 border border-slate-700'
-          }`}>
-            {isAnalyst ? 'PERFIL ANALISTA' : isObserver ? 'CLIENTE OBSERVADOR (GESTIÓN)' : isAccountant ? 'PERFIL CONTADOR' : isSuperUser ? 'SUPER ADMIN (LECTURA)' : 'ADMINISTRACIÓN DE ESTUDIO'}
-          </span>
-          <h2 className="text-xl font-bold mt-1.5 text-white tracking-tight">
-            {isRestrictedWorker ? 'Mis Empresas Asignadas' : 'Panel de Administración y Contabilidad'}
-          </h2>
-          <p className="text-slate-400 text-xs mt-1">
-            Estudio ID: <span className="font-mono bg-slate-950 px-2 py-0.5 rounded text-slate-300 border border-slate-800">{studyId}</span>
-          </p>
+      {/* Header del Estudio con Formato Moderno Pulso Contable / Gest_OK */}
+      <div className="bg-white text-[#0D253D] p-5 sm:p-6 rounded-2xl shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-slate-200/80">
+        <div className="flex items-center gap-3.5">
+          {/* Logo Oficial Pulso Contable / Gest_OK */}
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#533AFD] to-sky-400 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 shrink-0">
+            <Activity className="w-6 h-6 stroke-[2.5]" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-extrabold text-lg text-[#0D253D] tracking-tight">
+                Pulso Contable
+              </span>
+              <span className="text-[10px] font-mono font-bold bg-indigo-50 text-[#533AFD] px-2 py-0.5 rounded-full border border-indigo-100">
+                Gest_OK
+              </span>
+              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider ${
+                isAnalyst ? 'bg-amber-50 text-amber-800 border border-amber-200' :
+                isObserver ? 'bg-sky-50 text-sky-800 border border-sky-200' :
+                isAccountant ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+                isSuperUser ? 'bg-purple-50 text-purple-800 border border-purple-200' :
+                'bg-indigo-50 text-indigo-800 border border-indigo-200'
+              }`}>
+                {isAnalyst ? 'Analista' : isObserver ? 'Cliente Observador' : isAccountant ? 'Contador' : isSuperUser ? 'Super Admin (Lectura)' : 'Administración Estudio'}
+              </span>
+            </div>
+            <h2 className="text-sm font-bold text-[#425466] mt-0.5">
+              {isRestrictedWorker ? 'Mis Empresas Asignadas' : 'Panel de Gestión y Operación Contable'}
+            </h2>
+            <p className="text-slate-400 text-[11px] mt-0.5 flex items-center gap-1.5">
+              <span>Estudio ID:</span>
+              <span className="font-mono bg-slate-50 px-2 py-0.5 rounded-md text-slate-700 border border-slate-200 font-semibold">{studyId}</span>
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
-          <div className="bg-slate-950/80 p-3 rounded-lg border border-slate-800 flex items-center gap-3 flex-1 sm:flex-initial">
+          <div className="bg-[#F8FAFC] p-2.5 rounded-xl border border-slate-200/80 flex items-center gap-3 flex-1 sm:flex-initial">
             <div className="flex-1">
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+              <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                 {isRestrictedWorker ? 'Ingresar a Empresa' : 'Selector de Empresa Activa'}
               </label>
               <select
@@ -887,7 +904,7 @@ export default function StudyAdminDashboard({
                   if (found) handleSelectCompany(found);
                 }}
                 value={selectedCompanyForAccounting?.id || ''}
-                className="bg-white text-slate-900 text-xs p-2 rounded font-semibold w-full sm:w-64 border border-slate-300 focus:ring-1 focus:ring-slate-700 focus:outline-none"
+                className="bg-white text-slate-900 text-xs p-2 rounded-lg font-semibold w-full sm:w-64 border border-slate-200 shadow-2xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               >
                 <option value="" disabled>Seleccione empresa cliente...</option>
                 {visibleCompanies.map(c => (
@@ -902,10 +919,10 @@ export default function StudyAdminDashboard({
               <button
                 type="button"
                 onClick={() => setShowChangePassModal(true)}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors"
+                className="px-3.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-200/80 flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                 title="Cambiar contraseña de acceso"
               >
-                <Key className="w-3.5 h-3.5 text-amber-400" />
+                <Key className="w-3.5 h-3.5 text-amber-500" />
                 <span>Clave</span>
               </button>
             )}
@@ -914,10 +931,10 @@ export default function StudyAdminDashboard({
               <button
                 type="button"
                 onClick={onLogout}
-                className="px-3 py-2 bg-rose-950/60 hover:bg-rose-900/80 text-rose-200 hover:text-white text-xs font-semibold rounded-lg border border-rose-800/60 flex items-center gap-1.5 transition-colors"
+                className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl border border-rose-200 flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                 title="Cerrar sesión segura"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                <LogOut className="w-3.5 h-3.5 text-rose-600" />
                 <span>Salir</span>
               </button>
             )}
@@ -934,32 +951,48 @@ export default function StudyAdminDashboard({
 
       {/* Si es contador o analista, mostrar únicamente sus empresas asignadas */}
       {isRestrictedWorker ? (
-        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-2xs space-y-4">
-          <h3 className="text-base font-bold text-slate-900">
-            Empresas asignadas a tu cuenta ({visibleCompanies.length})
-          </h3>
+        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/80 shadow-xs space-y-5">
+          <div>
+            <h3 className="text-base font-extrabold text-[#0D253D]">
+              Empresas asignadas a tu cuenta ({visibleCompanies.length})
+            </h3>
+            <p className="text-xs text-[#64748D] mt-0.5">
+              Selecciona la empresa con la que deseas trabajar para abrir los libros, F29 y conciliación.
+            </p>
+          </div>
+
           {visibleCompanies.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50 rounded-lg border border-slate-200">
+            <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
               <p className="text-sm font-semibold text-slate-700">No tienes empresas asignadas actualmente.</p>
               <p className="text-xs text-slate-500 mt-1">Por favor comunícate con el administrador de tu estudio para que asigne las empresas clientes a tu usuario.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {visibleCompanies.map(c => (
-                <div key={c.id} className="p-4 border border-slate-200 bg-white hover:border-slate-400 rounded-lg space-y-3 transition-all shadow-2xs">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">{c.name}</h4>
-                    <p className="text-xs font-mono text-slate-600">RUT: {c.rut}</p>
-                    {c.fantasyName && <p className="text-xs text-slate-500">Fantasía: {c.fantasyName}</p>}
-                    <span className={`inline-block mt-2 text-[10px] px-2 py-0.5 rounded font-semibold ${c.estado === 'Inactivo' ? 'bg-rose-50 text-rose-800 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}`}>
-                      {c.estado || 'Activo'}
-                    </span>
+                <div key={c.id} className="p-5 border border-slate-200/90 bg-white hover:border-indigo-300 hover:shadow-md rounded-2xl space-y-4 transition-all shadow-xs flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 text-[#533AFD] flex items-center justify-center font-bold text-xs shrink-0 border border-indigo-100">
+                        <Building2 className="w-4 h-4" />
+                      </div>
+                      <span className={`inline-block text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${c.estado === 'Inactivo' ? 'bg-rose-50 text-rose-800 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}`}>
+                        {c.estado || 'Activo'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="font-extrabold text-[#0D253D] text-sm leading-snug">{c.name}</h4>
+                      <p className="text-xs font-mono font-medium text-[#533AFD] mt-0.5">RUT: {c.rut}</p>
+                      {c.fantasyName && <p className="text-xs text-[#64748D] mt-0.5">Fantasía: {c.fantasyName}</p>}
+                    </div>
                   </div>
+
                   <button
                     onClick={() => handleSelectCompany(c)}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded transition-colors flex items-center justify-center gap-1.5 border border-slate-700"
+                    className="w-full py-2.5 bg-[#533AFD] hover:bg-[#4326EB] text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 shadow-md shadow-indigo-500/20 cursor-pointer transform hover:-translate-y-0.5"
                   >
-                    Abrir Contabilidad &rarr;
+                    <span>Abrir Contabilidad</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
@@ -968,22 +1001,20 @@ export default function StudyAdminDashboard({
         </div>
       ) : (
         <div className="space-y-6">
-          <div className="border-b border-slate-200">
-            <nav className="-mb-px flex space-x-6">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`whitespace-nowrap py-3 px-1 border-b-2 font-bold text-xs uppercase tracking-wider transition-colors ${
-                    activeTab === tab.id
-                      ? 'border-slate-900 text-slate-900'
-                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
+          <div className="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-xs inline-flex flex-wrap gap-1.5">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                  activeTab === tab.id
+                    ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
           {activeTab === 'users' && (

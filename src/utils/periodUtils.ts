@@ -129,13 +129,13 @@ export function getNextOpenPeriodAndDate(
 
 /**
  * Devuelve el período de trabajo activo más conveniente.
- * Prioriza el año operativo (por defecto 2024), buscando el mes abierto activo.
+ * Prioriza el año operativo (por defecto 2025), buscando el mes abierto activo.
  */
 export function getLatestOpenPeriod(
   fiscalYears: FiscalPeriodYear[] = [],
-  preferredYear: number = 2024
+  preferredYear: number = 2026
 ): string {
-  // 1. Buscar en el año preferido (ej. 2024)
+  // 1. Buscar en el año preferido (ej. 2026)
   const prefFy = fiscalYears.find(f => Number(f.id || f.year) === preferredYear);
   if (prefFy && prefFy.months) {
     // Buscar los meses abiertos en orden ascendente (el primer mes abierto o el más activo)
@@ -146,10 +146,10 @@ export function getLatestOpenPeriod(
     }
   }
 
-  // 2. Si no hay meses abiertos en preferredYear, buscar en otros años disponibles
+  // 2. Si no hay meses abiertos en preferredYear, buscar en otros años disponibles (desde 2026)
   for (const fy of fiscalYears) {
     const y = Number(fy.id || fy.year);
-    if (!y || !fy.months) continue;
+    if (!y || y < 2026 || !fy.months) continue;
     for (let m = 1; m <= 12; m++) {
       if (fy.months[m] === 'Abierto') {
         return `${y}-${String(m).padStart(2, '0')}`;
@@ -157,14 +157,14 @@ export function getLatestOpenPeriod(
     }
   }
 
-  return `${preferredYear}-09`;
+  return `${preferredYear}-01`;
 }
 
 /**
- * Devuelve el período inmediatamente siguiente (ej: "2024-09" -> "2024-10", "2024-12" -> "2025-01")
+ * Devuelve el período inmediatamente siguiente (ej: "2026-01" -> "2026-02", "2026-12" -> "2027-01")
  */
 export function getNextPeriodStr(periodStr: string): string {
-  if (!periodStr || !periodStr.includes('-')) return '2024-09';
+  if (!periodStr || !periodStr.includes('-')) return '2026-01';
   const [y, m] = periodStr.split('-').map(Number);
   if (!y || !m) return periodStr;
   if (m === 12) return `${y + 1}-01`;
@@ -172,18 +172,18 @@ export function getNextPeriodStr(periodStr: string): string {
 }
 
 /**
- * Devuelve el período inmediatamente anterior (ej: "2024-09" -> "2024-08", "2025-01" -> "2024-12")
+ * Devuelve el período inmediatamente anterior (ej: "2026-02" -> "2026-01", "2026-01" -> "2026-01")
  */
 export function getPrevPeriodStr(periodStr: string): string {
-  if (!periodStr || !periodStr.includes('-')) return '2024-08';
+  if (!periodStr || !periodStr.includes('-')) return '2026-01';
   const [y, m] = periodStr.split('-').map(Number);
-  if (!y || !m) return periodStr;
+  if (!y || !m || (y === 2026 && m === 1)) return '2026-01';
   if (m === 1) return `${y - 1}-12`;
   return `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
 /**
- * Devuelve el nombre formateado en español para un período (ej: "2024-09" -> "Septiembre de 2024")
+ * Devuelve el nombre formateado en español para un período (ej: "2025-01" -> "Enero de 2025")
  */
 export function getPeriodFormattedName(periodStr: string): string {
   if (!periodStr || !periodStr.includes('-')) return periodStr;

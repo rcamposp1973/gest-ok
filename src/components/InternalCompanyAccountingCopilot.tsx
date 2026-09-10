@@ -27,7 +27,10 @@ import {
   Lock,
   Globe2,
   PieChart,
-  Lightbulb
+  Lightbulb,
+  ArrowLeftRight,
+  EyeOff,
+  Eye
 } from 'lucide-react';
 import { AnimatedOkLogo } from './AnimatedOkLogo';
 import { Company, ChartOfAccount, Voucher, RCVDocument, Auxiliary, FiscalPeriodYear } from '../types';
@@ -72,6 +75,29 @@ export default function InternalCompanyAccountingCopilot({
   const [trainedKnowledge, setTrainedKnowledge] = useState<CopilotKnowledgeItem[]>([]);
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Position ('bottom-right' | 'bottom-left') and Visibility (hidden vs visible)
+  const [position, setPosition] = useState<'bottom-right' | 'bottom-left'>(() => {
+    return (localStorage.getItem('gestok_internal_copilot_position') as any) || 'bottom-right';
+  });
+  const [isHidden, setIsHidden] = useState<boolean>(() => {
+    return localStorage.getItem('gestok_internal_copilot_hidden') === 'true';
+  });
+
+  const togglePosition = () => {
+    const newPos = position === 'bottom-right' ? 'bottom-left' : 'bottom-right';
+    setPosition(newPos);
+    localStorage.setItem('gestok_internal_copilot_position', newPos);
+  };
+
+  const toggleHidden = () => {
+    const newHidden = !isHidden;
+    setIsHidden(newHidden);
+    localStorage.setItem('gestok_internal_copilot_hidden', String(newHidden));
+    if (newHidden) {
+      setIsOpen(false);
+    }
+  };
 
   // Load trained knowledge (Global + Isolated for this company)
   useEffect(() => {
@@ -643,66 +669,139 @@ export default function InternalCompanyAccountingCopilot({
 
   return (
     <>
-      {/* Botón flotante de Junior en la empresa */}
-      <div className="fixed bottom-6 right-6 z-40">
-        {!isOpen && (
+      {/* Botón flotante o Contenedor con Posición y Opción de Ocultar */}
+      {isHidden ? (
+        <div className={`fixed bottom-6 ${position === 'bottom-right' ? 'right-6' : 'left-6'} z-40 flex items-center gap-1.5`}>
           <button
-            onClick={() => setIsOpen(true)}
-            className="flex items-center gap-2.5 bg-gradient-to-r from-emerald-600 via-teal-700 to-indigo-800 text-white px-4 py-3 rounded-full shadow-xl shadow-emerald-950/40 hover:shadow-emerald-600/50 hover:scale-105 transition-all duration-200 border border-emerald-400/40 group"
-            title={`Junior - Asistente Contable y de Gestión para ${company.name}`}
+            onClick={toggleHidden}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/85 hover:bg-slate-900 text-emerald-300 hover:text-emerald-100 border border-emerald-500/40 shadow-lg text-xs font-semibold transition-all backdrop-blur-xs group cursor-pointer"
+            title="Mostrar Asistente Junior"
           >
-            <AnimatedOkLogo size="sm" />
-            <div className="text-left pr-1">
-              <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
-                <span>Junior</span>
-                <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/30 text-emerald-100 rounded font-medium">Copiloto IA</span>
-              </div>
-              <div className="text-[11px] text-emerald-100/90 truncate max-w-[140px]">{company.name}</div>
-            </div>
+            <Eye className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+            <span>Junior IA</span>
           </button>
-        )}
-
-        {/* Ventana de Chat de Junior */}
-        {isOpen && (
-          <div className="w-[380px] sm:w-[440px] h-[600px] max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-200 font-sans z-50">
-            
-            {/* Header de Junior */}
-            <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 p-3.5 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="relative">
-                  <AnimatedOkLogo size="md" />
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-slate-900 rounded-full"></span>
+          <button
+            onClick={togglePosition}
+            className="p-1.5 rounded-full bg-slate-900/85 hover:bg-slate-900 text-slate-400 hover:text-white border border-slate-700/70 shadow-lg transition-all cursor-pointer"
+            title={position === 'bottom-right' ? 'Mover a la izquierda' : 'Mover a la derecha'}
+          >
+            <ArrowLeftRight className="w-3 h-3" />
+          </button>
+        </div>
+      ) : (
+        <div className={`fixed bottom-6 ${position === 'bottom-right' ? 'right-6 items-end' : 'left-6 items-start'} z-40 flex flex-col gap-2`}>
+          {!isOpen && (
+            <div className="relative group flex items-center gap-1.5">
+              {position === 'bottom-left' && (
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700 p-1 rounded-full shadow-lg backdrop-blur-xs">
+                  <button
+                    onClick={togglePosition}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Mover a la derecha"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div>
-                  <div className="text-sm font-bold text-white flex items-center gap-1.5">
+              )}
+
+              <button
+                onClick={() => setIsOpen(true)}
+                className="flex items-center gap-2.5 bg-gradient-to-r from-emerald-600 via-teal-700 to-indigo-800 text-white px-4 py-3 rounded-full shadow-xl shadow-emerald-950/40 hover:shadow-emerald-600/50 hover:scale-105 transition-all duration-200 border border-emerald-400/40 group cursor-pointer"
+                title={`Junior - Asistente Contable y de Gestión para ${company.name}`}
+              >
+                <AnimatedOkLogo size="sm" />
+                <div className="text-left pr-1">
+                  <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
                     <span>Junior</span>
-                    <span className="text-[10px] font-semibold text-emerald-300 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-500/40">
-                      IFRS, Tributario & Gestión
-                    </span>
+                    <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/30 text-emerald-100 rounded font-medium">Copiloto IA</span>
                   </div>
-                  <p className="text-[11px] text-emerald-300/90 font-medium truncate max-w-[230px]">
-                    🏢 {company.name} ({company.rut})
-                  </p>
+                  <div className="text-[11px] text-emerald-100/90 truncate max-w-[140px]">{company.name}</div>
+                </div>
+              </button>
+
+              {position === 'bottom-right' && (
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700 p-1 rounded-full shadow-lg backdrop-blur-xs">
+                  <button
+                    onClick={togglePosition}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Mover a la izquierda"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Ventana de Chat de Junior */}
+          {isOpen && (
+            <div className="w-[380px] sm:w-[440px] h-[600px] max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-200 font-sans z-50">
+              
+              {/* Header de Junior */}
+              <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 p-3.5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="relative">
+                    <AnimatedOkLogo size="md" />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-slate-900 rounded-full"></span>
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                      <span>Junior</span>
+                      <span className="text-[10px] font-semibold text-emerald-300 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-500/40">
+                        IFRS, Tributario & Gestión
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-300/90 font-medium truncate max-w-[230px]">
+                      🏢 {company.name} ({company.rut})
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={togglePosition}
+                    className="text-slate-400 hover:text-emerald-300 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title={position === 'bottom-right' ? 'Mover a la izquierda' : 'Mover a la derecha'}
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="text-slate-400 hover:text-amber-300 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Minimizar"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="text-slate-400 hover:text-red-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Cerrar"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="Minimizar"
-                >
-                  <Minimize2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="text-slate-400 hover:text-red-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="Cerrar"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
 
             {/* Banner Proactivo Activo (No Invasivo): Apoyo Tributario y de Gestión */}
             <div className="bg-emerald-950/90 border-b border-emerald-800/40 px-3.5 py-2 text-[11px] text-emerald-200 flex items-center justify-between gap-2 shadow-inner">
@@ -863,6 +962,7 @@ export default function InternalCompanyAccountingCopilot({
           </div>
         )}
       </div>
+      )}
 
       {/* Modal: Directivas de Entrenamiento Activas */}
       {showKnowledgeModal && (

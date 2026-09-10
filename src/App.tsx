@@ -23,11 +23,13 @@ import ExecutiveHeader from './components/ExecutiveHeader';
 import IndicadoresEconomicosView from './components/IndicadoresEconomicosView';
 import PresentationView from './components/PresentationView';
 import MarketingPromoManager from './components/MarketingPromoManager';
+import TestimonialManager from './components/TestimonialManager';
+import PricingManager from './components/PricingManager';
 import SuperAdminSystemMonitor from './components/SuperAdminSystemMonitor';
 import LandingHome from './components/LandingHome';
 import { logAuditEvent } from './utils/auditLogger';
 import { APP_VERSION } from './constants/version';
-import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles, LogOut, Megaphone, Activity } from 'lucide-react';
+import { Building2, PlusCircle, CreditCard, ShieldCheck, Users, ShieldAlert, History, Sparkles, LogOut, Megaphone, Activity, Quote } from 'lucide-react';
 
 function Dashboard() {
   const { currentUser } = useAuth();
@@ -36,7 +38,7 @@ function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [studies, setStudies] = useState<Study[]>([]);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
-  const [superAdminTab, setSuperAdminTab] = useState<'monitor' | 'studies' | 'create_study' | 'plans' | 'super_users' | 'marketing_promo' | 'audit_logs' | 'presentation'>('monitor');
+  const [superAdminTab, setSuperAdminTab] = useState<'monitor' | 'studies' | 'create_study' | 'plans' | 'super_users' | 'marketing_promo' | 'testimonials' | 'pricing' | 'audit_logs' | 'presentation'>('monitor');
   const [role, setRole] = useState<UserRole | null>(null);
   const [activeCompany, setActiveCompany] = useState<Company | null>(null);
   const [showGlobalIndicatorsModal, setShowGlobalIndicatorsModal] = useState(false);
@@ -322,21 +324,21 @@ function Dashboard() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setSuperAdminTab('monitor')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'monitor'
-                      ? 'bg-slate-950 text-white shadow-sm ring-2 ring-indigo-500/20'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
                       : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
-                  <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <Activity className="w-4 h-4 text-emerald-300 animate-pulse" />
                   <span>Monitor en Vivo & Estadísticas 📊</span>
                 </button>
 
                 <button
                   onClick={() => setSuperAdminTab('studies')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'studies'
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
@@ -346,9 +348,9 @@ function Dashboard() {
 
                 <button
                   onClick={() => setSuperAdminTab('create_study')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'create_study'
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
@@ -358,9 +360,9 @@ function Dashboard() {
 
                 <button
                   onClick={() => setSuperAdminTab('super_users')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'super_users'
-                      ? 'bg-purple-600 text-white shadow-sm'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
@@ -369,22 +371,46 @@ function Dashboard() {
                 </button>
 
                 <button
+                  onClick={() => setSuperAdminTab('testimonials')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                    superAdminTab === 'testimonials'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Quote className="w-4 h-4 text-indigo-300" />
+                  <span>Testimonios Portada (Diapositivas)</span>
+                </button>
+
+                <button
+                  onClick={() => setSuperAdminTab('pricing')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                    superAdminTab === 'pricing'
+                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4 text-indigo-300" />
+                  <span>Planes y Precios Portada</span>
+                </button>
+
+                <button
                   onClick={() => setSuperAdminTab('marketing_promo')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'marketing_promo'
-                      ? 'bg-amber-600 text-white shadow-sm'
+                      ? 'bg-amber-600 text-white shadow-md'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
                   <Megaphone className="w-4 h-4" />
-                  <span>Promoción Portada (Landing)</span>
+                  <span>Promoción WhatsApp (Landing)</span>
                 </button>
 
                 <button
                   onClick={() => setSuperAdminTab('audit_logs')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'audit_logs'
-                      ? 'bg-slate-900 text-white shadow-sm'
+                      ? 'bg-slate-800 text-white shadow-md'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
@@ -394,13 +420,13 @@ function Dashboard() {
 
                 <button
                   onClick={() => setSuperAdminTab('presentation')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
                     superAdminTab === 'presentation'
-                      ? 'bg-emerald-600 text-white shadow-sm'
+                      ? 'bg-emerald-600 text-white shadow-md'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
-                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <Sparkles className="w-4 h-4 text-emerald-300" />
                   <span>Kit Comercial & Video Tour</span>
                 </button>
               </div>
@@ -431,6 +457,14 @@ function Dashboard() {
 
             {superAdminTab === 'marketing_promo' && (
               <MarketingPromoManager />
+            )}
+
+            {superAdminTab === 'testimonials' && (
+              <TestimonialManager />
+            )}
+
+            {superAdminTab === 'pricing' && (
+              <PricingManager />
             )}
 
             {superAdminTab === 'audit_logs' && (
@@ -630,12 +664,27 @@ function Dashboard() {
 
 function UnauthenticatedHome() {
   const [showLogin, setShowLogin] = useState(false);
+  const [initialEmail, setInitialEmail] = useState('');
 
   if (showLogin) {
-    return <Login onBackToLanding={() => setShowLogin(false)} />;
+    return (
+      <Login 
+        initialEmail={initialEmail}
+        onBackToLanding={() => setShowLogin(false)} 
+      />
+    );
   }
 
-  return <LandingHome onGoToLogin={() => setShowLogin(true)} />;
+  return (
+    <LandingHome 
+      onGoToLogin={(emailArg?: string) => {
+        if (emailArg && typeof emailArg === 'string') {
+          setInitialEmail(emailArg);
+        }
+        setShowLogin(true);
+      }} 
+    />
+  );
 }
 
 function AppContent() {

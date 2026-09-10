@@ -6,8 +6,11 @@ import {
   FiscalPeriodYear,
   RCVDocument,
   BankReconciliation,
-  BankStatementLine
+  BankStatementLine,
+  Auxiliary
 } from '../types';
+import AuditorEstadosFinancierosView from './AuditorEstadosFinancierosView';
+import CompanyNotebooksView from './CompanyNotebooksView';
 import {
   Building2,
   TrendingUp,
@@ -29,22 +32,26 @@ import {
 } from 'lucide-react';
 
 interface ClientExecutiveManagementViewProps {
+  studyId?: string;
   company: Company;
   accounts: ChartOfAccount[];
   vouchers: Voucher[];
   rcvDocuments?: RCVDocument[];
   bankReconciliations?: BankReconciliation[];
   fiscalYears?: FiscalPeriodYear[];
+  auxiliaries?: Auxiliary[];
   onBack?: () => void;
 }
 
 export default function ClientExecutiveManagementView({
+  studyId = '',
   company,
   accounts,
   vouchers,
   rcvDocuments = [],
   bankReconciliations = [],
   fiscalYears = [],
+  auxiliaries = [],
   onBack
 }: ClientExecutiveManagementViewProps) {
   // Period filter: Default to current or latest period
@@ -53,7 +60,7 @@ export default function ClientExecutiveManagementView({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const [activeTab, setActiveTab] = useState<'RESUMEN' | 'VENTAS' | 'GASTOS' | 'CXC' | 'CXP' | 'BANCOS'>('RESUMEN');
+  const [activeTab, setActiveTab] = useState<'RESUMEN' | 'VENTAS' | 'GASTOS' | 'CXC' | 'CXP' | 'BANCOS' | 'AUDITORIA' | 'CUADERNOS'>('RESUMEN');
 
   // Available periods list derived from vouchers and RCV
   const availablePeriods = useMemo(() => {
@@ -347,6 +354,30 @@ export default function ClientExecutiveManagementView({
         >
           <Landmark className="w-3.5 h-3.5" />
           <span>Conciliación Bancaria ({bankMetrics.isFullyBalanced ? 'Cuadrada' : 'Pendiente'})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('AUDITORIA')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'AUDITORIA'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Auditoría de Estados Financieros</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('CUADERNOS')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'CUADERNOS'
+              ? 'bg-indigo-900 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+          <span>Cuadernos de Inteligencia</span>
         </button>
       </div>
 
@@ -877,6 +908,32 @@ export default function ClientExecutiveManagementView({
             </div>
           )}
         </div>
+      )}
+
+      {/* 7. AUDITORÍA DE ESTADOS FINANCIEROS */}
+      {activeTab === 'AUDITORIA' && (
+        <AuditorEstadosFinancierosView
+          studyId={studyId || company.studyId || 'default-study'}
+          company={company}
+          vouchers={vouchers}
+          accounts={accounts}
+          fiscalYears={fiscalYears}
+          auxiliaries={auxiliaries}
+          bankReconciliations={bankReconciliations}
+          onNavigateTab={() => setActiveTab('RESUMEN')}
+        />
+      )}
+
+      {/* 8. CUADERNOS DE INTELIGENCIA */}
+      {activeTab === 'CUADERNOS' && (
+        <CompanyNotebooksView
+          company={company}
+          studyId={studyId || company.studyId || 'default-study'}
+          accounts={accounts}
+          vouchers={vouchers}
+          rcvDocuments={rcvDocuments}
+          auxiliaries={auxiliaries}
+        />
       )}
 
     </div>

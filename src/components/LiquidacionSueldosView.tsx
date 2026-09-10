@@ -73,12 +73,12 @@ export const LiquidacionSueldosView: React.FC<LiquidacionSueldosViewProps> = ({
   onDeleteConcept,
   savedReliquidations = [],
   onSaveReliquidation,
-  defaultYear = 2024,
-  defaultMonth = 9
+  defaultYear = 2026,
+  defaultMonth = 1
 }) => {
   // Estado de Período
-  const [selectedYear, setSelectedYear] = useState<number>(() => defaultYear || 2024);
-  const [selectedMonth, setSelectedMonth] = useState<number>(() => defaultMonth || 9);
+  const [selectedYear, setSelectedYear] = useState<number>(() => defaultYear || 2026);
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => defaultMonth || 1);
   const periodStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
 
   // Sincronizar período con cambios desde props externas
@@ -150,9 +150,9 @@ export const LiquidacionSueldosView: React.FC<LiquidacionSueldosViewProps> = ({
   }, [periodStr, liveUfOverride, liveUtmOverride]);
 
   // --- Regla de Control de Períodos de Remuneraciones ---
-  // 1. Obtener lista ordenada de períodos procesados y guardados en savedSlips
+  // 1. Obtener lista ordenada de períodos procesados y guardados en savedSlips (desde 2026 en adelante)
   const savedPeriods = useMemo(() => {
-    const list = Array.from(new Set(savedSlips.map(s => s.period))).filter(Boolean);
+    const list = Array.from(new Set(savedSlips.map(s => s.period))).filter(p => p && p >= '2026-01');
     list.sort();
     return list;
   }, [savedSlips]);
@@ -163,19 +163,20 @@ export const LiquidacionSueldosView: React.FC<LiquidacionSueldosViewProps> = ({
     return savedPeriods[savedPeriods.length - 1];
   }, [savedPeriods]);
 
-  // 3. El mes activo abierto permitido para calcular/simular remuneraciones
+  // 3. El mes activo abierto permitido para calcular/simular remuneraciones (mínimo Enero 2026)
   const activeOpenPeriod = useMemo(() => {
     if (!latestSavedPeriod) {
-      return '2024-09';
+      return '2026-01';
     }
-    return getNextPeriodStr(latestSavedPeriod);
+    const next = getNextPeriodStr(latestSavedPeriod);
+    return next < '2026-01' ? '2026-01' : next;
   }, [latestSavedPeriod]);
 
   // 4. Identificar si el período seleccionado (periodStr) es un período futuro bloqueado
-  // No se pueden calcular ni ver liquidaciones de un período posterior al mes activo abierto
+  // Permitimos procesar libremente cualquier período abierto o seleccionado desde 2026 sin bloqueo secuencial estricto.
   const isFuturePeriodBlocked = useMemo(() => {
-    return periodStr > activeOpenPeriod;
-  }, [periodStr, activeOpenPeriod]);
+    return false;
+  }, [periodStr]);
 
   // Identificar si el período actual ya fue procesado y guardado previamente
   const isPeriodProcessed = useMemo(() => {

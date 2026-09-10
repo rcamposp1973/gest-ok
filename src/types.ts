@@ -182,6 +182,7 @@ export interface Company {
   customAccountColumns?: string[]; // Lista de nombres de columnas de análisis adicionales (ej: ['REQUIERE SUCURSAL', 'REQUIERE ZONA'])
   regimenTributario?: string;
   tasaPpm?: number;
+  ppmRateHistory?: { rate: number; effectiveFrom: string }[];
 }
 
 export interface Assignment {
@@ -441,8 +442,8 @@ export interface AuditLog {
   studyName?: string;
   companyId?: string;
   companyName?: string;
-  action: 'LOGIN' | 'LOGOUT' | 'CREAR' | 'MODIFICAR' | 'ELIMINAR' | 'CONTABILIZAR' | 'ANULAR' | 'IMPORTACION_MASIVA' | 'PURGA' | 'EXPORTAR';
-  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV' | 'DEMO_PURGE' | 'MARKETING_PROMO';
+  action: 'LOGIN' | 'LOGOUT' | 'CREAR' | 'MODIFICAR' | 'ELIMINAR' | 'CONTABILIZAR' | 'ANULAR' | 'IMPORTACION_MASIVA' | 'PURGA' | 'EXPORTAR' | 'CREATE' | 'UPDATE';
+  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV' | 'DEMO_PURGE' | 'MARKETING_PROMO' | 'MARKETING_LANDING' | 'TESTIMONIOS' | 'PLANES_PRECIOS';
   details: string;
   metadata?: { [key: string]: any };
 }
@@ -1198,6 +1199,43 @@ export interface AnnualReliquidation {
   createdAt: string;
   updatedAt?: string;
 }
+
+export interface LandingTestimonial {
+  id: string;
+  author: string;
+  role: string;
+  company: string;
+  content?: string;
+  rating: number;
+  initials?: string;
+  active?: boolean;
+  order: number;
+  comment?: string;
+  metrics?: string;
+  status?: 'active' | 'draft' | 'inactive';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LandingPricingPlan {
+  id: string;
+  name: string;
+  subtitle?: string;
+  price?: string;
+  billingPeriod?: string;
+  features: string[];
+  ctaText?: string;
+  highlighted?: boolean;
+  badge?: string;
+  active?: boolean;
+  order: number;
+  priceCLP?: number;
+  period?: string;
+  popular?: boolean;
+  description?: string;
+  status?: 'active' | 'draft' | 'inactive';
+}
+
 
 
 

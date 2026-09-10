@@ -13,7 +13,10 @@ import {
   ShieldCheck,
   Minimize2,
   HelpCircle,
-  Clock
+  Clock,
+  ArrowLeftRight,
+  EyeOff,
+  Eye
 } from 'lucide-react';
 import { AnimatedOkLogo } from './AnimatedOkLogo';
 import { db } from '../lib/firebase';
@@ -44,6 +47,29 @@ export default function PublicLandingAiAssistant() {
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [leadSaved, setLeadSaved] = useState(false);
   const [isSavingLead, setIsSavingLead] = useState(false);
+  
+  // Position ('bottom-right' | 'bottom-left') and Visibility (hidden vs visible)
+  const [position, setPosition] = useState<'bottom-right' | 'bottom-left'>(() => {
+    return (localStorage.getItem('gestok_public_copilot_position') as any) || 'bottom-right';
+  });
+  const [isHidden, setIsHidden] = useState<boolean>(() => {
+    return localStorage.getItem('gestok_public_copilot_hidden') === 'true';
+  });
+
+  const togglePosition = () => {
+    const newPos = position === 'bottom-right' ? 'bottom-left' : 'bottom-right';
+    setPosition(newPos);
+    localStorage.setItem('gestok_public_copilot_position', newPos);
+  };
+
+  const toggleHidden = () => {
+    const newHidden = !isHidden;
+    setIsHidden(newHidden);
+    localStorage.setItem('gestok_public_copilot_hidden', String(newHidden));
+    if (newHidden) {
+      setIsOpen(false);
+    }
+  };
   
   const [leadFormData, setLeadFormData] = useState<VisitorLeadForm>({
     name: '',
@@ -278,74 +304,147 @@ export default function PublicLandingAiAssistant() {
 
   return (
     <>
-      {/* Botón flotante inferior derecho */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-2">
-        {!isOpen && (
+      {/* Botón flotante o Contenedor con Posición y Opción de Ocultar */}
+      {isHidden ? (
+        <div className={`fixed bottom-5 ${position === 'bottom-right' ? 'right-5' : 'left-5'} z-50 flex items-center gap-1.5`}>
           <button
-            onClick={() => setIsOpen(true)}
-            className="group relative flex items-center gap-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white px-4 py-3 rounded-full shadow-xl shadow-indigo-900/30 hover:shadow-indigo-600/40 hover:scale-105 transition-all duration-300 border border-indigo-400/40"
-            aria-label="Abrir Asistente Virtual Gest_OK"
+            onClick={toggleHidden}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/85 hover:bg-slate-900 text-slate-300 hover:text-white border border-slate-700/70 shadow-lg text-xs font-semibold transition-all backdrop-blur-xs group cursor-pointer"
+            title="Mostrar Asistente Virtual"
           >
-            <div className="relative flex items-center justify-center">
-              <AnimatedOkLogo size="sm" />
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 border-2 border-slate-900 rounded-full"></span>
-            </div>
-            
-            <div className="text-left pr-1">
-              <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
-                <span>Asistente Virtual</span>
-                <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/30 text-emerald-200 rounded font-medium">En línea</span>
-              </div>
-              <div className="text-[11px] text-indigo-200">¿Tienes dudas sobre el sistema?</div>
-            </div>
-
-            {unreadCount > 0 && (
-              <span className="absolute -top-2 -left-2 bg-amber-500 text-slate-950 font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-slate-900 animate-bounce">
-                1
-              </span>
-            )}
+            <Eye className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+            <span>Asistente IA</span>
           </button>
-        )}
-
-        {/* Ventana de Chat Flotante */}
-        {isOpen && (
-          <div className="w-[360px] sm:w-[400px] h-[540px] max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-200 font-sans z-50">
-            
-            {/* Header del Chat */}
-            <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 p-3.5 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="relative">
-                  <AnimatedOkLogo size="md" />
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-slate-900 rounded-full"></span>
+          <button
+            onClick={togglePosition}
+            className="p-1.5 rounded-full bg-slate-900/85 hover:bg-slate-900 text-slate-400 hover:text-white border border-slate-700/70 shadow-lg transition-all cursor-pointer"
+            title={position === 'bottom-right' ? 'Mover a la izquierda' : 'Mover a la derecha'}
+          >
+            <ArrowLeftRight className="w-3 h-3" />
+          </button>
+        </div>
+      ) : (
+        <div className={`fixed bottom-5 ${position === 'bottom-right' ? 'right-5 items-end' : 'left-5 items-start'} z-50 flex flex-col gap-2`}>
+          {!isOpen && (
+            <div className="relative group flex items-center gap-1.5">
+              {position === 'bottom-left' && (
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700 p-1 rounded-full shadow-lg backdrop-blur-xs">
+                  <button
+                    onClick={togglePosition}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Mover a la derecha"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div>
-                  <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                    <span>Asistente Gest_OK</span>
-                    <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
-                      Oficial
-                    </span>
+              )}
+
+              <button
+                onClick={() => setIsOpen(true)}
+                className="group relative flex items-center gap-3 bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white px-4 py-3 rounded-full shadow-xl shadow-indigo-900/30 hover:shadow-indigo-600/40 hover:scale-105 transition-all duration-300 border border-indigo-400/40 cursor-pointer"
+                aria-label="Abrir Asistente Virtual Gest_OK"
+              >
+                <div className="relative flex items-center justify-center">
+                  <AnimatedOkLogo size="sm" />
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 border-2 border-slate-900 rounded-full"></span>
+                </div>
+                
+                <div className="text-left pr-1">
+                  <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
+                    <span>Asistente Virtual</span>
+                    <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/30 text-emerald-200 rounded font-medium">En línea</span>
                   </div>
-                  <p className="text-[11px] text-slate-400">Guía funcional & Orientación comercial</p>
+                  <div className="text-[11px] text-indigo-200">¿Tienes dudas sobre el sistema?</div>
+                </div>
+
+                {unreadCount > 0 && (
+                  <span className="absolute -top-2 -left-2 bg-amber-500 text-slate-950 font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-slate-900 animate-bounce">
+                    1
+                  </span>
+                )}
+              </button>
+
+              {position === 'bottom-right' && (
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700 p-1 rounded-full shadow-lg backdrop-blur-xs">
+                  <button
+                    onClick={togglePosition}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Mover a la izquierda"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Ventana de Chat Flotante */}
+          {isOpen && (
+            <div className="w-[360px] sm:w-[400px] h-[540px] max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-200 font-sans z-50">
+              
+              {/* Header del Chat */}
+              <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 p-3.5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="relative">
+                    <AnimatedOkLogo size="md" />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-slate-900 rounded-full"></span>
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                      <span>Asistente Gest_OK</span>
+                      <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                        Oficial
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">Guía funcional & Orientación comercial</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={togglePosition}
+                    className="text-slate-400 hover:text-indigo-300 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title={position === 'bottom-right' ? 'Mover a la izquierda' : 'Mover a la derecha'}
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={toggleHidden}
+                    className="text-slate-400 hover:text-amber-300 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Esconder copiloto"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Minimizar chat"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="text-slate-400 hover:text-red-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="Cerrar chat"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="Minimizar chat"
-                >
-                  <Minimize2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="text-slate-400 hover:text-red-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="Cerrar chat"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
 
             {/* Aviso de Confidencialidad y Enfoque */}
             <div className="bg-indigo-950/40 border-b border-indigo-900/40 px-3 py-1.5 flex items-center gap-2 text-[11px] text-indigo-300">
@@ -445,6 +544,7 @@ export default function PublicLandingAiAssistant() {
           </div>
         )}
       </div>
+      )}
 
       {/* Modal Capturador de Prospectos (Leads) */}
       {showLeadModal && (

@@ -2,21 +2,34 @@ import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import { collection, query, where, getDocs, updateDoc, collectionGroup, doc, onSnapshot } from 'firebase/firestore';
-import { Lock, Mail, Eye, EyeOff, LogIn, ShieldCheck, Building2, KeyRound, ArrowLeft, CheckCircle2, MessageCircle, Link as LinkIcon } from 'lucide-react';
+import { 
+  Lock, Mail, Eye, EyeOff, LogIn, ShieldCheck, Building2, KeyRound, 
+  ArrowLeft, CheckCircle2, MessageCircle, Link as LinkIcon,
+  Activity, ArrowRight, TrendingUp, Check, Star, Sparkles
+} from 'lucide-react';
 import { logAuditEvent } from '../utils/auditLogger';
 import { APP_VERSION } from '../constants/version';
 import { MarketingPromoConfig } from '../types';
 
 interface LoginProps {
   onBackToLanding?: () => void;
+  initialEmail?: string;
 }
 
-export default function Login({ onBackToLanding }: LoginProps) {
-  const [email, setEmail] = useState('');
+export default function Login({ onBackToLanding, initialEmail = '' }: LoginProps) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Sincronizar si cambia initialEmail externamente
+  useEffect(() => {
+    if (initialEmail && !email) {
+      setEmail(initialEmail);
+    }
+  }, [initialEmail]);
 
   // Configuración de promoción dinámica desde Firestore (Super Admin) - Oculto por defecto
   const [promoConfig, setPromoConfig] = useState<MarketingPromoConfig | null>(null);
@@ -307,196 +320,347 @@ export default function Login({ onBackToLanding }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4">
-      <div className="max-w-sm w-full bg-white rounded-lg shadow-xl border border-slate-700/60 overflow-hidden">
+    <div className="min-h-screen bg-[#F6F9FC] flex flex-col justify-center selection:bg-[#533AFD] selection:text-white">
+      <div className="w-full max-w-7xl mx-auto my-auto lg:my-8 bg-white lg:rounded-3xl lg:border lg:border-slate-200/80 stripe-card-shadow overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[90vh]">
         
-        {/* Encabezado Corporativo Formal */}
-        <div className="bg-slate-950 p-6 text-white text-center border-b border-slate-800 relative">
-          {onBackToLanding && (
-            <button
-              onClick={onBackToLanding}
-              className="absolute left-4 top-4 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer flex items-center gap-1 text-[11px]"
-              title="Volver a la página principal"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Inicio</span>
-            </button>
-          )}
-          <div className="w-10 h-10 bg-slate-800 rounded-md border border-slate-700 flex items-center justify-center mx-auto mb-3 shadow-xs">
-            <Building2 className="w-5 h-5 text-slate-100 stroke-[1.25]" />
-          </div>
-          <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">PLATAFORMA CORPORATIVA</div>
-          <h1 className="text-xl font-bold tracking-tight text-white mt-1">Gest_OK</h1>
-          <p className="text-slate-400 text-xs mt-1 font-normal">Contabilidad y Gestión &bull; Impulsa la gestión de tus clientes</p>
-        </div>
-
-        <div className="p-6">
-          {error && (
-            <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-md text-rose-800 text-xs font-medium">
-              {error}
-            </div>
-          )}
-
-          {resetSuccess && (
-            <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-xs font-medium flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-700 flex-shrink-0 mt-0.5 stroke-[1.5]" />
-              <span>{resetSuccess}</span>
-            </div>
-          )}
-
-          {isResetMode ? (
-            /* Modo Recuperación de Contraseña */
-            <form onSubmit={handleForgotPassword} className="space-y-4">
-              <div className="text-center mb-2">
-                <h2 className="text-sm font-bold text-slate-900 flex items-center justify-center gap-1.5">
-                  <KeyRound className="w-4 h-4 text-slate-700 stroke-[1.25]" />
-                  <span>Recuperar Contraseña</span>
-                </h2>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Ingresa tu correo electrónico y te enviaremos las instrucciones de recuperación.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Correo Electrónico Registrado</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3 stroke-[1.25]" />
-                  <input
-                    type="email"
-                    placeholder="usuario@estudio.cl"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-slate-700 focus:bg-white focus:border-slate-700 outline-none transition-all"
-                    required
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={resetLoading}
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-semibold text-xs rounded-md transition-colors border border-slate-700 shadow-xs flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {resetLoading ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <KeyRound className="w-4 h-4 stroke-[1.25]" /> Enviar Enlace de Recuperación
-                  </>
-                )}
-              </button>
-
-              <div className="pt-2 text-center">
+        {/* ========================================================= */}
+        {/* COLUMNA IZQUIERDA: FORMULARIO DE ACCESO ULTRALIMPIO       */}
+        {/* ========================================================= */}
+        <div className="lg:col-span-6 xl:col-span-5 p-6 sm:p-10 xl:p-14 flex flex-col justify-between bg-white">
+          
+          <div>
+            {/* Top Bar: Botón Volver a Landing */}
+            <div className="flex items-center justify-between mb-8">
+              {onBackToLanding ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsResetMode(false);
-                    setError('');
-                    setResetSuccess('');
-                  }}
-                  className="text-xs text-slate-700 hover:text-slate-900 font-semibold inline-flex items-center gap-1 transition-colors"
+                  onClick={onBackToLanding}
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-[#64748D] hover:text-[#0D253D] transition cursor-pointer group"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5 stroke-[1.25]" /> Volver a Iniciar Sesión
+                  <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+                  <span>Volver a la portada</span>
                 </button>
-              </div>
-            </form>
-          ) : (
-            /* Modo Iniciar Sesión */
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Correo Electrónico</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3 stroke-[1.25]" />
-                  <input
-                    type="email"
-                    placeholder="usuario@estudio.cl"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-slate-700 focus:bg-white focus:border-slate-700 outline-none transition-all"
-                    required
-                  />
-                </div>
-              </div>
+              ) : (
+                <div />
+              )}
 
+              <span className="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 uppercase">
+                {APP_VERSION.startsWith('v') ? APP_VERSION : `v${APP_VERSION}`}
+              </span>
+            </div>
+
+            {/* Logo de Marca Minimalista con Onda Contable */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#533AFD] to-sky-400 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                <Activity className="w-5 h-5 stroke-[2.5]" />
+              </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Contraseña</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3 stroke-[1.25]" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-9 pr-10 py-2 text-sm bg-slate-50 border border-slate-300 rounded-md focus:ring-1 focus:ring-slate-700 focus:bg-white focus:border-slate-700 outline-none transition-all"
-                    required
-                  />
+                <div className="flex items-center gap-2">
+                  <span className="text-xl font-extrabold tracking-tight text-[#0D253D]">Pulso Contable</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-[#533AFD] border border-indigo-100 font-mono">
+                    Gest_OK
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#64748D]">Sistema Contable, Financiero & Tributario</p>
+              </div>
+            </div>
+
+            {/* Encabezado del Formulario */}
+            <div className="mb-6">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0D253D]">
+                {isResetMode ? 'Recupera tu acceso' : 'Bienvenido de nuevo'}
+              </h1>
+              <p className="text-xs sm:text-sm text-[#64748D] mt-1.5 leading-relaxed">
+                {isResetMode
+                  ? 'Ingresa tu correo o RUT corporativo registrado para enviar el enlace de recuperación.'
+                  : 'Ingresa tus credenciales para acceder a la gestión contable de tu estudio o empresa.'}
+              </p>
+            </div>
+
+            {/* Feedback Messages */}
+            {error && (
+              <div className="mb-5 p-3.5 bg-rose-50 border border-rose-200/80 rounded-xl text-rose-800 text-xs font-medium flex items-start gap-2.5">
+                <div className="w-2 h-2 rounded-full bg-rose-500 mt-1.5 shrink-0" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+            )}
+
+            {resetSuccess && (
+              <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200/80 rounded-xl text-emerald-800 text-xs font-medium flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5 stroke-[2]" />
+                <span className="leading-relaxed">{resetSuccess}</span>
+              </div>
+            )}
+
+            {isResetMode ? (
+              /* MODO RECUPERAR CONTRASEÑA */
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                    Correo Electrónico o RUT
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-[#64748D] absolute left-3.5 top-3.5" />
+                    <input
+                      type="email"
+                      placeholder="usuario@estudio.cl"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-[#533AFD] focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all placeholder:text-slate-400 font-medium"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="w-full py-3.5 px-4 bg-[#533AFD] hover:bg-[#4326EB] active:bg-[#3519d6] text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {resetLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <KeyRound className="w-4 h-4" />
+                      <span>Enviar Enlace de Recuperación</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="text-center pt-2">
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 transition-colors"
+                    onClick={() => {
+                      setIsResetMode(false);
+                      setError('');
+                      setResetSuccess('');
+                    }}
+                    className="text-xs font-semibold text-[#533AFD] hover:underline inline-flex items-center gap-1.5 transition cursor-pointer"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4 stroke-[1.25]" /> : <Eye className="w-4 h-4 stroke-[1.25]" />}
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Volver a Iniciar Sesión</span>
                   </button>
+                </div>
+              </form>
+            ) : (
+              /* MODO INICIAR SESIÓN NORMAL */
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                    Correo Electrónico o RUT
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-[#64748D] absolute left-3.5 top-3.5" />
+                    <input
+                      type="email"
+                      placeholder="usuario@estudio.cl"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-[#533AFD] focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all placeholder:text-slate-400 font-medium"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-[#0D253D]">
+                      Contraseña
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsResetMode(true);
+                        setError('');
+                        setResetSuccess('');
+                      }}
+                      className="text-xs font-semibold text-[#533AFD] hover:underline transition cursor-pointer"
+                    >
+                      ¿Olvidaste tu clave?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-[#64748D] absolute left-3.5 top-3.5" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-[#533AFD] focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all placeholder:text-slate-400 font-mono"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-3 text-[#64748D] hover:text-[#0D253D] transition-colors cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Recordarme */}
+                <div className="flex items-center justify-between pt-1">
+                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-[#533AFD] focus:ring-indigo-500/20 focus:ring-offset-0"
+                    />
+                    <span className="text-xs text-[#64748D] font-medium">Recordar este dispositivo</span>
+                  </label>
+                </div>
+
+                {/* Botón CTA Primario Voltaje Índigo estilo Stripe */}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3.5 px-4 bg-[#533AFD] hover:bg-[#4326EB] active:bg-[#3519d6] text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-indigo-500/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {loading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <span>Iniciar Sesión en Gest_OK</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+
+          {/* Footer del Formulario */}
+          <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-[#64748D]">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-[#059669]" />
+              <span>Conexión Encriptada SSL 256-bit</span>
+            </div>
+            <span>PulsoContable SpA &bull; Chile</span>
+          </div>
+
+        </div>
+
+        {/* ========================================================= */}
+        {/* COLUMNA DERECHA: PANEL VISUAL STRIPE CON MÉTRICAS EN VIVO  */}
+        {/* ========================================================= */}
+        <div className="lg:col-span-6 xl:col-span-7 stripe-mesh-side p-8 sm:p-12 xl:p-16 flex flex-col justify-between text-white relative overflow-hidden">
+          
+          {/* Top Tagline */}
+          <div className="relative z-10 flex items-center justify-between">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-xs font-semibold text-white">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>Conexión SII en Tiempo Real Activa</span>
+            </div>
+
+            <div className="text-[11px] text-slate-300/80 font-mono hidden sm:block">
+              Período Tributario 2026
+            </div>
+          </div>
+
+          {/* Tarjeta Flotante con Cifras Financieras Tabulares */}
+          <div className="my-8 relative z-10 space-y-4">
+            
+            {/* Tarjeta Central de Cuadratura */}
+            <div className="bg-white/95 backdrop-blur-md rounded-2xl p-5 text-[#0D253D] shadow-2xl border border-white/40 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                    Formulario 29 Automatizado
+                  </span>
+                  <h3 className="text-sm font-extrabold text-[#0D253D] mt-1">
+                    Liquidación Tributaria Mensual
+                  </h3>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-[#059669] text-xs font-bold inline-flex items-center gap-1">
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>100% Cuadrado</span>
+                </span>
+              </div>
+
+              {/* Métricas con Cifras Tabulares */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                  <div className="text-[10px] uppercase font-bold text-slate-500">Débito Fiscal</div>
+                  <div className="text-sm font-bold font-mono text-[#0D253D] mt-0.5 tabular-nums">
+                    $ 4.712.000
+                  </div>
+                  <div className="text-[10px] text-slate-400">120 Facturas RCV</div>
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                  <div className="text-[10px] uppercase font-bold text-slate-500">Crédito Fiscal</div>
+                  <div className="text-sm font-bold font-mono text-[#059669] mt-0.5 tabular-nums">
+                    $ 2.850.000
+                  </div>
+                  <div className="text-[10px] text-slate-400">45 Compras Aceptadas</div>
+                </div>
+
+                <div className="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 col-span-2 sm:col-span-1">
+                  <div className="text-[10px] uppercase font-bold text-indigo-700">Neto a Pagar</div>
+                  <div className="text-sm font-bold font-mono text-indigo-900 mt-0.5 tabular-nums">
+                    $ 2.247.450
+                  </div>
+                  <div className="text-[10px] text-indigo-600">Con PPM e ILA</div>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2.5 mt-2 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-semibold text-xs rounded-md transition-colors border border-slate-700 shadow-xs flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {loading ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <LogIn className="w-4 h-4 stroke-[1.25]" /> Iniciar Sesión
-                  </>
-                )}
-              </button>
-
-              <div className="text-center pt-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsResetMode(true);
-                    setError('');
-                    setResetSuccess('');
-                  }}
-                  className="text-xs font-medium text-slate-600 hover:text-slate-900 hover:underline transition-colors"
-                >
-                  ¿Olvidaste tu clave?
-                </button>
+              {/* Progress Line */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Cuadratura con Cartola Bancaria</span>
+                <span className="font-bold text-emerald-600 font-mono">Diferencia: $0</span>
               </div>
-            </form>
-          )}
-
-          <div className="mt-6 pt-4 border-t border-slate-200 space-y-3 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-slate-600 stroke-[1.25]" />
-              <span>Acceso Seguro Encriptado SSL</span>
             </div>
 
-            <div className="text-[11px] text-slate-500 space-y-0.5 border-t border-slate-100 pt-3">
-              <p className="font-semibold text-slate-700">Sistema Desarrollado por PulsoContable SpA</p>
-              <p>
-                Contacto:{' '}
-                <a
-                  href="mailto:contacto@pulsocontable.cl"
-                  className="text-slate-700 hover:text-slate-900 font-semibold underline underline-offset-2 transition-colors"
-                >
-                  contacto@pulsocontable.cl
-                </a>
-              </p>
-              <p className="text-slate-400">Santiago, Chile</p>
-              <p className="text-[10px] text-slate-400 font-medium pt-1">
-                Gest_OK® <span className="font-mono text-indigo-600 font-bold px-1 bg-indigo-50 border border-indigo-100 rounded">{APP_VERSION}</span> — Marca Registrada. Todos los derechos reservados.
-              </p>
+            {/* Certificación de Seguridad & Normativa SII */}
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-white flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-emerald-300 stroke-[2.5]" />
+              </div>
+              <div className="text-xs">
+                <div className="font-bold text-white">Plataforma Certificada & Segura</div>
+                <div className="text-[11px] text-slate-200/90 mt-0.5 leading-snug">
+                  Acceso exclusivo cifrado. Normativa SII 2026 y respaldo continuo de libros oficiales.
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Bottom Bento Mini-Grid */}
+          <div className="relative z-10 pt-4 border-t border-white/10 grid grid-cols-3 gap-3 text-center">
+            <div>
+              <div className="text-lg sm:text-xl font-extrabold font-mono text-white tabular-nums">
+                &lt; 2s
+              </div>
+              <div className="text-[10px] text-slate-300 font-medium mt-0.5">
+                Sincronización SII
+              </div>
+            </div>
+            <div>
+              <div className="text-lg sm:text-xl font-extrabold font-mono text-emerald-400 tabular-nums">
+                100%
+              </div>
+              <div className="text-[10px] text-slate-300 font-medium mt-0.5">
+                Cuadratura IFRS
+              </div>
+            </div>
+            <div>
+              <div className="text-lg sm:text-xl font-extrabold font-mono text-sky-300 tabular-nums">
+                Multi
+              </div>
+              <div className="text-[10px] text-slate-300 font-medium mt-0.5">
+                Empresas Ilimitadas
+              </div>
             </div>
           </div>
+
         </div>
+
       </div>
 
-      {/* Botón Flotante Dinámico de Promoción (Controlado por Super Administrador - Oculto si enabled es falso) */}
+      {/* Botón Flotante de Promoción (si está habilitado) */}
       {promoConfig?.enabled && (
         <a
           id="btn-whatsapp-free-trial"
