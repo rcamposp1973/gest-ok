@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { collection, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { Sparkles, FileSpreadsheet, Download, Upload } from 'lucide-react';
 import AuxiliaryUpgradeModal from './AuxiliaryUpgradeModal';
+import * as XLSX from 'xlsx';
 
 interface PlantillasYCargaMasivaViewProps {
   studyId: string;
@@ -170,6 +171,132 @@ export default function PlantillasYCargaMasivaView({
   };
 
   // 3. DESCARGA DE PLANTILLA: COMPROBANTES CONTABLES MASIVOS
+  const downloadComprobantesExcelTemplate = () => {
+    const customCols = company.customAccountColumns || [];
+    const sampleData = [
+      {
+        NumeroComprobante: 1,
+        Fecha: '2026-01-02',
+        Periodo: '2026-01',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Asiento de Apertura Ejercicio 2026',
+        CodigoCuenta: accounts[0]?.code || '1.1.02.001',
+        NombreCuenta: accounts[0]?.name || 'Banco de Chile Cta Cte',
+        Debe: 15000000,
+        Haber: 0,
+        GlosaLinea: 'Saldo inicial banco',
+        RUTAuxiliar: '',
+        RazonSocialAuxiliar: '',
+        TipoDocumento: '',
+        FolioDocumento: '',
+        FechaVencimiento: '',
+        CentroCosto: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: 'Cartola 001',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      },
+      {
+        NumeroComprobante: 1,
+        Fecha: '2026-01-02',
+        Periodo: '2026-01',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Asiento de Apertura Ejercicio 2026',
+        CodigoCuenta: accounts[1]?.code || '1.1.03.001',
+        NombreCuenta: accounts[1]?.name || 'Clientes por Cobrar',
+        Debe: 5000000,
+        Haber: 0,
+        GlosaLinea: 'Facturas pendientes',
+        RUTAuxiliar: '76.123.456-7',
+        RazonSocialAuxiliar: 'Comercial Sur SpA',
+        TipoDocumento: 'Factura',
+        FolioDocumento: '450',
+        FechaVencimiento: '2026-02-15',
+        CentroCosto: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      },
+      {
+        NumeroComprobante: 1,
+        Fecha: '2026-01-02',
+        Periodo: '2026-01',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Asiento de Apertura Ejercicio 2026',
+        CodigoCuenta: accounts[2]?.code || '2.1.01.001',
+        NombreCuenta: accounts[2]?.name || 'Proveedores por Pagar',
+        Debe: 0,
+        Haber: 4000000,
+        GlosaLinea: 'Deuda inicial compras',
+        RUTAuxiliar: '77.987.654-3',
+        RazonSocialAuxiliar: 'Industrial SpA',
+        TipoDocumento: 'Factura',
+        FolioDocumento: '9812',
+        FechaVencimiento: '2026-02-28',
+        CentroCosto: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      },
+      {
+        NumeroComprobante: 1,
+        Fecha: '2026-01-02',
+        Periodo: '2026-01',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Asiento de Apertura Ejercicio 2026',
+        CodigoCuenta: accounts[3]?.code || '3.1.01.001',
+        NombreCuenta: accounts[3]?.name || 'Capital Social Aportado',
+        Debe: 0,
+        Haber: 16000000,
+        GlosaLinea: 'Aporte de socios',
+        RUTAuxiliar: '',
+        RazonSocialAuxiliar: '',
+        TipoDocumento: '',
+        FolioDocumento: '',
+        FechaVencimiento: '',
+        CentroCosto: '',
+        ItemGasto: '',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      },
+      {
+        NumeroComprobante: 2,
+        Fecha: '2026-02-28',
+        Periodo: '2026-02',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Centralización de Remuneraciones Febrero 2026',
+        CodigoCuenta: '4202002',
+        NombreCuenta: 'Sueldo Base',
+        Debe: 1500000,
+        Haber: 0,
+        GlosaLinea: 'SUELDO BASE | RECURSOS HUMANOS',
+        RUTAuxiliar: '15.432.109-8',
+        RazonSocialAuxiliar: 'GONZALEZ PEREZ JUAN PABLO',
+        TipoDocumento: 'Liquidacion',
+        FolioDocumento: '202602',
+        FechaVencimiento: '2026-02-28',
+        CentroCosto: 'RRHH',
+        ItemGasto: 'SUELDOS',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: '',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(sampleData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Comprobantes');
+    XLSX.writeFile(workbook, `Plantilla_Comprobantes_Contables_${company.rut}.xlsx`);
+  };
+
   const downloadComprobantesTemplate = () => {
     const customCols = company.customAccountColumns || [];
     const customHeaders = customCols.length > 0 ? customCols : [];
@@ -177,31 +304,33 @@ export default function PlantillasYCargaMasivaView({
     const headers = [
       'NumeroComprobante',
       'Fecha',
+      'Periodo',
       'TipoComprobante',
-      'GlosaGeneral',
+      'GlosaComprobante',
       'CodigoCuenta',
       'NombreCuenta',
       'Debe',
       'Haber',
       'GlosaLinea',
-      'RUTCliProv',
-      'RazonSocialCliProv',
-      'TipoDoc',
-      'NumeroDoc',
-      'CentroCosto',
-      'RefBancaria',
+      'RUTAuxiliar',
+      'RazonSocialAuxiliar',
+      'TipoDocumento',
+      'FolioDocumento',
       'FechaVencimiento',
+      'CentroCosto',
       'ItemGasto',
       'Proyecto',
       'Producto',
+      'RefBancaria',
       ...customHeaders
     ];
 
     const sampleRows = [
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.02.001', 'Banco de Chile Cta Cte', '15000000', '0', 'Saldo inicial banco', '', '', '', '', '', 'Cartola 001', '', '', '', '', ...customCols.map(() => '')],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '1.1.03.001', 'Clientes por Cobrar', '5000000', '0', 'Facturas pendientes', '76.123.456-7', 'Comercial Sur', 'Factura', '450', '', '', '2026-02-15', '', '', '', ...customCols.map(() => '')],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '2.1.01.001', 'Proveedores por Pagar', '0', '4000000', 'Deuda inicial compras', '77.987.654-3', 'Industrial SpA', 'Factura', '9812', '', '', '2026-02-28', '', '', '', ...customCols.map(() => '')],
-      ['1', '2026-01-02', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', '3.1.01.001', 'Capital Social Aportado', '0', '16000000', 'Aporte de socios', '', '', '', '', '', '', '', '', '', '', ...customCols.map(() => '')]
+      ['1', '2026-01-02', '2026-01', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', accounts[0]?.code || '1.1.02.001', accounts[0]?.name || 'Banco de Chile Cta Cte', '15000000', '0', 'Saldo inicial banco', '', '', '', '', '', '', '', '', '', 'Cartola 001', ...customCols.map(() => '')],
+      ['1', '2026-01-02', '2026-01', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', accounts[1]?.code || '1.1.03.001', accounts[1]?.name || 'Clientes por Cobrar', '5000000', '0', 'Facturas pendientes', '76.123.456-7', 'Comercial Sur', 'Factura', '450', '2026-02-15', '', '', '', '', '', ...customCols.map(() => '')],
+      ['1', '2026-01-02', '2026-01', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', accounts[2]?.code || '2.1.01.001', accounts[2]?.name || 'Proveedores por Pagar', '0', '4000000', 'Deuda inicial compras', '77.987.654-3', 'Industrial SpA', 'Factura', '9812', '2026-02-28', '', '', '', '', '', ...customCols.map(() => '')],
+      ['1', '2026-01-02', '2026-01', 'Traspaso', 'Asiento de Apertura Ejercicio 2026', accounts[3]?.code || '3.1.01.001', accounts[3]?.name || 'Capital Social Aportado', '0', '16000000', 'Aporte de socios', '', '', '', '', '', '', '', '', '', '', ...customCols.map(() => '')],
+      ['2', '2026-02-28', '2026-02', 'Traspaso', 'Centralización de Remuneraciones Febrero 2026', '4202002', 'Sueldo Base', '1500000', '0', 'SUELDO BASE | RECURSOS HUMANOS', '15.432.109-8', 'GONZALEZ PEREZ JUAN PABLO', 'Liquidacion', '202602', '2026-02-28', 'RRHH', 'SUELDOS', '', '', '', ...customCols.map(() => '')]
     ];
 
     const csvContent = '\uFEFF' + [headers.join(';'), ...sampleRows.map(r => r.join(';'))].join('\n');
@@ -633,18 +762,27 @@ export default function PlantillasYCargaMasivaView({
                   Formato multilínea para importar asientos de apertura, cierres de año, ajustes contables y comprobantes por lote con partida doble.
                 </p>
                 <div className="text-[11px] text-slate-500 bg-white p-2.5 rounded-lg border border-slate-200 space-y-1">
-                  <div><strong>Columnas:</strong> NumComprobante, Fecha, Tipo, Cuenta, Debe, Haber, RUT, Doc</div>
-                  <div><strong>Uso típico:</strong> Asientos de apertura o migración histórica.</div>
+                  <div><strong>Columnas (20+):</strong> NumeroComprobante, Fecha, Periodo, TipoComprobante, GlosaComprobante, CodigoCuenta, NombreCuenta, Debe, Haber, GlosaLinea, RUTAuxiliar, RazonSocialAuxiliar, TipoDocumento, FolioDocumento, FechaVencimiento, CentroCosto, ItemGasto, Proyecto, Producto, RefBancaria</div>
+                  <div><strong>Uso típico:</strong> Asientos de apertura, centralización de remuneraciones, compras/ventas y migración histórica.</div>
                 </div>
               </div>
 
               <div className="space-y-2 pt-2 border-t border-slate-200">
                 <button
+                  type="button"
+                  onClick={downloadComprobantesExcelTemplate}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>📊</span>
+                  <span>Descargar Plantilla Excel (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
                   onClick={downloadComprobantesTemplate}
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center justify-center gap-2"
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>📥</span>
-                  <span>Descargar Plantilla Comprobantes</span>
+                  <span>Descargar Plantilla CSV (.csv)</span>
                 </button>
                 <div className="text-center">
                   <span className="text-[10px] text-slate-500">Disponible en sub-menú: ⚡ Carga Masiva Comprobantes</span>

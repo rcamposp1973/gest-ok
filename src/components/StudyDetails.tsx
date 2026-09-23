@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, updateDoc, doc, getDocs, addDoc, deleteDoc } from 'firebase/firestore';
-import { Study, Company, User, Plan, UserRole, StudyAdmin } from '../types';
+import { Study, Company, User, Plan, UserRole, StudyAdmin, StudyModulePermissions, StudySubscriptionStatus } from '../types';
 import StudyAdminDashboard from './StudyAdminDashboard';
-import { ShieldAlert, ArrowLeft, Edit3, Save, ExternalLink, UserPlus, Shield, CheckCircle2, XCircle, Key, Phone, Mail, UserCheck, AlertTriangle, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, Edit3, Save, ExternalLink, UserPlus, Shield, CheckCircle2, XCircle, Key, Phone, Mail, UserCheck, AlertTriangle, Eye, EyeOff, Trash2, CreditCard, Sparkles, Check } from 'lucide-react';
+import { 
+  StudyPlanCode, 
+  OFFICIAL_SUBSCRIPTION_PLANS, 
+  getDefaultModulesForPlan 
+} from '../constants/subscriptionPlans';
+import ModuleAccessMatrix from './ModuleAccessMatrix';
+import { purgeDiagonConstruccionesData } from '../utils/diagonPurge';
 
 interface StudyDetailsProps {
   study: Study;
@@ -19,6 +26,15 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
   const [isEditingStudy, setIsEditingStudy] = useState(false);
   const [studyForm, setStudyForm] = useState(initialStudy);
   const [inSupportMode, setInSupportMode] = useState(false);
+
+  // Plan & Matrix
+  const currentPlanCode = (study.planCode as StudyPlanCode) || 'PLAN_ESTUDIO_10';
+  const [selectedPlanCode, setSelectedPlanCode] = useState<StudyPlanCode>(currentPlanCode);
+  const [studyModules, setStudyModules] = useState<StudyModulePermissions>(() => {
+    return study.modules || getDefaultModulesForPlan(currentPlanCode);
+  });
+  const [studySubStatus, setStudySubStatus] = useState<StudySubscriptionStatus>(study.subscriptionStatus || 'Vigente');
+  const [studyPaymentNotes, setStudyPaymentNotes] = useState(study.paymentNotes || '');
 
   // Gestión de Administradores
   const [administrators, setAdministrators] = useState<StudyAdmin[]>([]);
@@ -49,6 +65,10 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
         const sData = { id: docSnap.id, ...docSnap.data() } as Study;
         setStudy(sData);
         setStudyForm(sData);
+        if (sData.planCode) setSelectedPlanCode(sData.planCode as StudyPlanCode);
+        if (sData.modules) setStudyModules(sData.modules);
+        if (sData.subscriptionStatus) setStudySubStatus(sData.subscriptionStatus);
+        if (sData.paymentNotes) setStudyPaymentNotes(sData.paymentNotes);
 
         // Parsear lista de administradores
         let adminList: StudyAdmin[] = [];
@@ -102,6 +122,8 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
     setActionSuccess('');
     try {
       const { id, ...dataToSave } = studyForm;
+      const planDef = OFFICIAL_SUBSCRIPTION_PLANS[selectedPlanCode] || OFFICIAL_SUBSCRIPTION_PLANS.CUSTOM;
+
       await updateDoc(doc(db, 'studies', study.id), {
         name: dataToSave.name || '',
         rut: dataToSave.rut || '',
@@ -109,17 +131,45 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
         address: dataToSave.address || '',
         phone: dataToSave.phone || '',
         email: dataToSave.email || '',
+        planCode: selectedPlanCode,
+        planName: planDef.name,
+        modules: studyModules,
+        subscriptionStatus: studySubStatus,
+        paymentNotes: studyPaymentNotes,
         maxCompanies: Math.max(1, Number(dataToSave.maxCompanies) || 10),
         maxUsers: Math.max(1, Number(dataToSave.maxUsers) || 5),
         estado: dataToSave.estado || 'Vigente'
       });
       setIsEditingStudy(false);
-      setActionSuccess('Datos y límites del estudio actualizados correctamente.');
+      setActionSuccess('Datos, plan y grilla de módulos del estudio actualizados correctamente.');
     } catch (err: any) {
       console.error("Error updating study:", err);
       setActionError("Error al actualizar estudio: " + (err.message || err));
     } finally {
       setIsSavingStudy(false);
+    }
+  };
+
+  const [isPurgingDiagon, setIsPurgingDiagon] = useState(false);
+
+  const handlePurgeDiagon = async () => {
+    if (!window.confirm("¿Está seguro de purgar/borrar TODOS los RCV subidos y TODOS los comprobantes para la empresa Diagon Construcciones SpA? Esta acción no se puede deshacer.")) {
+      return;
+    }
+    setIsPurgingDiagon(true);
+    setActionError('');
+    setActionSuccess('');
+    try {
+      const res = await purgeDiagonConstruccionesData();
+      if (res.success) {
+        setActionSuccess(res.message);
+      } else {
+        setActionError(res.error || 'Error al purgar datos de Diagon Construcciones SpA.');
+      }
+    } catch (e: any) {
+      setActionError(e.message || 'Error inesperado.');
+    } finally {
+      setIsPurgingDiagon(false);
     }
   };
 
@@ -550,13 +600,70 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
         )}
       </section>
 
-      {/* 2. SECCIÓN: ADMINISTRADORES DEL ESTUDIO (SUPER USUARIOS) */}
+      {/* 2. SECCIÓN: PLAN CONTRATADO Y GRILLA DE MÓDULOS (SUPER ADMINISTRADOR) */}
+      <section className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-indigo-100 pb-3">
+          <div className="flex items-center gap-2">
+            <CreditCard className="w-5 h-5 text-indigo-700" />
+            <div>
+              <h3 className="text-base font-bold text-slate-900">2. Plan Contratado & Grilla Predefinida de Módulos</h3>
+              <p className="text-xs text-slate-500">
+                Parametriza el plan asignado, estado de suscripción y habilita/deshabilita módulos individuales para este estudio.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-600">Plan Actual:</span>
+            <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg text-xs font-bold font-mono">
+              {OFFICIAL_SUBSCRIPTION_PLANS[selectedPlanCode]?.name || study.planName || 'Plan Personalizado'}
+            </span>
+          </div>
+        </div>
+
+        <ModuleAccessMatrix
+          selectedPlanCode={selectedPlanCode}
+          modules={studyModules}
+          subscriptionStatus={studySubStatus}
+          maxCompanies={studyForm.maxCompanies || study.maxCompanies || 10}
+          maxUsers={studyForm.maxUsers || study.maxUsers || 5}
+          paymentNotes={studyPaymentNotes}
+          readOnly={!isEditingStudy}
+          onPlanChange={(newCode, maxC, maxU, defMods) => {
+            setSelectedPlanCode(newCode);
+            setStudyModules(defMods);
+            setStudyForm(prev => ({
+              ...prev,
+              maxCompanies: maxC,
+              maxUsers: maxU
+            }));
+          }}
+          onModulesChange={(newMods) => setStudyModules(newMods)}
+          onSubscriptionStatusChange={(newSt) => setStudySubStatus(newSt)}
+          onMaxCompaniesChange={(v) => setStudyForm(prev => ({ ...prev, maxCompanies: v }))}
+          onMaxUsersChange={(v) => setStudyForm(prev => ({ ...prev, maxUsers: v }))}
+          onPaymentNotesChange={(txt) => setStudyPaymentNotes(txt)}
+        />
+
+        {!isEditingStudy && (
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center text-xs">
+            <span className="text-slate-600">Para modificar el plan o activar/desactivar módulos en la grilla:</span>
+            <button
+              onClick={() => setIsEditingStudy(true)}
+              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <Edit3 className="w-3.5 h-3.5" /> Habilitar Edición de Plan y Grilla
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* 3. SECCIÓN: ADMINISTRADORES DEL ESTUDIO (SUPER USUARIOS) */}
       <section className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-indigo-100 pb-3">
           <div className="flex items-center gap-2">
             <Shield className="w-5 h-5 text-indigo-700" />
             <div>
-              <h3 className="text-base font-bold text-slate-900">2. Administradores del Estudio (Super Usuarios de Estudio)</h3>
+              <h3 className="text-base font-bold text-slate-900">3. Administradores del Estudio (Super Usuarios de Estudio)</h3>
               <p className="text-xs text-slate-500">
                 Supervisores con facultades de administración sobre contadores, empresas y parametrización.
               </p>
@@ -690,6 +797,21 @@ export default function StudyDetails({ study: initialStudy, onBack, onLogout }: 
       </section>
 
       {/* 3. SECCIÓN: EMPRESAS Y CONTADORES */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div>
+          <h4 className="text-xs font-bold text-amber-900">Acción Especial de Depuración / Borrado</h4>
+          <p className="text-xs text-amber-700">Purgar todos los documentos RCV subidos y comprobantes (vouchers) para la empresa Diagon Construcciones SpA.</p>
+        </div>
+        <button
+          onClick={handlePurgeDiagon}
+          disabled={isPurgingDiagon}
+          className="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors shrink-0"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          {isPurgingDiagon ? 'Purgando...' : '🗑️ Borrar RCV y Comprobantes (Diagon Construcciones)'}
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <section className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex justify-between items-center mb-4">

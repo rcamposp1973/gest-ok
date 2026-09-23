@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Employee, ContractType, PensionSystem, HealthSystem, HealthPlanType, ApvType, TramoCargaFamiliar, CostCenterMaster } from '../types';
 import { DEFAULT_AFP_COMMISSIONS } from '../utils/payrollCalculator';
+import { formatRut } from '../utils/rutMatcher';
 
 export function generateChileanEmploymentContract(
   emp: Employee,
@@ -231,13 +232,9 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
   const [contractSaveSuccess, setContractSaveSuccess] = useState(false);
 
   // Operational HR process states
-  const [attendanceRecords, setAttendanceRecords] = useState<Array<{id: string, employeeId: string, employeeName: string, period: string, type: string, days: number, note: string}>>([
-    { id: 'att_1', employeeId: employees[0]?.id || '1', employeeName: employees[0]?.name || 'Colaborador Demo', period: '2024-09', type: 'VACACIONES', days: 2, note: 'Vacaciones legales' }
-  ]);
-  const [advanceRecords, setAdvanceRecords] = useState<Array<{id: string, employeeId: string, employeeName: string, amount: number, date: string, status: string}>>([
-    { id: 'adv_1', employeeId: employees[0]?.id || '1', employeeName: employees[0]?.name || 'Colaborador Demo', amount: 100000, date: '2024-09-15', status: 'PENDIENTE' }
-  ]);
-  const [newAtt, setNewAtt] = useState({ employeeId: employees[0]?.id || '', period: '2024-09', type: 'LICENCIA', days: 1, note: '' });
+  const [attendanceRecords, setAttendanceRecords] = useState<Array<{id: string, employeeId: string, employeeName: string, period: string, type: string, days: number, note: string}>>([]);
+  const [advanceRecords, setAdvanceRecords] = useState<Array<{id: string, employeeId: string, employeeName: string, amount: number, date: string, status: string}>>([]);
+  const [newAtt, setNewAtt] = useState({ employeeId: employees[0]?.id || '', period: '2026-09', type: 'LICENCIA', days: 1, note: '' });
   const [newAdv, setNewAdv] = useState({ employeeId: employees[0]?.id || '', amount: 50000, date: new Date().toISOString().split('T')[0] });
   const [finiquitoEmpId, setFiniquitoEmpId] = useState(employees[0]?.id || '');
   const [finiquitoCausal, setFiniquitoCausal] = useState('ART_161_NECESIDADES');
@@ -429,177 +426,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     }
   };
 
-  const handleSeedDemoEmployees = async () => {
-    if (!confirm('¿Desea crear una nómina demo de trabajadores (5 colaboradores con distintos contratos, AFPs e Isapres) para probar las liquidaciones y Previred?')) return;
-    
-    const demoStaff: Omit<Employee, 'id' | 'companyId' | 'createdAt' | 'updatedAt'>[] = [
-      {
-        rut: '15.421.890-3',
-        name: 'Andrea Paz Morales Soto',
-        email: 'andrea.morales@empresa.cl',
-        phone: '+56 9 8765 4321',
-        position: 'Jefa de Contabilidad y Finanzas',
-        department: 'Finanzas',
-        hireDate: '2022-03-01',
-        contractType: 'INDEFINIDO',
-        workHoursPerWeek: 40,
-        baseSalary: 1850000,
-        hasGratificacionLegal: true,
-        gratificacionType: 'ART_50',
-        pensionSystem: 'HABITAT',
-        pensionCommissionPercent: DEFAULT_AFP_COMMISSIONS.HABITAT,
-        healthSystem: 'COLMENA',
-        healthPlanType: 'ISAPRE_UF',
-        healthPlanValue: 4.5,
-        hasCesantiaAFC: true,
-        apvType: 'REGIMEN_B',
-        apvInstitution: 'Habitat APV',
-        apvAmount: 100000,
-        cargasFamiliares: 1,
-        tramoCargaFamiliar: 'C',
-        colacionPactada: 60000,
-        movilizacionPactada: 50000,
-        bankName: 'Banco de Chile',
-        bankAccountType: 'CORRIENTE',
-        bankAccountNumber: '00-12345-67',
-        active: true
-      },
-      {
-        rut: '16.789.012-K',
-        name: 'Carlos Esteban González Rivas',
-        email: 'carlos.gonzalez@empresa.cl',
-        phone: '+56 9 7654 3210',
-        position: 'Desarrollador Senior Fullstack',
-        department: 'Tecnología',
-        hireDate: '2023-01-15',
-        contractType: 'INDEFINIDO',
-        workHoursPerWeek: 40,
-        baseSalary: 2300000,
-        hasGratificacionLegal: true,
-        gratificacionType: 'ART_50',
-        pensionSystem: 'MODELO',
-        pensionCommissionPercent: DEFAULT_AFP_COMMISSIONS.MODELO,
-        healthSystem: 'BANMEDICA',
-        healthPlanType: 'ISAPRE_UF',
-        healthPlanValue: 5.2,
-        hasCesantiaAFC: true,
-        apvType: 'REGIMEN_B',
-        apvInstitution: 'Fintual APV',
-        apvAmount: 150000,
-        cargasFamiliares: 2,
-        tramoCargaFamiliar: 'D',
-        colacionPactada: 70000,
-        movilizacionPactada: 60000,
-        bankName: 'Banco Santander',
-        bankAccountType: 'CORRIENTE',
-        bankAccountNumber: '98-76543-21',
-        active: true
-      },
-      {
-        rut: '18.345.678-2',
-        name: 'Valentina Ignacia Silva Muñoz',
-        email: 'valentina.silva@empresa.cl',
-        phone: '+56 9 6543 2109',
-        position: 'Ejecutiva Comercial y Ventas',
-        department: 'Comercial',
-        hireDate: '2023-08-01',
-        contractType: 'INDEFINIDO',
-        workHoursPerWeek: 45,
-        baseSalary: 750000,
-        hasGratificacionLegal: true,
-        gratificacionType: 'ART_50',
-        pensionSystem: 'PROVIDA',
-        pensionCommissionPercent: DEFAULT_AFP_COMMISSIONS.PROVIDA,
-        healthSystem: 'FONASA',
-        healthPlanType: 'FONASA_7',
-        healthPlanValue: 0,
-        hasCesantiaAFC: true,
-        apvType: 'NINGUNO',
-        apvAmount: 0,
-        cargasFamiliares: 0,
-        tramoCargaFamiliar: 'SIN_TRAMO',
-        colacionPactada: 45000,
-        movilizacionPactada: 45000,
-        bankName: 'BancoEstado',
-        bankAccountType: 'RUT',
-        bankAccountNumber: '18345678',
-        active: true
-      },
-      {
-        rut: '19.876.543-1',
-        name: 'Matías Alejandro Castro Vega',
-        email: 'matias.castro@empresa.cl',
-        phone: '+56 9 5432 1098',
-        position: 'Asistente Operativo y Logística',
-        department: 'Operaciones',
-        hireDate: '2024-02-01',
-        contractType: 'PLAZO_FIJO',
-        workHoursPerWeek: 45,
-        baseSalary: 550000,
-        hasGratificacionLegal: true,
-        gratificacionType: 'ART_50',
-        pensionSystem: 'UNO',
-        pensionCommissionPercent: DEFAULT_AFP_COMMISSIONS.UNO,
-        healthSystem: 'FONASA',
-        healthPlanType: 'FONASA_7',
-        healthPlanValue: 0,
-        hasCesantiaAFC: true,
-        apvType: 'NINGUNO',
-        apvAmount: 0,
-        cargasFamiliares: 1,
-        tramoCargaFamiliar: 'B',
-        colacionPactada: 40000,
-        movilizacionPactada: 40000,
-        bankName: 'Banco BCI',
-        bankAccountType: 'VISTA',
-        bankAccountNumber: '77-12345-88',
-        active: true
-      },
-      {
-        rut: '14.234.567-9',
-        name: 'Roberto Antonio Gómez Flores',
-        email: 'roberto.gomez@empresa.cl',
-        phone: '+56 9 4321 0987',
-        position: 'Supervisor de Planta y Mantenimiento',
-        department: 'Operaciones',
-        hireDate: '2021-06-01',
-        contractType: 'INDEFINIDO',
-        workHoursPerWeek: 45,
-        baseSalary: 950000,
-        hasGratificacionLegal: true,
-        gratificacionType: 'ART_50',
-        pensionSystem: 'PLANVITAL',
-        pensionCommissionPercent: DEFAULT_AFP_COMMISSIONS.PLANVITAL,
-        healthSystem: 'CONSALUD',
-        healthPlanType: 'ISAPRE_UF',
-        healthPlanValue: 2.8,
-        hasCesantiaAFC: true,
-        apvType: 'NINGUNO',
-        apvAmount: 0,
-        cargasFamiliares: 2,
-        tramoCargaFamiliar: 'B',
-        colacionPactada: 50000,
-        movilizacionPactada: 50000,
-        bankName: 'Banco Itaú',
-        bankAccountType: 'CORRIENTE',
-        bankAccountNumber: '01-99887-22',
-        active: true
-      }
-    ];
-
-    for (const d of demoStaff) {
-      const payload: Employee = {
-        id: `emp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        companyId: '',
-        ...d,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      await onSaveEmployee(payload);
-    }
-    alert('✅ Se han registrado 5 colaboradores de prueba correctamente.');
-  };
-
   return (
     <div className="space-y-6">
       {/* Header del Módulo */}
@@ -609,7 +435,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
             <div className="p-2 bg-indigo-50 text-indigo-700 rounded-lg">
               <Users className="w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">personal</h1>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Personal</h1>
           </div>
           <p className="text-sm text-slate-600">
             Gestión integral de colaboradores, régimen previsional (AFP), instituciones de salud (Fonasa/Isapre), AFC y datos laborales para {companyName}.
@@ -617,19 +443,9 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto">
-          {employees.length === 0 && (
-            <button
-              onClick={handleSeedDemoEmployees}
-              className="px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5 shadow-2xs"
-            >
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              Cargar Nómina Demo
-            </button>
-          )}
-
           <button
             onClick={handleOpenNewModal}
-            className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+            className="px-4 py-2 text-sm font-semibold text-white bg-[#533AFD] hover:bg-[#4326EB] rounded-lg transition-colors flex items-center gap-2 shadow-xs cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             Nuevo Trabajador
@@ -1629,7 +1445,8 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                       required
                       placeholder="12.345.678-9"
                       value={formData.rut}
-                      onChange={(e) => setFormData({ ...formData, rut: e.target.value })}
+                      onChange={(e) => setFormData({ ...formData, rut: formatRut(e.target.value) })}
+                      onBlur={(e) => setFormData({ ...formData, rut: formatRut(e.target.value) })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     />
                   </div>

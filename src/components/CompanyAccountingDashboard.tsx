@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { Company, DTEConfig, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole, CostCenterMaster, ExpenseItemMaster, NonSiiDocTypeMaster, ProjectMaster, ProductMaster, CustomAnalysisTableItem, CommercialDocument, InventoryMovement, ProductService, Employee, PayrollSlip } from '../types';
+import { Company, DTEConfig, ChartOfAccount, Auxiliary, ExchangeRate, FiscalPeriodYear, RCVDocument, Voucher, VoucherLine, RCVAccountingParams, BankReconciliation, UserRole, CostCenterMaster, ExpenseItemMaster, NonSiiDocTypeMaster, ProjectMaster, ProductMaster, CustomAnalysisTableItem, CommercialDocument, InventoryMovement, ProductService, Employee, PayrollSlip, Warehouse } from '../types';
 import { EmployeesView } from './EmployeesView';
 import { LiquidacionSueldosView } from './LiquidacionSueldosView';
 import { syncOnlineChileanIndicators, generateOfficialChileanIndicators } from '../utils/chileanEconomicIndicators';
 import { logAuditEvent } from '../utils/auditLogger';
+import { notify } from '../context/ToastContext';
 import LibroDiarioView from './LibroDiarioView';
 import LibroMayorView from './LibroMayorView';
 import Balance8ColumnasView from './Balance8ColumnasView';
@@ -18,6 +19,7 @@ import CobranzaView from './CobranzaView';
 import AnalisisAuxiliaresView from './AnalisisAuxiliaresView';
 import AnalisisCuentasView from './AnalisisCuentasView';
 import ConciliacionBancariaView from './ConciliacionBancariaView';
+import LibroBancoColaborativoView from './LibroBancoColaborativoView';
 import CargaMasivaComprobantesView from './CargaMasivaComprobantesView';
 import Formulario29View from './Formulario29View';
 import PlantillasYCargaMasivaView from './PlantillasYCargaMasivaView';
@@ -38,20 +40,51 @@ import CompanyNotebooksView from './CompanyNotebooksView';
 import { ProductsServicesView } from './ProductsServicesView';
 import { OperativaComercialView } from './OperativaComercialView';
 import { StockKardexView } from './StockKardexView';
+import { WarehousesView } from './WarehousesView';
+import ReportesAnaliticosView from './ReportesAnaliticosView';
+import { ActivoFijoView } from './ActivoFijoView';
+import { DeclaracionesJuradasView } from './DeclaracionesJuradasView';
+import { FiniquitosCalculatorModal } from './payroll/FiniquitosCalculatorModal';
+import { CommandPaletteModal } from './CommandPaletteModal';
 import { SearchableAuxiliarySelect } from './SearchableAuxiliarySelect';
 import * as XLSX from 'xlsx';
 import { useProcess } from '../context/ProcessContext';
 import { validateVoucherLine, isCustomAnalysisRequired, sanitizeVoucherLine, sanitizeVoucherLines } from '../utils/voucherValidation';
 import { getLatestOpenPeriod, checkIsPeriodClosed as checkIsPeriodClosedUtil, getNextOpenPeriodAndDate } from '../utils/periodUtils';
 import { fetchRcvFromSii } from '../utils/siiRcvClient';
+import { formatRut } from '../utils/rutMatcher';
+import DemoFerreteriaManagerModal from './DemoFerreteriaManagerModal';
+import { isDemoFerreteriaCompany, DEMO_COMPANY_NAME } from '../utils/demoFerreteriaGenerator';
 import { 
   FileText, BookOpen, Layers, Users, Sliders, Scale, Printer, 
   FolderTree, CreditCard, Receipt, TrendingUp, Landmark, ShoppingCart, 
   BarChart3, Settings, Calendar, Download, ChevronLeft, ChevronRight, 
   FileSpreadsheet, ArrowLeft, Building2, CheckCircle2, Lock, Unlock,
-  ShieldCheck, Boxes, Package, ArrowRightLeft, ShoppingBag, Calculator, Briefcase, Sparkles
+  ShieldCheck, Boxes, Package, ArrowRightLeft, ShoppingBag, Calculator, Briefcase, Sparkles,
+  Warehouse as WarehouseIcon, Table as TableIcon, Pin, Plus, X, Check
 } from 'lucide-react';
 
+const QUICK_ACCESS_ITEMS = [
+  { id: 'vouchers', label: 'Vouchers / Asientos', group: 'FINANZAS', icon: FileText, tab: 'vouchers' },
+  { id: 'libroDiario', label: 'Libro Diario Oficial', group: 'FINANZAS', icon: BookOpen, tab: 'libroDiario' },
+  { id: 'libroMayor', label: 'Libro Mayor', group: 'FINANZAS', icon: Layers, tab: 'libroMayor' },
+  { id: 'balance8', label: 'Balance 8 Columnas', group: 'FINANZAS', icon: Scale, tab: 'balance8' },
+  { id: 'balanceIFRS', label: 'Balance IFRS / FECU', group: 'FINANZAS', icon: BarChart3, tab: 'balanceIFRS' },
+  { id: 'analisisAuxiliares', label: 'Auxiliares Cuentas Corrientes', group: 'FINANZAS', icon: Users, tab: 'analisisAuxiliares' },
+  { id: 'rcv', label: 'Carga RCV Compra/Venta', group: 'IMPORTACIONES', icon: Download, tab: 'rcv' },
+  { id: 'formulario29', label: 'Impuestos F29', group: 'IMPUESTOS', icon: Receipt, tab: 'formulario29' },
+  { id: 'operativaComercial', label: 'Gestión Comercial', group: 'OPERACIONES', icon: ShoppingCart, tab: 'operativaComercial' },
+  { id: 'emisionDte', label: 'Emisión DTE / Facturas', group: 'OPERACIONES', icon: FileSpreadsheet, tab: 'emisionDte' },
+  { id: 'conciliacionBancaria', label: 'Conciliación Bancaria', group: 'TESORERIA', icon: CreditCard, tab: 'conciliacionBancaria' },
+  { id: 'libroBancoColaborativo', label: 'Libro Banco (Aclaraciones)', group: 'TESORERIA', icon: Landmark, tab: 'libroBancoColaborativo' },
+  { id: 'nominasPago', label: 'Nóminas de Pago', group: 'TESORERIA', icon: Landmark, tab: 'nominasPago' },
+  { id: 'employees', label: 'Ficha de Empleados', group: 'PERSONAL', icon: Briefcase, tab: 'employees' },
+  { id: 'activoFijo', label: 'Activo Fijo & Depreciación', group: 'FINANZAS', icon: Building2, tab: 'activoFijo' },
+  { id: 'ddjj', label: 'Declaraciones Juradas SII', group: 'IMPUESTOS', icon: ShieldCheck, tab: 'ddjj' },
+  { id: 'indicadoresFinancieros', label: 'Indicadores & KPIs', group: 'INDICADORES', icon: TrendingUp, tab: 'indicadoresFinancieros' },
+  { id: 'accounts', label: 'Plan de Cuentas', group: 'CONFIGURACIONES', icon: FolderTree, tab: 'accounts' },
+  { id: 'juniorAI', label: 'Copilot Contable IA', group: 'FINANZAS', icon: Sparkles, tab: 'smartNotebooks' }
+] as const;
 
 interface CompanyAccountingDashboardProps {
   studyId: string;
@@ -68,10 +101,48 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   const { withProcess } = useProcess();
   type RibbonGroup = 'FINANZAS' | 'OPERACIONES' | 'TESORERIA' | 'PERSONAL' | 'IMPORTACIONES' | 'IMPUESTOS' | 'INDICADORES' | 'CONFIGURACIONES';
   const [activeRibbonGroup, setActiveRibbonGroup] = useState<RibbonGroup>('FINANZAS');
-  const [activeTab, setActiveTab] = useState<'accounts' | 'auxiliaries' | 'periods' | 'rcv' | 'exchange' | 'rcvParams' | 'f29Codes' | 'vouchers' | 'libroDiario' | 'libroMayor' | 'balance8' | 'balanceIFRS' | 'analisisAuxiliares' | 'analisisCuentas' | 'estadoResultados' | 'indicadoresFinancieros' | 'auditorEstadosFinancieros' | 'smartNotebooks' | 'flujoDeCaja' | 'nominasPago' | 'cobranza' | 'conciliacionBancaria' | 'cargaMasiva' | 'formulario29' | 'plantillasCarga' | 'emisionDte' | 'tablasAnalisis' | 'controlFolios' | 'productsServices' | 'operativaComercial' | 'stockKardex' | 'employees' | 'liquidaciones'>('vouchers');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'auxiliaries' | 'periods' | 'rcv' | 'exchange' | 'rcvParams' | 'f29Codes' | 'vouchers' | 'libroDiario' | 'libroMayor' | 'balance8' | 'balanceIFRS' | 'analisisAuxiliares' | 'analisisCuentas' | 'reportesAnaliticos' | 'estadoResultados' | 'indicadoresFinancieros' | 'auditorEstadosFinancieros' | 'smartNotebooks' | 'flujoDeCaja' | 'nominasPago' | 'cobranza' | 'conciliacionBancaria' | 'libroBancoColaborativo' | 'cargaMasiva' | 'formulario29' | 'plantillasCarga' | 'emisionDte' | 'tablasAnalisis' | 'controlFolios' | 'productsServices' | 'operativaComercial' | 'stockKardex' | 'warehouses' | 'employees' | 'liquidaciones' | 'activoFijo' | 'ddjj'>('vouchers');
   const [auxSubTab, setAuxSubTab] = useState<'deudores' | 'acreedores'>('deudores');
   const [employeeSubTab, setEmployeeSubTab] = useState<'employees' | 'contracts' | 'attendance' | 'advances' | 'severance' | 'certificates'>('employees');
   const [payrollTab, setPayrollTab] = useState<'NOMINA' | 'LIQUIDACION_INDIVIDUAL' | 'LRD_DT' | 'PREVIRED' | 'PARAMETROS' | 'CONCEPTOS' | 'RELIQUIDACIONES'>('NOMINA');
+
+  // Command Palette Cmd+K
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [showFiniquitoModal, setShowFiniquitoModal] = useState<boolean>(false);
+  const [showDemoManagerModal, setShowDemoManagerModal] = useState<boolean>(false);
+  const isDemoCompany = isDemoFerreteriaCompany(company);
+
+  // Escuchar Cmd+K o Ctrl+K
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+  const [pinnedQuickAccessIds, setPinnedQuickAccessIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('gestok_quick_access_pinned');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return ['vouchers', 'libroDiario', 'balance8', 'formulario29', 'rcv', 'conciliacionBancaria'];
+  });
+  const [showQuickAccessConfig, setShowQuickAccessConfig] = useState<boolean>(false);
+
+  const togglePinQuickAccess = (id: string) => {
+    setPinnedQuickAccessIds(prev => {
+      const exists = prev.includes(id);
+      const updated = exists ? prev.filter(item => item !== id) : [...prev, id];
+      try {
+        localStorage.setItem('gestok_quick_access_pinned', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
 
   const [showExchangeBar, setShowExchangeBar] = useState<boolean>(true);
   const [rcvFilterType, setRcvFilterType] = useState<'Todos' | 'Compra' | 'Venta' | 'Honorarios'>('Compra');
@@ -140,7 +211,8 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
   const [expenseItems, setExpenseItems] = useState<ExpenseItemMaster[]>([]);
   const [nonSiiDocTypes, setNonSiiDocTypes] = useState<NonSiiDocTypeMaster[]>([]);
   const [projects, setProjects] = useState<ProjectMaster[]>([]);
-  const [products, setProducts] = useState<ProductMaster[]>([]);
+  const [products, setProducts] = useState<ProductService[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [commercialDocuments, setCommercialDocuments] = useState<CommercialDocument[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrollSlips, setPayrollSlips] = useState<PayrollSlip[]>([]);
@@ -311,15 +383,22 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         };
         await addDoc(collection(companyRef, 'inventoryMovements'), movPayload);
 
-        // Actualizar maestro de productos con nuevo stock y costo PMP
+        // Actualizar maestro de productos con nuevo stock, desglose por bodega y costo PMP
         if (mov.productId) {
           const productRef = doc(companyRef, 'products', mov.productId);
           const productSnap = await getDoc(productRef);
           if (productSnap.exists()) {
             const currentData = productSnap.data() as ProductService;
+            const currentStocksByWh = { ...(currentData.stocksByWarehouse || {}) };
+            const whKey = mov.warehouseId || currentData.defaultWarehouseId || 'wh-central';
+            const oldWhStock = currentStocksByWh[whKey] ?? currentData.currentStock ?? 0;
+            const newWhStock = mov.type === 'IN' ? (oldWhStock + mov.quantity) : (oldWhStock - mov.quantity);
+            currentStocksByWh[whKey] = newWhStock;
+
             await setDoc(productRef, {
               ...currentData,
               currentStock: mov.resultingStock,
+              stocksByWarehouse: currentStocksByWh,
               purchaseCost: mov.unitCost > 0 ? mov.unitCost : (currentData.purchaseCost || 0),
               updatedAt: new Date().toISOString()
             }, { merge: true });
@@ -372,6 +451,270 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     } catch (err: any) {
       console.error('Error al guardar documento comercial:', err);
       throw err;
+    }
+  };
+
+  // HANDLERS PARA MAESTRO DE BODEGAS (ERP FASE 1)
+  const handleSaveWarehouse = async (whData: Partial<Warehouse>) => {
+    if (isReadOnly) {
+      alert('🔒 Modo Solo Lectura: No tienes permisos para gestionar bodegas.');
+      return;
+    }
+    try {
+      const whId = whData.id || `wh-${Date.now()}`;
+      const payload: Warehouse = {
+        ...whData,
+        id: whId,
+        companyId: company.id,
+        code: whData.code || 'BOD-01',
+        name: whData.name || 'Bodega',
+        estado: whData.estado || 'Activo',
+        createdAt: whData.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      } as Warehouse;
+
+      if (payload.isDefault) {
+        for (const existingWh of warehouses) {
+          if (existingWh.id !== whId && existingWh.isDefault) {
+            await updateDoc(doc(companyRef, 'warehouses', existingWh.id), { isDefault: false });
+          }
+        }
+      }
+
+      await setDoc(doc(companyRef, 'warehouses', whId), payload);
+      setWarehouses(prev => {
+        const exists = prev.some(w => w.id === whId);
+        if (exists) {
+          return prev.map(w => w.id === whId ? payload : (payload.isDefault ? { ...w, isDefault: false } : w));
+        } else {
+          return [payload, ...(payload.isDefault ? prev.map(w => ({ ...w, isDefault: false })) : prev)];
+        }
+      });
+
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'CREAR',
+        module: 'INVENTARIOS',
+        details: `Bodega ${payload.code} - ${payload.name} guardada exitosamente.`
+      });
+    } catch (err: any) {
+      console.error('Error al guardar bodega:', err);
+      alert(`Error al guardar bodega: ${err.message || err}`);
+    }
+  };
+
+  const handleDeleteWarehouse = async (whId: string) => {
+    if (isReadOnly) {
+      alert('🔒 Modo Solo Lectura: No tienes permisos para eliminar bodegas.');
+      return;
+    }
+    try {
+      await deleteDoc(doc(companyRef, 'warehouses', whId));
+      setWarehouses(prev => prev.filter(w => w.id !== whId));
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'ELIMINAR',
+        module: 'INVENTARIOS',
+        details: `Bodega ID ${whId} eliminada.`
+      });
+    } catch (err: any) {
+      console.error('Error al eliminar bodega:', err);
+      alert(`Error al eliminar bodega: ${err.message || err}`);
+    }
+  };
+
+  const handleSetDefaultWarehouse = async (whId: string) => {
+    if (isReadOnly) return;
+    try {
+      for (const w of warehouses) {
+        await updateDoc(doc(companyRef, 'warehouses', w.id), { isDefault: w.id === whId });
+      }
+      setWarehouses(prev => prev.map(w => ({ ...w, isDefault: w.id === whId })));
+    } catch (err: any) {
+      console.error('Error al definir bodega principal:', err);
+    }
+  };
+
+  // HANDLERS PARA CATÁLOGO DE PRODUCTOS & SERVICIOS
+  const handleSaveProduct = async (product: ProductService) => {
+    if (isReadOnly) return;
+    try {
+      await setDoc(doc(companyRef, 'products', product.id), product);
+      setProducts(prev => {
+        const idx = prev.findIndex(p => p.id === product.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = product;
+          return updated;
+        }
+        return [product, ...prev];
+      });
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'CREAR',
+        module: 'INVENTARIOS',
+        details: `Producto/Servicio ${product.code} - ${product.name} guardado.`
+      });
+    } catch (err: any) {
+      console.error('Error al guardar producto:', err);
+      throw err;
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (isReadOnly) return;
+    try {
+      await deleteDoc(doc(companyRef, 'products', productId));
+      setProducts(prev => prev.filter(p => p.id !== productId));
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'ELIMINAR',
+        module: 'INVENTARIOS',
+        details: `Producto ID ${productId} eliminado.`
+      });
+    } catch (err: any) {
+      console.error('Error al eliminar producto:', err);
+      throw err;
+    }
+  };
+
+  // HANDLER PARA MOVIMIENTOS MANUALES Y TRASPASOS DE KARDEX
+  const handleSaveInventoryMovement = async (
+    mov: Partial<InventoryMovement>,
+    targetMov?: Partial<InventoryMovement>,
+    autoVoucher?: Partial<Voucher>
+  ) => {
+    if (isReadOnly) {
+      alert('🔒 Modo Solo Lectura: No tienes permisos para registrar movimientos de inventario.');
+      return;
+    }
+
+    try {
+      const movId = `mov-${Date.now()}`;
+      const mainMov: InventoryMovement = {
+        ...mov,
+        id: movId,
+        companyId: company.id,
+        createdAt: new Date().toISOString()
+      } as InventoryMovement;
+
+      await addDoc(collection(companyRef, 'inventoryMovements'), mainMov);
+
+      if (targetMov) {
+        const targetId = `mov-${Date.now()}-target`;
+        const tMov: InventoryMovement = {
+          ...targetMov,
+          id: targetId,
+          companyId: company.id,
+          createdAt: new Date().toISOString()
+        } as InventoryMovement;
+        await addDoc(collection(companyRef, 'inventoryMovements'), tMov);
+      }
+
+      // Actualizar stock del producto
+      const prod = products.find(p => p.id === mov.productId);
+      if (prod) {
+        const currentStocksByWh = { ...(prod.stocksByWarehouse || {}) };
+        
+        if (mov.movementReason === 'TRASPASO_BODEGA' && targetMov) {
+          // Disminuir de bodega origen y aumentar en bodega destino
+          if (mov.warehouseId) {
+            const oldSourceStock = currentStocksByWh[mov.warehouseId] ?? prod.currentStock ?? 0;
+            currentStocksByWh[mov.warehouseId] = Math.max(0, oldSourceStock - (mov.quantity || 0));
+          }
+          if (targetMov.warehouseId) {
+            const oldTargetStock = currentStocksByWh[targetMov.warehouseId] ?? 0;
+            currentStocksByWh[targetMov.warehouseId] = oldTargetStock + (targetMov.quantity || 0);
+          }
+        } else if (mov.warehouseId) {
+          const oldStock = currentStocksByWh[mov.warehouseId] ?? prod.currentStock ?? 0;
+          currentStocksByWh[mov.warehouseId] = mov.type === 'IN' ? (oldStock + (mov.quantity || 0)) : (oldStock - (mov.quantity || 0));
+        }
+
+        const updatedProduct: ProductService = {
+          ...prod,
+          currentStock: mov.movementReason === 'TRASPASO_BODEGA' ? prod.currentStock : (mov.resultingStock ?? prod.currentStock),
+          stocksByWarehouse: currentStocksByWh,
+          purchaseCost: mov.type === 'IN' && (mov.unitCost || 0) > 0 ? (mov.unitCost as number) : prod.purchaseCost,
+          updatedAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(companyRef, 'products', prod.id), updatedProduct);
+        setProducts(prev => prev.map(p => p.id === prod.id ? updatedProduct : p));
+      }
+
+      // Si se solicitó comprobante contable automático por merma, consumo o ajuste
+      if (autoVoucher && autoVoucher.lines && autoVoucher.lines.length > 0) {
+        const vYear = autoVoucher.date ? new Date(autoVoucher.date).getFullYear() : new Date().getFullYear();
+        const yearVouchers = vouchers.filter(item => {
+          const itemYear = item.date ? new Date(item.date).getFullYear() : 0;
+          return itemYear === vYear;
+        });
+        const nextVNum = yearVouchers.length > 0 ? Math.max(...yearVouchers.map(x => x.voucherNumber || 0)) + 1 : 1;
+        const vLines = autoVoucher.lines as VoucherLine[];
+        const totDeb = vLines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
+        const totCred = vLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
+
+        const newVoucher: Voucher = {
+          id: `vouch-${Date.now()}`,
+          companyId: company.id,
+          voucherNumber: nextVNum,
+          date: autoVoucher.date || mov.date || new Date().toISOString().split('T')[0],
+          period: (autoVoucher.date || mov.date || '').slice(0, 7),
+          type: autoVoucher.type || 'Traspaso',
+          gloss: autoVoucher.gloss || `Ajuste Kardex ${mov.movementReason}: ${mov.productName}`,
+          lines: vLines,
+          totalDebit: totDeb,
+          totalCredit: totCred,
+          status: 'Valido',
+          origin: 'Kardex',
+          creationMode: 'AUTOMATICO',
+          createdAt: new Date().toISOString()
+        };
+        await addDoc(collection(companyRef, 'vouchers'), newVoucher);
+        setVouchers(prev => [newVoucher, ...prev]);
+
+        logAuditEvent({
+          userId: auth.currentUser?.uid || 'anon',
+          userEmail: auth.currentUser?.email || '',
+          studyId,
+          companyId: company.id,
+          action: 'CREAR',
+          module: 'COMPROBANTES',
+          details: `Comprobante automático de ajuste de inventario #${nextVNum} generado.`
+        });
+      }
+
+      // Recargar movimientos de inventario
+      const invMovSnap = await getDocs(collection(companyRef, 'inventoryMovements'));
+      const fetchedInvMov = invMovSnap.docs.map(d => ({ ...d.data(), id: d.id } as InventoryMovement));
+      fetchedInvMov.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setInventoryMovements(fetchedInvMov);
+
+      logAuditEvent({
+        userId: auth.currentUser?.uid || 'anon',
+        userEmail: auth.currentUser?.email || '',
+        studyId,
+        companyId: company.id,
+        action: 'CREAR',
+        module: 'INVENTARIOS',
+        details: `Movimiento de Kardex registrado: ${mov.type} ${mov.quantity} ${prod?.unitOfMeasure || 'UN'} (${mov.movementReason})`
+      });
+    } catch (err: any) {
+      console.error('Error al guardar movimiento de inventario:', err);
+      alert(`Error al guardar movimiento de inventario: ${err.message || err}`);
     }
   };
 
@@ -766,12 +1109,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       const fySnap = await getDocs(collection(companyRef, 'fiscalPeriods'));
       const loadedFys = fySnap.docs.map(d => ({ ...d.data(), id: d.id } as FiscalPeriodYear));
       setFiscalYears(loadedFys);
-      const latestOpenPeriod = getLatestOpenPeriod(loadedFys, 2024);
-      if (latestOpenPeriod) {
-        setSelectedRcvPeriod(latestOpenPeriod);
-        const y = parseInt(latestOpenPeriod.split('-')[0], 10);
-        if (y && y <= 2026) setSelectedYear(y);
-      }
 
       const rcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
       
@@ -823,8 +1160,73 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       const projSnap = await getDocs(collection(companyRef, 'projects'));
       setProjects(projSnap.docs.map(d => ({ ...d.data(), id: d.id } as ProjectMaster)));
 
+      // BODEGAS (Multi-Bodega ERP)
+      const whSnap = await getDocs(collection(companyRef, 'warehouses'));
+      let fetchedWh = whSnap.docs.map(d => ({ ...d.data(), id: d.id } as Warehouse));
+      if (fetchedWh.length === 0) {
+        const defaultWh: Warehouse = {
+          id: 'wh-central',
+          companyId: company.id,
+          code: 'BOD-01',
+          name: 'Bodega Central - Casa Matriz',
+          address: company.address || 'Casa Matriz',
+          responsible: 'Administración General',
+          isDefault: true,
+          estado: 'Activo',
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(doc(companyRef, 'warehouses', 'wh-central'), defaultWh);
+        fetchedWh = [defaultWh];
+      }
+      setWarehouses(fetchedWh);
+
+      // PRODUCTOS Y SERVICIOS
       const prodSnap = await getDocs(collection(companyRef, 'products'));
-      setProducts(prodSnap.docs.map(d => ({ ...d.data(), id: d.id } as ProductMaster)));
+      if (prodSnap.empty) {
+        const defaultWhId = fetchedWh[0]?.id || 'wh-central';
+        const initialProducts: ProductService[] = [
+          {
+            id: 'prod-srv-1',
+            companyId: company.id,
+            code: 'SRV-CONS-01',
+            name: 'Asesoría y Consultoría Contable Mensual',
+            type: 'SERVICE',
+            unitOfMeasure: 'MES',
+            salesPrice: 450000,
+            purchaseCost: 0,
+            currentStock: 0,
+            minStock: 0,
+            allowNegativeStock: true,
+            category: 'Servicios Profesionales',
+            estado: 'Activo',
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: 'prod-merc-1',
+            companyId: company.id,
+            code: 'PROD-RESM-01',
+            name: 'Resma Papel Carta 75g (Caja 10 unidades)',
+            type: 'PRODUCT',
+            unitOfMeasure: 'CAJA',
+            salesPrice: 42900,
+            purchaseCost: 28500,
+            currentStock: 35,
+            minStock: 10,
+            defaultWarehouseId: defaultWhId,
+            stocksByWarehouse: { [defaultWhId]: 35 },
+            allowNegativeStock: false,
+            category: 'Artículos de Oficina',
+            estado: 'Activo',
+            createdAt: new Date().toISOString()
+          }
+        ];
+        for (const p of initialProducts) {
+          await setDoc(doc(companyRef, 'products', p.id), p);
+        }
+        setProducts(initialProducts);
+      } else {
+        setProducts(prodSnap.docs.map(d => ({ ...d.data(), id: d.id } as ProductService)));
+      }
 
       const customItemsSnap = await getDocs(collection(companyRef, 'customAnalysisItems'));
       setCustomAnalysisItems(customItemsSnap.docs.map(d => ({ ...d.data(), id: d.id } as CustomAnalysisTableItem)));
@@ -918,7 +1320,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }, (err) => console.warn("Realtime listener error projects:", err));
 
     const unsubProd = onSnapshot(collection(companyRef, 'products'), (snap) => {
-      setProducts(snap.docs.map(d => ({ ...d.data(), id: d.id } as ProductMaster)));
+      setProducts(snap.docs.map(d => ({ ...d.data(), id: d.id } as ProductService)));
     }, (err) => console.warn("Realtime listener error products:", err));
 
     const unsubCustomItems = onSnapshot(collection(companyRef, 'customAnalysisItems'), (snap) => {
@@ -965,24 +1367,6 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       unsubSlips();
     };
   }, [studyId, company.id]);
-
-  // Sincronización automática del Mes Activo para que siempre apunte a un período abierto válido
-  useEffect(() => {
-    if (fiscalYears.length > 0) {
-      const fy = fiscalYears.find(f => f.id === String(selectedYear));
-      const currParts = selectedRcvPeriod.split('-');
-      const currYear = parseInt(currParts[0], 10);
-      const currMonth = parseInt(currParts[1], 10);
-
-      // Si el mes seleccionado pertenece a otro año, o si está cerrado, auto-seleccionar el mejor mes abierto
-      if (currYear !== selectedYear || (fy && fy.months && fy.months[currMonth] === 'Cerrado')) {
-        const bestMonth = getBestActiveMonthForYear(selectedYear, fiscalYears);
-        if (bestMonth !== selectedRcvPeriod) {
-          setSelectedRcvPeriod(bestMonth);
-        }
-      }
-    }
-  }, [fiscalYears, selectedYear, selectedRcvPeriod]);
 
   const processImportBatch = async (batchDocs: Omit<RCVDocument, 'id'>[]) => {
     try {
@@ -1119,25 +1503,42 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
 
   // Helper to normalize Chilean date formats (DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD)
   const normalizeChileanDate = (rawDate: string, defaultPeriod: string): { dateStr: string; periodStr: string } => {
+    // Validar defaultPeriod (debe ser formato YYYY-MM en rango 2025-2027)
+    let safeDefaultPeriod = defaultPeriod;
+    const defParts = (defaultPeriod || '').split('-');
+    const defYear = parseInt(defParts[0], 10);
+    const defMonth = parseInt(defParts[1], 10);
+    if (isNaN(defYear) || defYear < 2025 || defYear > 2027 || isNaN(defMonth) || defMonth < 1 || defMonth > 12) {
+      safeDefaultPeriod = '2026-01';
+    }
+
     if (!rawDate || !rawDate.trim()) {
-      return { dateStr: `${defaultPeriod}-15`, periodStr: defaultPeriod };
+      return { dateStr: `${safeDefaultPeriod}-15`, periodStr: safeDefaultPeriod };
     }
     const clean = rawDate.trim().replace(/^["']|["']$/g, '');
     const dmyMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
     if (dmyMatch) {
       const day = dmyMatch[1].padStart(2, '0');
       const month = dmyMatch[2].padStart(2, '0');
-      const year = dmyMatch[3];
-      return { dateStr: `${year}-${month}-${day}`, periodStr: `${year}-${month}` };
+      const year = parseInt(dmyMatch[3], 10);
+      if (year >= 2025 && year <= 2027) {
+        return { dateStr: `${year}-${month}-${day}`, periodStr: `${year}-${month}` };
+      } else {
+        return { dateStr: `${safeDefaultPeriod}-${day}`, periodStr: safeDefaultPeriod };
+      }
     }
     const ymdMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
     if (ymdMatch) {
-      const year = ymdMatch[1];
+      const year = parseInt(ymdMatch[1], 10);
       const month = ymdMatch[2].padStart(2, '0');
       const day = ymdMatch[3].padStart(2, '0');
-      return { dateStr: `${year}-${month}-${day}`, periodStr: `${year}-${month}` };
+      if (year >= 2025 && year <= 2027) {
+        return { dateStr: `${year}-${month}-${day}`, periodStr: `${year}-${month}` };
+      } else {
+        return { dateStr: `${safeDefaultPeriod}-${day}`, periodStr: safeDefaultPeriod };
+      }
     }
-    return { dateStr: clean.length >= 10 ? clean.substring(0, 10) : `${defaultPeriod}-15`, periodStr: defaultPeriod };
+    return { dateStr: `${safeDefaultPeriod}-15`, periodStr: safeDefaultPeriod };
   };
 
   // Parser for official SII CSV / TXT / Excel files with precise column mapping for Ventas, Compras and Honorarios
@@ -1214,26 +1615,58 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           return;
         }
 
-        // Detect period from introductory metadata rows (e.g. "Informe correspondiente al mes 03 del año 2026")
-        let targetUploadPeriod = selectedRcvPeriod;
+        // 1. Detección de período según archivo (metadatos o nombre)
+        let detectedFromFile: string | null = null;
+
         for (let r = 0; r < Math.min(tableRows.length, 10); r++) {
           const rowText = tableRows[r].join(' ').toLowerCase();
-          const mesAnoMatch = rowText.match(/(?:mes|periodo|per[ií]odo)\s*0?(\d{1,2})\s*(?:del\s*a[ñn]o|de|\/|-)\s*(\d{4})/i) ||
-                              rowText.match(/(?:a[ñn]o|ejercicio)\s*(\d{4})\s*(?:mes|periodo|per[ií]odo)\s*0?(\d{1,2})/i);
+          const mesAnoMatch = rowText.match(/(?:mes|periodo|per[ií]odo)\s*0?(\d{1,2})\s*(?:del\s*a[ñn]o|de|\/|-)\s*(202[5-7])/i) ||
+                              rowText.match(/(?:a[ñn]o|ejercicio)\s*(202[5-7])\s*(?:mes|periodo|per[ií]odo)\s*0?(\d{1,2})/i);
           if (mesAnoMatch) {
             const m = mesAnoMatch[1].length === 4 ? mesAnoMatch[2] : mesAnoMatch[1];
             const y = mesAnoMatch[1].length === 4 ? mesAnoMatch[1] : mesAnoMatch[2];
-            targetUploadPeriod = `${y}-${m.padStart(2, '0')}`;
-            break;
+            const mNum = parseInt(m, 10);
+            const yNum = parseInt(y, 10);
+            if (yNum >= 2025 && yNum <= 2027 && mNum >= 1 && mNum <= 12) {
+              detectedFromFile = `${yNum}-${String(mNum).padStart(2, '0')}`;
+              break;
+            }
           }
         }
 
-        // Fallback: detect period from filename (e.g. file_informeMensualREC_202603.xlsx)
-        if (targetUploadPeriod === selectedRcvPeriod) {
-          const fnMatch = file.name.match(/_?(\d{4})(0[1-9]|1[0-2])/);
+        if (!detectedFromFile) {
+          const fnMatch = file.name.match(/(?:rcv|ventas?|compras?|honorarios?|mes|periodo|f29)?[_\-]?(202[5-7])[-_]?(0[1-9]|1[0-2])(?!\d)/i);
           if (fnMatch) {
-            targetUploadPeriod = `${fnMatch[1]}-${fnMatch[2]}`;
+            const yNum = parseInt(fnMatch[1], 10);
+            const mNum = parseInt(fnMatch[2], 10);
+            if (yNum >= 2025 && yNum <= 2027 && mNum >= 1 && mNum <= 12) {
+              detectedFromFile = `${yNum}-${String(mNum).padStart(2, '0')}`;
+            }
           }
+        }
+
+        // 2. Validación / Pregunta de confirmación si difiere del mes seleccionado en pantalla
+        let targetUploadPeriod = selectedRcvPeriod;
+        if (detectedFromFile && detectedFromFile !== selectedRcvPeriod) {
+          const confirmSwitch = window.confirm(
+            `⚠️ Validación de Período RCV:\n\n` +
+            `El archivo "${file.name}" indica que corresponde al período [${detectedFromFile}].\n` +
+            `En pantalla tienes seleccionado el período [${selectedRcvPeriod}].\n\n` +
+            `¿Deseas cargar este archivo en el período del archivo [${detectedFromFile}]?\n\n` +
+            `• Presiona [Aceptar] para cargar en ${detectedFromFile}.\n` +
+            `• Presiona [Cancelar] para forzar la carga en el período seleccionado en pantalla (${selectedRcvPeriod}).`
+          );
+          if (confirmSwitch) {
+            targetUploadPeriod = detectedFromFile;
+            setSelectedRcvPeriod(detectedFromFile);
+          }
+        }
+
+        // Garantía absoluta de que targetUploadPeriod esté en rango 2025-2027
+        const finalTgtParts = targetUploadPeriod.split('-');
+        const finalTgtYear = parseInt(finalTgtParts[0], 10);
+        if (isNaN(finalTgtYear) || finalTgtYear < 2025 || finalTgtYear > 2027) {
+          targetUploadPeriod = selectedRcvPeriod;
         }
 
         // Find header line with strict, prioritized recognition
@@ -1351,6 +1784,29 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               tempMap['tipoDoc'] = idx;
               score += 3;
             }
+            // 13. Folio Referencia (para Notas de Crédito / Débito)
+            else if (
+              col === 'folio ref' || col === 'folio referencia' || col === 'folio docto ref' || col === 'doc referencia' || col === 'docto referencia' || col === 'folio_ref' || col === 'folioref' || col === 'referencia' ||
+              (tempMap['refFolio'] === undefined && (col.includes('folio') || col.includes('doc')) && (col.includes('ref') || col.includes('origen') || col.includes('modifica') || col.includes('anula')))
+            ) {
+              tempMap['refFolio'] = idx;
+              score += 2;
+            }
+            // 14. Tipo Doc Referencia
+            else if (
+              col === 'tipo docto ref' || col === 'tipo doc ref' || col === 'tipo ref' ||
+              (tempMap['refTipoDoc'] === undefined && col.includes('tipo') && col.includes('ref'))
+            ) {
+              tempMap['refTipoDoc'] = idx;
+            }
+            // 15. CEEC / Franquicia Constructora (Art. 21 D.L. 910)
+            else if (
+              col === 'ceec' || col === 'credito constructora' || col === 'credito especial' || col === 'crédito constructora' || col === 'crédito especial' || col === 'franquicia constructora' || col === 'rebaja constructora' ||
+              (tempMap['ceec'] === undefined && (col.includes('ceec') || (col.includes('credito') && col.includes('construct')) || (col.includes('crédito') && col.includes('construct'))))
+            ) {
+              tempMap['ceec'] = idx;
+              score += 2;
+            }
           });
 
           if (score >= 5 || (tempMap['rut'] !== undefined && (tempMap['neto'] !== undefined || tempMap['brutos'] !== undefined || tempMap['total'] !== undefined || tempMap['pagado'] !== undefined))) {
@@ -1410,13 +1866,15 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           }
 
           readCount++;
-          const rutEmisor = cols[headerMap['rut'] ?? 4] || (tipoRegistro === 'Venta' ? '77.777.777-7' : '66.666.666-6');
+          const rawRutEmisor = cols[headerMap['rut'] ?? 4] || (tipoRegistro === 'Venta' ? '77.777.777-7' : '66.666.666-6');
+          const rutEmisor = formatRut(rawRutEmisor);
           const razonSocialEmisor = cols[headerMap['razon'] ?? 5] || (tipoRegistro === 'Venta' ? 'Cliente RCV' : tipoRegistro === 'Honorarios' ? 'Prestador Honorarios' : 'Proveedor SII');
           const rawTipoDoc = (headerMap['tipoDoc'] !== undefined ? cols[headerMap['tipoDoc']] : '') || (tipoRegistro === 'Honorarios' ? 'BHE' : '33');
           const folio = rawFolio.replace(/[^0-9]/g, '') || String(readCount);
           const rawFecha = (headerMap['fecha'] !== undefined ? cols[headerMap['fecha']] : cols[1]) || '';
           
           const { dateStr } = normalizeChileanDate(rawFecha, targetUploadPeriod);
+          // El período tributario y contable de registro SIEMPRE es el período objetivo confirmado de carga
           const periodStr = targetUploadPeriod;
           detectedPeriod = periodStr;
 
@@ -1509,6 +1967,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 }
               } else if (montoTotal === 0 && (montoNeto > 0 || montoIva > 0 || montoExento > 0)) {
                 montoTotal = montoNeto + montoIva + montoExento;
+              } else if (montoTotal > 0 && montoTotal < (montoNeto + montoIva + montoExento)) {
+                // Franquicia CEEC (Art. 21 D.L. 910 Constructora) u otra retención
+                montoRetencion = (montoNeto + montoIva + montoExento) - montoTotal;
               }
             } else {
               montoIva = 0;
@@ -1521,6 +1982,31 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             }
           }
 
+          // Detección de referencia para Notas de Crédito / Débito (Folio de la factura que corrigen, rebajan o anulan)
+          const rawRefFolio = (headerMap['refFolio'] !== undefined ? cols[headerMap['refFolio']] : '') || '';
+          const refFolioClean = rawRefFolio ? String(rawRefFolio).replace(/[^0-9]/g, '').trim() : '';
+          const refFolioOrig = refFolioClean || undefined;
+
+          const rawRefTipoDoc = (headerMap['refTipoDoc'] !== undefined ? cols[headerMap['refTipoDoc']] : '') || '';
+          const refTipoDocOrig = rawRefTipoDoc ? String(rawRefTipoDoc).trim() : undefined;
+
+          // Franquicia Crédito Especial Empresas Constructoras (CEEC Art. 21 D.L. 910)
+          const isConstructoraCompany = Boolean(
+            company.isEmpresaConstructora ||
+            rcvParams?.isEmpresaConstructora ||
+            (company.razonSocial && (company.razonSocial.toUpperCase().includes('CONSTRUCTORA') || company.razonSocial.toUpperCase().includes('CONSTRUCCION') || company.razonSocial.toUpperCase().includes('CONSTRUCCIÓN'))) ||
+            (company.name && (company.name.toUpperCase().includes('CONSTRUCTORA') || company.name.toUpperCase().includes('CONSTRUCCION') || company.name.toUpperCase().includes('CONSTRUCCIÓN'))) ||
+            (company.giro && (company.giro.toUpperCase().includes('CONSTRUCTORA') || company.giro.toUpperCase().includes('CONSTRUCCION') || company.giro.toUpperCase().includes('EDIFICACION') || company.giro.toUpperCase().includes('OBRAS')))
+          );
+
+          let parsedCeec = headerMap['ceec'] !== undefined ? parseChileanNumber(cols[headerMap['ceec']]) : 0;
+          if (parsedCeec === 0 && tipoRegistro === 'Venta' && (isConstructoraCompany || (montoTotal > 0 && montoTotal < (montoNeto + montoIva + montoExento)))) {
+            const expectedSum = montoNeto + montoIva + montoExento;
+            if (montoTotal > 0 && montoTotal < expectedSum) {
+              parsedCeec = expectedSum - montoTotal;
+            }
+          }
+
           parsedDocs.push({
             tipoRegistro,
             period: periodStr,
@@ -1530,6 +2016,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             nombreTipoDoc,
             folio,
             fechaEmision: dateStr,
+            date: dateStr,
             montoNeto,
             montoIva,
             montoExento,
@@ -1537,6 +2024,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             montoBruto,
             montoRetencion,
             montoLiquido,
+            montoCeec: parsedCeec > 0 ? parsedCeec : undefined,
+            isConstructoraCeec: parsedCeec > 0,
+            refFolioOrig,
+            refTipoDocOrig,
             estadoContabilizado: false
           });
         }
@@ -1652,13 +2143,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           (nulasCount > 0 ? `• Boletas NULAS / ANULADAS excluidas: ${nulasCount}\n` : '') +
           (duplicates > 0 ? `• Documentos duplicados omitidos: ${duplicates}\n` : '') +
           `• Nuevos auxiliares creados: ${newAuxCount}\n` +
-          `• Período fiscal asignado: ${detectedPeriod}`;
+          `• Período fiscal asignado: ${targetUploadPeriod}`;
 
         alert(summaryMsg);
-
-        if (detectedPeriod !== selectedRcvPeriod) {
-          setSelectedRcvPeriod(detectedPeriod);
-        }
 
         await fetchData();
         e.target.value = '';
@@ -1725,6 +2212,14 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
 
     const [yearStr, monthStr] = selectedRcvPeriod.split('-');
 
+    // GEST_OK: Confirmación explícita de período antes de sincronizar
+    const confirmSync = window.confirm(
+      `🌐 Confirmación de Sincronización SII:\n\n` +
+      `Se rescatarán documentos para el período tributario [${selectedRcvPeriod}].\n\n` +
+      `¿Es correcto este período de proceso?`
+    );
+    if (!confirmSync) return;
+
     setIsRescatandoRcvApi(true);
     try {
       const dteConfig: Partial<DTEConfig> = company.dteConfig || {};
@@ -1775,14 +2270,59 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         return;
       }
 
-      // Read current RCV docs from Firestore to prevent duplicates
+      // Read current RCV docs from Firestore to prevent duplicates and detect previous boletas
       const currentRcvSnap = await getDocs(collection(companyRef, 'rcvDocuments'));
       const existingKeys = new Set(
         currentRcvSnap.docs.map(d => {
           const docData = d.data();
-          return `${(docData.rutEmisor || '').trim().toLowerCase()}_${String(docData.tipoDocumento || docData.tipoDoc).trim()}_${String(docData.folio).trim()}`;
+          const party = docData.tipoRegistro === 'Venta' 
+            ? (docData.rutReceptor || docData.rutEmisor || '') 
+            : (docData.rutEmisor || '');
+          return `${party.trim().toLowerCase()}_${String(docData.tipoDocumento || docData.tipoDoc).trim()}_${String(docData.folio).trim()}`;
         })
       );
+
+      // --- LOGICA DE PISADO DE BOLETAS DE VENTA ---
+      // Las boletas de venta (resúmenes acumulados tipo 39/41 o folios RESUMEN-) deben pisar/borrar
+      // las descargas anteriores del mismo período para que no se dupliquen o tripliquen al sincronizar varias veces.
+      const fetchedBoletas = fetchedDocs.filter(d => 
+        (d.tipoRegistro === 'Venta' || !d.tipoRegistro) && (
+          String(d.tipoDocumento || d.tipoDoc) === '39' ||
+          String(d.tipoDocumento || d.tipoDoc) === '41' ||
+          String(d.folio).includes('RESUMEN') ||
+          d.isBoletaResumen ||
+          String(d.nombreTipoDoc || '').toLowerCase().includes('boleta')
+        )
+      );
+
+      let boletasPisadasCount = 0;
+      if (fetchedBoletas.length > 0) {
+        // Encontrar boletas ya existentes en Firestore para este período
+        const existingBoletaDocs = currentRcvSnap.docs.filter(d => {
+          const docData = d.data();
+          const p = docData.period || '';
+          const tDoc = String(docData.tipoDocumento || docData.tipoDoc || '');
+          const fol = String(docData.folio || '');
+          const nom = String(docData.nombreTipoDoc || '').toLowerCase();
+          const isVenta = docData.tipoRegistro === 'Venta' || (!docData.tipoRegistro && ['39', '41'].includes(tDoc));
+          return (
+            p === selectedRcvPeriod &&
+            isVenta &&
+            (tDoc === '39' || tDoc === '41' || fol.includes('RESUMEN') || docData.isBoletaResumen || nom.includes('boleta'))
+          );
+        });
+
+        for (const oldBoletaDoc of existingBoletaDocs) {
+          await deleteDoc(doc(companyRef, 'rcvDocuments', oldBoletaDoc.id));
+          const oldData = oldBoletaDoc.data();
+          const oldParty = oldData.tipoRegistro === 'Venta' 
+            ? (oldData.rutReceptor || oldData.rutEmisor || '') 
+            : (oldData.rutEmisor || '');
+          const oldKey = `${oldParty.trim().toLowerCase()}_${String(oldData.tipoDocumento || oldData.tipoDoc).trim()}_${String(oldData.folio).trim()}`;
+          existingKeys.delete(oldKey);
+          boletasPisadasCount++;
+        }
+      }
 
       // Read current Auxiliaries to auto-register new suppliers and customers
       const currentAuxSnap = await getDocs(collection(companyRef, 'auxiliaries'));
@@ -1796,35 +2336,61 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       const userEmail = auth.currentUser?.email || '';
       const nowIso = new Date().toISOString();
       const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      const cleanCompRutWithDash = company.rut.includes('-') ? company.rut : `${company.rut.slice(0, -1)}-${company.rut.slice(-1)}`;
 
       for (const item of fetchedDocs) {
-        const itemRut = (item.rutEmisor || item.rut || '11.111.111-1').trim();
         const itemTipoDoc = String(item.tipoDocumento || item.tipoDoc || '33').trim();
         const itemFolio = String(item.folio || '0').trim();
+        const docPeriod = item.period || selectedRcvPeriod;
+        const tipoReg = item.tipoRegistro || (['33', '34', '52', '56'].includes(itemTipoDoc) ? 'Compra' : ['BH', 'BHR'].includes(itemTipoDoc) ? 'Honorarios' : 'Venta');
+        
+        const isVenta = tipoReg === 'Venta';
+        const isBoleta = itemTipoDoc === '39' || itemTipoDoc === '41' || String(itemFolio).includes('RESUMEN') || item.isBoletaResumen || String(item.nombreTipoDoc || '').toLowerCase().includes('boleta');
 
-        const key = `${itemRut.toLowerCase()}_${itemTipoDoc}_${itemFolio}`;
+        // Para Ventas: el Emisor SIEMPRE es la Empresa. El Receptor SIEMPRE es el Cliente (o Clientes Varios si es Boleta).
+        // NUNCA debe colocarse la empresa emisora como receptor/cliente de su propia factura.
+        let rutEmisorDoc = '';
+        let razonEmisorDoc = '';
+        let rutReceptorDoc = '';
+        let razonReceptorDoc = '';
+
+        if (isVenta) {
+          rutEmisorDoc = cleanCompRutWithDash;
+          razonEmisorDoc = company.name || 'EMPRESA EMISORA';
+
+          if (isBoleta) {
+            rutReceptorDoc = '66.666.666-6';
+            razonReceptorDoc = item.razonSocialReceptor || (String(itemFolio).includes('RESUMEN') ? `Clientes Varios (${String(itemFolio).replace(/[^0-9]/g, '') || ''} Boletas)` : 'Clientes Varios (Boletas de Venta)');
+          } else {
+            // Factura u otro documento de venta emitido a cliente
+            const rawClientRut = (item.rutReceptor || item.rutCliente || item.rutComprador || (item.rut && item.rut.replace(/[^0-9kK]/g, '').toUpperCase() !== cleanCompRut ? item.rut : '') || '').trim();
+            const isSelfRut = rawClientRut && rawClientRut.replace(/[^0-9kK]/g, '').toUpperCase() === cleanCompRut;
+            rutReceptorDoc = (!isSelfRut && rawClientRut) ? rawClientRut : '76.000.000-0';
+
+            const rawClientName = (item.razonSocialReceptor || item.razonSocialCliente || item.razonSocial || '').trim();
+            const isSelfName = rawClientName && rawClientName.toUpperCase() === (company.name || '').trim().toUpperCase();
+            razonReceptorDoc = (!isSelfName && rawClientName) ? rawClientName : 'CLIENTE FACTURA';
+          }
+        } else {
+          // Compra u Honorarios: el Emisor es el Proveedor o Prestador, el Receptor es la Empresa
+          rutEmisorDoc = (item.rutEmisor || item.rut || '11.111.111-1').trim();
+          razonEmisorDoc = (item.razonSocialEmisor || item.razonSocial || item.nombrePrestador || 'PROVEEDOR DTE').trim();
+          rutReceptorDoc = cleanCompRutWithDash;
+          razonReceptorDoc = company.name || 'EMPRESA RECEPTORA';
+        }
+
+        // Clave de duplicidad precisa
+        const partyForDuplicity = isVenta ? rutReceptorDoc : rutEmisorDoc;
+        const key = `${partyForDuplicity.toLowerCase()}_${itemTipoDoc}_${itemFolio}`;
         if (existingKeys.has(key)) {
           duplicateCount++;
           continue;
         }
 
-        const docPeriod = item.period || selectedRcvPeriod;
-        const tipoReg = item.tipoRegistro || (['33', '34', '52', '56'].includes(itemTipoDoc) ? 'Compra' : ['BH', 'BHR'].includes(itemTipoDoc) ? 'Honorarios' : 'Venta');
-        
         // --- AUTO-REGISTRO DE NUEVOS AUXILIARES (PROVEEDORES / CLIENTES / PRESTADORES) ---
-        let targetRut = '';
-        let targetName = '';
-        let targetRole: 'Deudor' | 'Acreedor' = 'Acreedor';
-
-        if (tipoReg === 'Compra' || tipoReg === 'Honorarios' || tipoReg === 'Honorario') {
-          targetRut = (item.rutEmisor || item.rut || '').trim();
-          targetName = (item.razonSocialEmisor || item.razonSocial || item.nombrePrestador || '').trim();
-          targetRole = 'Acreedor';
-        } else if (tipoReg === 'Venta') {
-          targetRut = (item.rutReceptor || item.rutCliente || '').trim();
-          targetName = (item.razonSocialReceptor || item.razonSocial || item.razonSocialCliente || '').trim();
-          targetRole = 'Deudor';
-        }
+        let targetRut = isVenta ? rutReceptorDoc : rutEmisorDoc;
+        let targetName = isVenta ? razonReceptorDoc : razonEmisorDoc;
+        let targetRole: 'Deudor' | 'Acreedor' = isVenta ? 'Deudor' : 'Acreedor';
 
         const cleanTargetRut = targetRut.replace(/[^0-9kK]/g, '').toUpperCase();
         const isGenericRut = ['666666666', '111111111', '555555555', '777777777', '888888888', '999999999'].includes(cleanTargetRut);
@@ -1867,10 +2433,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           tipoDoc: itemTipoDoc,
           nombreTipoDoc: item.nombreTipoDoc || (itemTipoDoc === '33' ? 'Factura Electrónica' : itemTipoDoc === '34' ? 'Factura Exenta' : itemTipoDoc === '39' ? 'Boleta Electrónica' : itemTipoDoc === '61' ? 'Nota de Crédito' : 'Documento DTE'),
           folio: itemFolio,
-          rutEmisor: itemRut,
-          razonSocialEmisor: item.razonSocialEmisor || item.razonSocial || 'EMISOR DTE',
-          rutReceptor: item.rutReceptor || company.rut,
-          razonSocialReceptor: item.razonSocialReceptor || company.name,
+          rutEmisor: rutEmisorDoc,
+          razonSocialEmisor: razonEmisorDoc,
+          rutReceptor: rutReceptorDoc,
+          razonSocialReceptor: razonReceptorDoc,
           fechaEmision: item.fechaEmision || `${docPeriod}-01`,
           montoNeto: Number(item.montoNeto) || 0,
           montoIva: Number(item.montoIva) || 0,
@@ -1898,6 +2464,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         `✅ ¡Rescate RCV vía API SII Exitoso!\n\n` +
         `• Período rescatado: ${selectedRcvPeriod}\n` +
         `• Nuevos documentos guardados en Firestore: ${loadedCount}\n` +
+        (boletasPisadasCount > 0 ? `• Boletas de descarga anterior pisadas y actualizadas: ${boletasPisadasCount} (se reemplazaron por el nuevo resumen oficial acumulado)\n` : '') +
         `• Nuevos auxiliares (Proveedores/Clientes) creados en el Maestro: ${newAuxCount}\n` +
         `• Duplicados ya existentes omitidos: ${duplicateCount}\n` +
         (data.message ? `\nDetalle: ${data.message}\n` : '') +
@@ -1909,6 +2476,63 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       alert(`❌ Ocurrió un error al intentar rescatar datos desde la API SII: ${err.message || String(err)}`);
     } finally {
       setIsRescatandoRcvApi(false);
+    }
+  };
+
+  // Función para pisar/limpiar resúmenes de boletas anteriores y dejar solo el resumen acumulado más reciente
+  const handlePisarBoletasAnteriores = async () => {
+    if (!selectedRcvPeriod) return;
+    const boletas = rcvDocuments.filter(d => 
+      d.period === selectedRcvPeriod && 
+      d.tipoRegistro === 'Venta' && 
+      (d.tipoDoc === '39' || d.tipoDoc === '41' || String(d.folio).includes('RESUMEN') || d.isBoletaResumen || String(d.nombreTipoDoc || '').toLowerCase().includes('boleta'))
+    );
+    if (boletas.length <= 1) {
+      alert('No hay múltiples resúmenes de boletas para pisar en este período.');
+      return;
+    }
+
+    const confirmPisar = window.confirm(
+      `⚠️ PISAR RESÚMENES ANTERIORES DE BOLETAS\n\n` +
+      `Se detectaron ${boletas.length} registros de boletas en el período [${selectedRcvPeriod}]:\n` +
+      boletas.map(b => ` • Folio #${b.folio} - Total: $${(b.montoTotal || 0).toLocaleString('es-CL')}`).join('\n') +
+      `\n\nAl pisar, se mantendrá únicamente el resumen mensual final acumulado (con el mayor monto de ventas) y se eliminarán las descargas intermedias de la base de datos para evitar duplicar las ventas y el IVA Débito.\n\n` +
+      `¿Deseas continuar?`
+    );
+    if (!confirmPisar) return;
+
+    try {
+      // Ordenar por montoTotal descendente para conservar el resumen acumulado con mayor valor
+      const sorted = [...boletas].sort((a, b) => (b.montoTotal || 0) - (a.montoTotal || 0));
+      const keepDoc = sorted[0];
+      const toDelete = sorted.slice(1);
+
+      for (const delItem of toDelete) {
+        await deleteDoc(doc(companyRef, 'rcvDocuments', delItem.id));
+      }
+
+      // Asegurar que el documento conservado tenga receptor asignado a Clientes Varios
+      const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      const cleanReceptorRut = (keepDoc.rutReceptor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      if (!keepDoc.rutReceptor || cleanReceptorRut === cleanCompRut || keepDoc.razonSocialReceptor === keepDoc.razonSocialEmisor) {
+        await updateDoc(doc(companyRef, 'rcvDocuments', keepDoc.id), {
+          rutReceptor: '66.666.666-6',
+          razonSocialReceptor: String(keepDoc.folio).includes('RESUMEN') 
+            ? `Clientes Varios (${String(keepDoc.folio).replace(/[^0-9]/g, '') || ''} Boletas)` 
+            : 'Clientes Varios (Boletas de Venta)',
+          rutEmisor: company.rut,
+          razonSocialEmisor: company.name
+        });
+      }
+
+      await fetchData();
+      alert(
+        `✅ ¡Boletas pisadas con éxito!\n\n` +
+        `• Resúmenes intermediarios eliminados: ${toDelete.length}\n` +
+        `• Resumen oficial conservado: Folio #${keepDoc.folio} ($${(keepDoc.montoTotal || 0).toLocaleString('es-CL')})`
+      );
+    } catch (err: any) {
+      alert(`Error al pisar boletas: ${err.message}`);
     }
   };
 
@@ -1960,10 +2584,41 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     docItem: RCVDocument,
     voucherNumber: number
   ): Omit<Voucher, 'id'> => {
-    const partyRutToSearch = (docItem.tipoRegistro === 'Venta' 
-      ? (docItem.rutReceptor || docItem.rutEmisor || '') 
-      : (docItem.rutEmisor || docItem.rutReceptor || '')
-    ).toLowerCase().replace(/[^0-9k]/g, '');
+    const isVenta = docItem.tipoRegistro === 'Venta';
+    const isBoleta = docItem.tipoDoc === '39' || docItem.tipoDoc === '41' || String(docItem.folio).includes('RESUMEN') || docItem.isBoletaResumen;
+    const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    const cleanReceptorRut = (docItem.rutReceptor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    const cleanEmisorRut = (docItem.rutEmisor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+
+    let resolvedPartyRut = '';
+    let resolvedPartyName = '';
+
+    if (isVenta) {
+      if (isBoleta) {
+        resolvedPartyRut = docItem.rutReceptor && docItem.rutReceptor !== docItem.rutEmisor ? docItem.rutReceptor : '66.666.666-6';
+        resolvedPartyName = docItem.razonSocialReceptor && docItem.razonSocialReceptor !== docItem.razonSocialEmisor 
+          ? docItem.razonSocialReceptor 
+          : 'Clientes Varios (Boletas)';
+      } else {
+        if (cleanReceptorRut && cleanReceptorRut !== cleanCompRut) {
+          resolvedPartyRut = docItem.rutReceptor!;
+          resolvedPartyName = docItem.razonSocialReceptor || 'CLIENTE FACTURA';
+        } else if (cleanEmisorRut && cleanEmisorRut !== cleanCompRut) {
+          resolvedPartyRut = docItem.rutEmisor;
+          resolvedPartyName = docItem.razonSocialEmisor;
+        } else {
+          resolvedPartyRut = docItem.rutReceptor || '76.000.000-0';
+          resolvedPartyName = docItem.razonSocialReceptor && docItem.razonSocialReceptor.toUpperCase() !== (company.name || '').toUpperCase()
+            ? docItem.razonSocialReceptor
+            : 'CLIENTE FACTURA';
+        }
+      }
+    } else {
+      resolvedPartyRut = docItem.rutEmisor || '11.111.111-1';
+      resolvedPartyName = docItem.razonSocialEmisor || 'PROVEEDOR DTE';
+    }
+
+    const partyRutToSearch = resolvedPartyRut.toLowerCase().replace(/[^0-9k]/g, '');
 
     const aux = auxiliaries.find(
       a => (a.rut || '').toLowerCase().replace(/[^0-9k]/g, '') === partyRutToSearch
@@ -2209,50 +2864,112 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         'Impuestos Adicionales por Pagar'
       );
 
+      // 6. Cuenta Crédito Especial Empresas Constructoras (CEEC Art. 21 D.L. 910)
+      const ceecAcc = resolveAccountDetails(
+        rcvParams?.ceecAccountId,
+        ['1107001', '1.1.07.001', '1.1.07', 'ceec', 'crédito especial', 'credito especial', 'constructora', 'impuesto por recuperar'],
+        'Activo',
+        '1107001',
+        'Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)'
+      );
+
       const totalAmount = Number(docItem.montoTotal) || 0;
       const netoAmount = Number(docItem.montoNeto) || (docItem.montoIva === 0 && docItem.montoExento === 0 ? totalAmount : 0);
       const ivaAmount = Number(docItem.montoIva) || 0;
       const exentoAmount = Number(docItem.montoExento) || 0;
 
+      // Franquicia Constructora CEEC (Art. 21 D.L. 910)
+      const isConstructoraCompany = Boolean(
+        company.isEmpresaConstructora ||
+        rcvParams?.isEmpresaConstructora ||
+        (company.razonSocial && (company.razonSocial.toUpperCase().includes('CONSTRUCTORA') || company.razonSocial.toUpperCase().includes('CONSTRUCCION') || company.razonSocial.toUpperCase().includes('CONSTRUCCIÓN'))) ||
+        (company.name && (company.name.toUpperCase().includes('CONSTRUCTORA') || company.name.toUpperCase().includes('CONSTRUCCION') || company.name.toUpperCase().includes('CONSTRUCCIÓN'))) ||
+        (company.giro && (company.giro.toUpperCase().includes('CONSTRUCTORA') || company.giro.toUpperCase().includes('CONSTRUCCION') || company.giro.toUpperCase().includes('EDIFICACION') || company.giro.toUpperCase().includes('OBRAS')))
+      );
+
+      let ceecAmount = Number(docItem.montoCeec) || 0;
+      if (ceecAmount === 0 && (isConstructoraCompany || (docItem.montoRetencion && docItem.montoRetencion > 0))) {
+        const expectedTotal = netoAmount + ivaAmount + exentoAmount;
+        if (totalAmount > 0 && totalAmount < expectedTotal) {
+          ceecAmount = expectedTotal - totalAmount;
+        } else if (Number(docItem.montoRetencion) > 0 && totalAmount < expectedTotal) {
+          ceecAmount = Number(docItem.montoRetencion);
+        }
+      }
+
       const explicitOtros = Number(docItem.montoOtrosImpuestos) || 0;
-      const calculatedOtros = totalAmount - (netoAmount + ivaAmount + exentoAmount);
+      // Solo si el total supera el neto + iva + exento (restando CEEC) hay otros impuestos positivos (ILA, etc.)
+      const expectedWithCeec = (netoAmount + ivaAmount + exentoAmount) - ceecAmount;
+      const calculatedOtros = totalAmount - expectedWithCeec;
       const otrosImpuestosAmount = explicitOtros > 0 ? explicitOtros : (calculatedOtros > 0 ? calculatedOtros : 0);
 
       const hasConfiguredOtrosAcc = Boolean(rcvParams?.otrosImpuestosAccountId && accounts.some(a => a.id === rcvParams.otrosImpuestosAccountId));
       const finalNetoCredit = hasConfiguredOtrosAcc ? netoAmount : (netoAmount + otrosImpuestosAmount);
 
       const isNotaCredito = docItem.tipoDoc === '61' || String(docItem.tipoDoc).includes('61');
-      const partyRut = docItem.rutEmisor || docItem.rutReceptor || '';
-      const partyName = docItem.razonSocialEmisor || docItem.razonSocialReceptor || '';
+      const partyRut = resolvedPartyRut;
+      const partyName = resolvedPartyName;
+
+      // Información de referencia a la factura que corrige, rebaja o anula
+      const refFolio = docItem.refFolioOrig ? String(docItem.refFolioOrig).trim() : '';
+      const refNotice = refFolio ? ` modifica Factura #${refFolio}` : '';
+      const refInfoText = refFolio ? ` (Ref. Factura #${refFolio})` : '';
 
       if (isNotaCredito) {
-        // En Nota de Crédito de Ventas: Ingresos e IVA al Debe, Cliente al Haber
+        // En Nota de Crédito de Ventas: Ingresos e IVA al Debe, Cliente al Haber.
+        // Si la factura o NC rebajó CEEC, se reversa el CEEC al Haber para cuadrar la partida doble.
         if (finalNetoCredit > 0) {
-          const baseNcGloss = `Reverso Venta ${docRefStr}`;
+          const baseNcGloss = `Reverso Venta ${docRefStr}${refNotice}`;
           const glossStr = aux?.defaultGloss ? `${baseNcGloss} - ${aux.defaultGloss.trim()}` : baseNcGloss;
           lines.push(makeLine(salesAcc, finalNetoCredit, 0, glossStr, partyRut, partyName, docRefStr));
         }
 
         if (hasConfiguredOtrosAcc && otrosImpuestosAmount > 0) {
-          lines.push(makeLine(otrosImpuestosAcc, otrosImpuestosAmount, 0, `Reverso Impuestos Adicionales ${docRefStr}`, partyRut, partyName, docRefStr));
+          lines.push(makeLine(otrosImpuestosAcc, otrosImpuestosAmount, 0, `Reverso Impuestos Adicionales ${docRefStr}${refInfoText}`, partyRut, partyName, docRefStr));
         }
 
         if (ivaAmount > 0) {
-          lines.push(makeLine(ivaDebitoAcc, ivaAmount, 0, `Reverso IVA Débito ${docRefStr}`, partyRut, partyName, docRefStr));
+          lines.push(makeLine(ivaDebitoAcc, ivaAmount, 0, `Reverso IVA Débito ${docRefStr}${refNotice}`, partyRut, partyName, docRefStr));
         }
 
         if (exentoAmount > 0) {
-          lines.push(makeLine(exentoAcc, exentoAmount, 0, `Reverso Venta Exenta ${docRefStr}`, partyRut, partyName, docRefStr));
+          lines.push(makeLine(exentoAcc, exentoAmount, 0, `Reverso Venta Exenta ${docRefStr}${refNotice}`, partyRut, partyName, docRefStr));
         }
 
-        const baseNcCustomer = `NC Cliente ${docRefStr} - ${partyName}`;
+        const baseNcCustomer = `NC Cliente ${docRefStr}${refInfoText} - ${partyName}`;
         const ncCustomerGloss = aux?.defaultGloss ? `${baseNcCustomer} - ${aux.defaultGloss.trim()}` : baseNcCustomer;
         lines.push(makeLine(customerAcc, 0, totalAmount, ncCustomerGloss, partyRut, partyName, docRefStr));
+
+        // Reverso de Franquicia Constructora CEEC (Art. 21 DL 910) al Haber
+        if (ceecAmount > 0) {
+          lines.push(makeLine(
+            ceecAcc,
+            0,
+            ceecAmount,
+            `Reverso Crédito Especial Constructora (Art. 21 DL 910) ${docRefStr}${refInfoText}`,
+            partyRut,
+            partyName,
+            docRefStr
+          ));
+        }
       } else {
         // Cliente (Debe)
         const baseCustomerGloss = `Por Cobrar ${docRefStr} - ${partyName}`;
         const customerGloss = aux?.defaultGloss ? `${baseCustomerGloss} - ${aux.defaultGloss.trim()}` : baseCustomerGloss;
         lines.push(makeLine(customerAcc, totalAmount, 0, customerGloss, partyRut, partyName, docRefStr));
+
+        // Franquicia Constructora CEEC (Art. 21 D.L. 910) al Debe (Activo tributario por recuperar de PPM o F29)
+        if (ceecAmount > 0) {
+          lines.push(makeLine(
+            ceecAcc,
+            ceecAmount,
+            0,
+            `Crédito Especial Empresa Constructora (Art. 21 D.L. 910) ${docRefStr} - ${partyName}`,
+            partyRut,
+            partyName,
+            docRefStr
+          ));
+        }
 
         // Ingreso Ventas (Haber)
         if (finalNetoCredit > 0) {
@@ -2373,12 +3090,15 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       ? (docItem.razonSocialReceptor || docItem.razonSocialEmisor || '') 
       : (docItem.razonSocialEmisor || docItem.razonSocialReceptor || '');
 
+    const isNotaCreditoDoc = docItem.tipoDoc === '61' || String(docItem.tipoDoc).includes('61');
+    const refNoticeGloss = isNotaCreditoDoc && docItem.refFolioOrig ? ` (Modifica Factura #${docItem.refFolioOrig})` : '';
+
     return {
       voucherNumber,
       date: accountingDate,
       period: docItem.period,
       type: 'Traspaso',
-      gloss: `Centralización RCV ${docItem.tipoRegistro} Doc ${docItem.tipoDoc} N° ${docItem.folio} - ${mainPartyName}${aux?.defaultGloss ? ` - ${aux.defaultGloss.trim()}` : ''}`,
+      gloss: `Centralización RCV ${docItem.tipoRegistro} Doc ${docItem.tipoDoc} N° ${docItem.folio}${refNoticeGloss} - ${mainPartyName}${aux?.defaultGloss ? ` - ${aux.defaultGloss.trim()}` : ''}`,
       lines: sanitizedLines,
       totalDebit,
       totalCredit,
@@ -2788,6 +3508,178 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
     }
   };
 
+  const handleAutoFixCeecVouchers = async () => {
+    if (isReadOnly) {
+      alert('🔒 Modo Solo Lectura: El perfil Observador no puede modificar comprobantes.');
+      return;
+    }
+
+    // Identificar comprobantes de venta con descuadre en el Haber (donde Haber > Debe debido a la rebaja CEEC)
+    const candidates = vouchers.filter(v => {
+      if (v.status === 'Anulado') return false;
+      const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+      const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+      const diff = Math.round(vCred - vDeb);
+      if (diff <= 0) return false;
+
+      // Debe ser un comprobante de venta o contener líneas de ventas / IVA débito
+      const isVentaVoucher = 
+        (v.gloss && v.gloss.toLowerCase().includes('venta')) ||
+        (v.createdFromRcvId && rcvDocuments.some(d => d.id === v.createdFromRcvId && d.tipoRegistro === 'Venta')) ||
+        v.lines?.some(l => l.accountCode === '5101001' || l.accountName?.toLowerCase().includes('venta') || l.accountCode === '2102001' || l.accountName?.toLowerCase().includes('iva debito'));
+
+      if (!isVentaVoucher) return false;
+
+      // Verificar que no tenga ya la línea de crédito constructora
+      const hasCeecLine = v.lines?.some(l => 
+        l.accountCode === '1107001' || 
+        l.accountName?.toLowerCase().includes('ceec') || 
+        l.accountName?.toLowerCase().includes('crédito especial') ||
+        l.accountName?.toLowerCase().includes('credito especial')
+      );
+      if (hasCeecLine) return false;
+
+      return true;
+    });
+
+    if (candidates.length === 0) {
+      alert('No se encontraron comprobantes de venta descuadrados por Crédito Constructora CEEC (Art. 21 D.L. 910).\n\nTodos los asientos de venta se encuentran actualmente cuadrados o ya poseen su línea correspondiente.');
+      return;
+    }
+
+    const totalDiffToFix = candidates.reduce((sum, v) => {
+      const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+      const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+      return sum + (vCred - vDeb);
+    }, 0);
+
+    const sampleList = candidates.slice(0, 6).map(v => {
+      const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+      const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+      return ` • Asiento N° ${v.voucherNumber} (${v.date}): Descuadre $${Math.round(vCred - vDeb).toLocaleString('es-CL')} - ${v.gloss?.substring(0, 45)}...`;
+    }).join('\n');
+
+    const confirmMsg = 
+      `🏗️ REGULARIZACIÓN AUTOMÁTICA DE CRÉDITO ESPECIAL CONSTRUCTORA (CEEC ART. 21 D.L. 910)\n\n` +
+      `Se detectaron ${candidates.length} comprobante(s) de ventas descuadrados por la deducción de la franquicia constructora:\n\n` +
+      sampleList +
+      (candidates.length > 6 ? `\n ... y ${candidates.length - 6} comprobante(s) más.` : '') +
+      `\n\n💰 Total Crédito Constructora a Imputar: $${Math.round(totalDiffToFix).toLocaleString('es-CL')}\n\n` +
+      `¿Qué hará esta función?\n` +
+      `1. Agregará automáticamente a cada asiento la línea al Debe:\n` +
+      `   [1107001] Crédito Especial Empresas Constructoras (Art. 21 D.L. 910) por el monto exacto de la rebaja.\n` +
+      `2. Marcará cada asiento como VÁLIDO y CUADRADO (Debe = Haber).\n` +
+      `3. Al quedar cuadrados, estos comprobantes INGRESARÁN DE INMEDIATO AL BALANCE DE 8 COLUMNAS, reflejando las ventas, el crédito por recuperar y los saldos de clientes.\n\n` +
+      `¿Deseas aplicar la corrección automática ahora?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    // Obtener o crear cuenta 1107001
+    let ceecAcc = accounts.find(a => 
+      a.code === '1107001' || 
+      a.id === rcvParams?.ceecAccountId ||
+      a.name.toLowerCase().includes('ceec') || 
+      a.name.toLowerCase().includes('crédito especial') || 
+      a.name.toLowerCase().includes('credito especial') ||
+      a.name.toLowerCase().includes('constructora')
+    );
+
+    if (!ceecAcc) {
+      try {
+        const newAccRef = await addDoc(collection(companyRef, 'accounts'), {
+          code: '1107001',
+          name: 'Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)',
+          type: 'Activo',
+          requiereCentroCosto: false,
+          requiereAuxiliarRUT: true,
+          requiereConciliacionBancaria: false,
+          requiereDocumento: true,
+          estado: 'Activo',
+          createdAt: new Date().toISOString()
+        });
+        ceecAcc = {
+          id: newAccRef.id,
+          code: '1107001',
+          name: 'Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)',
+          type: 'Activo',
+          requiereCentroCosto: false,
+          requiereAuxiliarRUT: true,
+          requiereConciliacionBancaria: false,
+          requiereDocumento: true,
+          estado: 'Activo'
+        };
+      } catch (err: any) {
+        console.warn("No se pudo persistir cuenta 1107001 en Firestore, usando fallback en memoria:", err);
+        ceecAcc = {
+          id: 'ceec-auto-1107001',
+          code: '1107001',
+          name: 'Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)',
+          type: 'Activo',
+          requiereCentroCosto: false,
+          requiereAuxiliarRUT: true,
+          requiereConciliacionBancaria: false,
+          requiereDocumento: true,
+          estado: 'Activo'
+        };
+      }
+    }
+
+    await withProcess(`Regularizando y cuadrando ${candidates.length} comprobantes con CEEC Constructora...`, async () => {
+      const userUid = auth.currentUser?.uid || 'anon';
+      const userEmail = auth.currentUser?.email || '';
+      const nowIso = new Date().toISOString();
+
+      for (let i = 0; i < candidates.length; i++) {
+        const v = candidates[i];
+        const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+        const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+        const diff = Math.round(vCred - vDeb);
+
+        const firstLine = v.lines?.[0];
+        const newLine: VoucherLine = {
+          accountId: ceecAcc!.id,
+          accountCode: ceecAcc!.code,
+          accountName: ceecAcc!.name,
+          debit: diff,
+          credit: 0,
+          auxiliaryRut: firstLine?.auxiliaryRut || '',
+          auxiliaryName: firstLine?.auxiliaryName || '',
+          documentRef: firstLine?.documentRef || '',
+          costCenter: firstLine?.costCenter || '',
+          project: firstLine?.project || '',
+          gloss: `Crédito Especial Constructora (Art. 21 D.L. 910) - ${v.gloss || ''}`
+        };
+
+        const updatedLines = [...(v.lines || []), newLine];
+        const newTotal = vCred; // Ahora totalDebit = totalCredit = vCred
+
+        await updateDoc(doc(companyRef, 'vouchers', v.id), {
+          lines: updatedLines,
+          totalDebit: newTotal,
+          totalCredit: newTotal,
+          status: 'Valido',
+          isDescuadrado: false,
+          descuadreDifference: 0,
+          lastModifiedBy: userUid,
+          lastModifiedAt: nowIso
+        });
+      }
+
+      logAuditEvent({
+        userId: userUid,
+        userEmail,
+        studyId,
+        companyId: company.id,
+        action: 'MODIFICAR',
+        module: 'COMPROBANTES',
+        details: `Regularización masiva automática CEEC D.L. 910: ${candidates.length} comprobantes cuadrados por $${Math.round(totalDiffToFix).toLocaleString('es-CL')} en ${company.name}`
+      });
+
+      await fetchData();
+      alert(`✅ ¡Regularización Exitosa!\n\nSe cuadraron automáticamente ${candidates.length} comprobantes de venta con la cuenta [1107001] Crédito Especial Constructora.\n\nAhora todos los asientos son VÁLIDOS y el Balance de 8 Columnas los incorpora inmediatamente reflejando las cifras actualizadas.`);
+    });
+  };
+
   const handleSaveVoucherForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) {
@@ -2861,6 +3753,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           const nowIso = new Date().toISOString();
 
           const sanitizedValidLines = sanitizeVoucherLines(validLines, accounts);
+          const isCuadrado = Math.abs(totalDebit - totalCredit) < 0.01;
+          const finalStatus = isCuadrado 
+            ? (voucherForm.status === 'Descuadrado' ? 'Valido' : (voucherForm.status || 'Valido')) 
+            : 'Descuadrado';
 
           const payload: any = {
             voucherNumber: Number(voucherForm.voucherNumber),
@@ -2868,7 +3764,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             period,
             type: voucherForm.type,
             gloss: voucherForm.gloss,
-            status: voucherForm.status || 'Valido',
+            status: finalStatus,
+            isDescuadrado: !isCuadrado,
+            descuadreDifference: isCuadrado ? 0 : totalDebit - totalCredit,
             lines: sanitizedValidLines.map(l => ({
               accountId: l.accountId || '',
               accountCode: l.accountCode || '',
@@ -2911,7 +3809,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               metadata: { voucherNumber: voucherForm.voucherNumber, totalDebit, totalCredit }
             });
 
-            alert(`Comprobante N° ${voucherForm.voucherNumber} modificado exitosamente.`);
+            notify.success(`Comprobante N° ${voucherForm.voucherNumber} (${voucherForm.type}) actualizado exitosamente.`, 'Comprobante Modificado');
             if (selectedVoucher?.id === voucherForm.id) {
               setSelectedVoucher({ id: voucherForm.id, ...payload });
             }
@@ -2938,7 +3836,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               metadata: { voucherNumber: voucherForm.voucherNumber, totalDebit, totalCredit }
             });
 
-            alert(`Comprobante N° ${voucherForm.voucherNumber} creado exitosamente.`);
+            notify.success(`Comprobante N° ${voucherForm.voucherNumber} (${voucherForm.type}) registrado exitosamente.`, 'Comprobante Registrado');
           }
 
           setVoucherForm(null);
@@ -2947,9 +3845,34 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       );
     } catch (err: any) {
       console.error("Error guardando comprobante:", err);
-      alert('Error al guardar comprobante: ' + err.message);
+      notify.error('Error al guardar comprobante: ' + err.message);
     }
   };
+
+  // Atajo de teclado F2 para Grabar / Guardar Comprobante Contable o Formularios de Edición
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        if (voucherForm && distributingLineIdx === null && editingAnalysisLineIdx === null) {
+          e.preventDefault();
+          e.stopPropagation();
+          const formElement = document.querySelector('form[data-voucher-form="true"]') as HTMLFormElement | null;
+          if (formElement) {
+            formElement.requestSubmit();
+          }
+        } else if (editingRcvDoc) {
+          e.preventDefault();
+          e.stopPropagation();
+          const rcvForm = document.querySelector('form[data-rcv-edit-form="true"]') as HTMLFormElement | null;
+          if (rcvForm) {
+            rcvForm.requestSubmit();
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [voucherForm, distributingLineIdx, editingAnalysisLineIdx, editingRcvDoc]);
 
   // Delete Single RCV Document (Purchases, Sales, Honorarios, etc.)
   const handleDeleteSingleRcvDoc = async (docId: string, tipo: string, folio: string) => {
@@ -3395,6 +4318,8 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
       retencionBheAccountId: formData.get('retencionBheAccountId') as string,
       exentoAccountId: formData.get('exentoAccountId') as string,
       otrosImpuestosAccountId: formData.get('otrosImpuestosAccountId') as string,
+      ceecAccountId: (formData.get('ceecAccountId') as string) || '',
+      isEmpresaConstructora: formData.get('isEmpresaConstructora') === 'on',
       defaultCustomerAccountId: formData.get('defaultCustomerAccountId') as string,
       defaultSupplierAccountId: formData.get('defaultSupplierAccountId') as string,
       defaultHonorariosAccountId: formData.get('defaultHonorariosAccountId') as string,
@@ -3517,16 +4442,58 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
 
   const getSubRibbonBtnClass = (isActive: boolean, variant: 'normal' | 'indigo' | 'gradient' = 'normal') => {
     if (isActive) {
-      return 'px-3.5 py-1.5 text-xs rounded-xl font-bold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-[#533AFD] text-white shadow-md shadow-indigo-500/20 cursor-pointer';
+      return 'px-3 py-1 text-xs rounded-lg font-bold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-[#533AFD] text-white shadow-xs cursor-pointer';
     }
     if (variant === 'indigo') {
-      return 'px-3.5 py-1.5 text-xs rounded-xl font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 shadow-2xs cursor-pointer';
+      return 'px-3 py-1 text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 shadow-2xs cursor-pointer';
     }
     if (variant === 'gradient') {
-      return 'px-3.5 py-1.5 text-xs rounded-xl font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 text-indigo-900 border border-indigo-200 shadow-2xs cursor-pointer';
+      return 'px-3 py-1 text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 text-indigo-900 border border-indigo-200 shadow-2xs cursor-pointer';
     }
-    return 'px-3.5 py-1.5 text-xs rounded-xl font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#0D253D] border border-slate-200/80 shadow-2xs cursor-pointer';
+    return 'px-3 py-1 text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap flex-shrink-0 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#0D253D] border border-slate-200/80 shadow-2xs cursor-pointer';
   };
+
+  const filteredVouchers = useMemo(() => {
+    return vouchers
+      .filter(v => voucherFilterType === 'Todos' || v.type === voucherFilterType)
+      .filter(v => {
+        if (voucherFilterYear === 'Todos') return true;
+        if (!v.date) return false;
+        return v.date.startsWith(voucherFilterYear);
+      })
+      .filter(v => {
+        if (voucherFilterMonth === 'Todos') return true;
+        if (!v.date) return false;
+        const m = v.date.slice(5, 7);
+        return m === voucherFilterMonth;
+      })
+      .filter(v => 
+        !voucherSearchQuery ||
+        (v.gloss || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) ||
+        String(v.voucherNumber || '').includes(voucherSearchQuery) ||
+        (v.lines && v.lines.some(l => (l.auxiliaryRut || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) || (l.accountCode || '').includes(voucherSearchQuery)))
+      )
+      .filter(v => !colNumSearch || String(v.voucherNumber).toLowerCase().includes(colNumSearch.toLowerCase()))
+      .filter(v => !colDateSearch || (v.date && v.date.toLowerCase().includes(colDateSearch.toLowerCase())))
+      .filter(v => colTypeSearch === 'Todos' || v.type === colTypeSearch)
+      .filter(v => colStatusSearch === 'Todos' || v.status === colStatusSearch)
+      .filter(v => !colGlossSearch || (v.gloss && v.gloss.toLowerCase().includes(colGlossSearch.toLowerCase())))
+      .filter(v => !colDebitSearch || String(v.totalDebit).includes(colDebitSearch))
+      .filter(v => !colCreditSearch || String(v.totalCredit).includes(colCreditSearch));
+  }, [
+    vouchers,
+    voucherFilterType,
+    voucherFilterYear,
+    voucherFilterMonth,
+    voucherSearchQuery,
+    colNumSearch,
+    colDateSearch,
+    colTypeSearch,
+    colStatusSearch,
+    colGlossSearch,
+    colDebitSearch,
+    colCreditSearch
+  ]);
 
   return (
     <div className="space-y-4">
@@ -3544,165 +4511,75 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         </div>
       )}
 
-      {/* Barra Contextual Persistente Inmóvil Superior (Breadcrumb + Período + Importar Excel) */}
-      <div className="-mx-3 md:-mx-5 -mt-3 md:-mt-5 sticky top-[52px] z-40 bg-white/95 backdrop-blur-md text-[#0D253D] border-b border-slate-200/80 shadow-2xs px-3 md:px-5 py-2 flex flex-wrap items-center justify-between gap-3">
-        {/* Lado Izquierdo: Volver + Breadcrumb Contextual */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            onClick={onBack}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-[#0D253D] font-bold text-xs rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5 transition-all cursor-pointer"
-            title="Volver a la lista de empresas clientes"
-          >
-            <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
-            <span>Empresas</span>
-          </button>
-
-          <div className="h-4 w-px bg-slate-200 hidden sm:block"></div>
-
-          {/* Breadcrumb Contextual Permanente */}
-          <div className="flex items-center gap-1.5 text-xs font-medium">
-            <span className="text-[#0D253D] font-extrabold tracking-tight truncate max-w-[240px]" title={`${company.name} (RUT: ${company.rut})`}>
-              {company.name}
-            </span>
-            <span className="text-slate-400 select-none">/</span>
-            <span className="font-bold text-[#533AFD] uppercase tracking-wider text-[11px]">
-              {activeRibbonGroup}
-            </span>
-            <span className="text-slate-400 select-none">/</span>
-            <span className="bg-indigo-50 text-[#533AFD] px-2.5 py-1 rounded-full text-xs font-bold border border-indigo-100 shadow-2xs">
-              {(() => {
-                const labels: Record<string, string> = {
-                  vouchers: 'Comprobantes Contables',
-                  libroDiario: 'Libro Diario',
-                  libroMayor: 'Libro Mayor',
-                  analisisAuxiliares: 'Auxiliar Cuentas Corrientes',
-                  analisisCuentas: 'Análisis de Cuentas',
-                  balance8: 'Balance 8 Columnas (Tributario)',
-                  controlFolios: 'Timbraje y Folios SII',
-                  tablasAnalisis: 'Catálogos de Análisis',
-                  nominasPago: 'Nóminas de Pago',
-                  cobranza: 'Cobranza y Cuentas por Cobrar',
-                  flujoDeCaja: 'Flujo de Caja Real & Proyectado',
-                  conciliacionBancaria: 'Conciliación Bancaria',
-                  rcv: `RCV (${rcvFilterType})`,
-                  formulario29: 'Formulario 29 Mensual (F29)',
-                  indicadoresFinancieros: 'Tablero KPIs & Ratios',
-                  auditorEstadosFinancieros: 'Auditor de Estados Financieros & Dictamen',
-                  balanceIFRS: 'Balance IFRS',
-                  estadoResultados: 'Estado de Resultados',
-                  accounts: 'Plan de Cuentas',
-                  auxiliaries: 'Maestro de Auxiliares',
-                  rcvParams: 'Parámetros Contables RCV',
-                  f29Codes: 'Códigos Formulario 29',
-                  periods: 'Apertura Ejercicios y Períodos',
-                  plantillasCarga: 'Plantillas Excel Masivas',
-                  exchange: 'Indicadores Oficiales',
-                  emisionDte: 'Emisión DTE',
-                  employees: 'personal',
-                  liquidaciones: 'Liquidaciones de Sueldos & Previred'
-                };
-                return labels[activeTab] || activeTab;
-              })()}
-            </span>
-          </div>
-        </div>
-
-        {/* Lado Derecho: Selector de Año, Mes Operativo & Acción Rápida */}
-        <div className="flex items-center gap-2 text-xs flex-wrap">
-          <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80 shadow-2xs">
-            <label className="text-slate-500 font-bold text-[11px]">Año:</label>
-            <select
-              value={selectedYear}
-              onChange={(e) => {
-                const yr = parseInt(e.target.value);
-                setSelectedYear(yr);
-                handleEnsureFiscalYear(yr);
-              }}
-              className="font-bold text-[#0D253D] font-mono bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-xs focus:ring-2 focus:ring-indigo-500/20 cursor-pointer shadow-2xs"
+      {/* Barra de Navegación Contextual y Menú Ribbon Integrado (Espacio Optimizado) */}
+      <div className="-mx-3 md:-mx-5 -mt-3 md:-mt-5 sticky top-[52px] z-40 bg-white/95 backdrop-blur-md text-[#0D253D] border-b border-slate-200/90 shadow-xs px-3 md:px-5 py-2 space-y-1.5">
+        {/* Fila Superior: Volver/Empresa + Pestañas de Módulos (Ribbon) + Año/Mes/Importar */}
+        <div className="flex items-center justify-between gap-2.5 flex-wrap">
+          {/* Lado Izquierdo: Volver a Empresas + Acceso Rápido */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onBack}
+              className="px-2.5 py-1 bg-white hover:bg-slate-50 active:bg-slate-100 text-[#0D253D] font-bold text-xs rounded-lg border border-slate-200 shadow-2xs flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Volver a la lista de empresas clientes"
             >
-              {[2028, 2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
+              <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+              <span>Empresas</span>
+            </button>
+
+            {isDemoCompany && (
+              <button
+                type="button"
+                onClick={() => setShowDemoManagerModal(true)}
+                className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Gestor y Reset de Demostración 2025"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline font-bold">🎯 Reset Demo 2025</span>
+              </button>
+            )}
+
+            {/* Barra de Acceso Rápido Personalizable (Estilo Excel) */}
+            <div className="h-4 w-px bg-slate-200 hidden md:block"></div>
+            <div className="hidden md:flex items-center gap-1 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200/80 text-xs">
+              <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider px-1.5 flex items-center gap-1">
+                <Pin className="w-2.5 h-2.5 text-indigo-600" />
+                Acceso Rápido
+              </span>
+              <div className="flex items-center gap-0.5">
+                {QUICK_ACCESS_ITEMS.filter(item => pinnedQuickAccessIds.includes(item.id)).map(item => {
+                  const IconComp = item.icon;
+                  const isCurrentTab = activeTab === item.tab;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveRibbonGroup(item.group as RibbonGroup);
+                        setActiveTab(item.tab as any);
+                      }}
+                      className={`p-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center ${
+                        isCurrentTab
+                          ? 'bg-[#533AFD] text-white shadow-2xs font-bold ring-1 ring-indigo-300'
+                          : 'bg-white hover:bg-slate-200/80 text-slate-700 border border-slate-200/80'
+                      }`}
+                      title={`${item.label} (${item.group})`}
+                    >
+                      <IconComp className="w-3.5 h-3.5" />
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => setShowQuickAccessConfig(!showQuickAccessConfig)}
+                  className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md border border-dashed border-slate-300 transition-colors cursor-pointer"
+                  title="Personalizar barra de acceso rápido (Anclar / Desanclar herramientas estilo Excel)"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80 shadow-2xs">
-            <label className="text-slate-500 font-bold text-[11px] flex items-center gap-1.5">
-              <span>Mes:</span>
-              {(() => {
-                const check = checkIsPeriodClosed(selectedRcvPeriod);
-                return (
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold flex items-center gap-1 ${
-                    check.isClosed 
-                      ? 'bg-amber-50 text-amber-700 border border-amber-200' 
-                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  }`}>
-                    {check.isClosed ? (
-                      <>
-                        <Lock className="w-2.5 h-2.5 stroke-[2]" />
-                        <span>Cerrado</span>
-                      </>
-                    ) : (
-                      <>
-                        <Unlock className="w-2.5 h-2.5 stroke-[2]" />
-                        <span>Abierto</span>
-                      </>
-                    )}
-                  </span>
-                );
-              })()}
-            </label>
-            <select
-              value={selectedRcvPeriod}
-              onChange={(e) => {
-                const newPeriod = e.target.value;
-                const check = checkIsPeriodClosed(newPeriod);
-                if (check.isClosed) {
-                  alert(`⚠️ Período Cerrado:\n\nEl período ${newPeriod} se encuentra CERRADO en Períodos Fiscales.\n\nPara importar compras/ventas, centralizar o emitir comprobantes en este mes, debes abrirlo primero en 'Configuraciones > Períodos Contables'.`);
-                }
-                setSelectedRcvPeriod(newPeriod);
-              }}
-              className="font-bold text-[#0D253D] font-mono bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-xs focus:ring-2 focus:ring-indigo-500/20 cursor-pointer shadow-2xs"
-              title="Período de trabajo activo para Carga RCV, Centralización F29 y Comprobantes"
-            >
-              {(() => {
-                const currFy = fiscalYears.find(f => f.id === String(selectedYear));
-                const monthNames = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-                const monthOptions: { periodStr: string; label: string; isOpen: boolean }[] = [];
-                for (let m = 1; m <= 12; m++) {
-                  const mStr = String(m).padStart(2, '0');
-                  const periodStr = `${selectedYear}-${mStr}`;
-                  const isOpen = currFy ? currFy.months[m] === 'Abierto' : (m === 1);
-                  monthOptions.push({
-                    periodStr,
-                    label: `${monthNames[m]} ${selectedYear} — ${isOpen ? 'Abierto' : 'Cerrado'}`,
-                    isOpen
-                  });
-                }
-                return monthOptions.map((opt) => (
-                  <option key={opt.periodStr} value={opt.periodStr}>
-                    {opt.label}
-                  </option>
-                ));
-              })()}
-            </select>
-          </div>
-
-          <button
-            onClick={() => setShowExcelImportModal(true)}
-            className="bg-[#533AFD] hover:bg-[#4326EB] text-white font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
-            title="Cargar Plan de Cuentas, Clientes, Proveedores o Comprobantes desde archivo Excel/CSV"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Importar Excel</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Menú Ribbon Tipo Excel Refinado y Cohesivo */}
-      <div className="sticky top-[106px] z-30 bg-white/95 backdrop-blur-md p-1.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
-          {/* Pestañas Principales Ribbon */}
-          <div className="flex items-center gap-1.5 px-1 py-1 overflow-x-auto no-scrollbar">
+          {/* Centro: Pestañas Principales Ribbon */}
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 max-w-full">
             {(['FINANZAS', 'OPERACIONES', 'TESORERIA', 'PERSONAL', 'IMPORTACIONES', 'IMPUESTOS', 'INDICADORES', 'CONFIGURACIONES'] as const)
               .filter((ribbonTab) => !(isAnalyst && ribbonTab === 'INDICADORES'))
               .map((ribbonTab, idx) => {
@@ -3711,7 +4588,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 FINANZAS: 'FINANZAS',
                 OPERACIONES: 'COMERCIAL',
                 TESORERIA: 'TESORERÍA',
-                PERSONAL: 'personal',
+                PERSONAL: 'PERSONAL',
                 IMPORTACIONES: 'CARGA RCV/BH',
                 IMPUESTOS: 'IMPUESTOS F.29',
                 INDICADORES: 'INDICADORES (KPIS)',
@@ -3734,13 +4611,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                       setActiveTab('accounts');
                     }
                   }}
-                  className={`px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all uppercase tracking-wider whitespace-nowrap flex items-center gap-1 cursor-pointer ${
                     isActive
-                      ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
+                      ? 'bg-[#533AFD] text-white shadow-xs'
                       : 'text-slate-600 hover:text-[#0D253D] hover:bg-slate-100'
                   }`}
                 >
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-md font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-700'}`}>
+                  <span className={`text-[10px] font-mono px-1 py-0.2 rounded font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-700'}`}>
                     {idx + 1}
                   </span>
                   <span>{displayLabels[ribbonTab]}</span>
@@ -3749,23 +4626,143 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             })}
           </div>
 
-          {/* Sub-Ribbon Horizontal de Fichas de Trabajo con Botones de Desplazamiento */}
-          <div className="relative bg-slate-50/80 rounded-xl p-1.5 border border-slate-200/60 flex items-center">
-            {/* Flecha izquierda */}
-            <button
-              type="button"
-              onClick={() => scrollSubRibbon('left')}
-              className="flex-shrink-0 p-1.5 text-slate-500 hover:text-slate-800 hover:bg-white rounded-lg border border-slate-200 transition-colors mr-1 z-10 shadow-2xs cursor-pointer"
-              title="Desplazar opciones hacia la izquierda"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
+          {/* Lado Derecho: Selector de Año, Mes Operativo & Importar Excel */}
+          <div className="flex items-center gap-1.5 text-xs shrink-0 flex-wrap">
+            <div className="flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
+              <label className="text-slate-500 font-bold text-[10px]">Año:</label>
+              <select
+                value={selectedYear}
+                onChange={(e) => {
+                  const yr = parseInt(e.target.value);
+                  setSelectedYear(yr);
+                  handleEnsureFiscalYear(yr);
+                  const fy = fiscalYears.find(f => f.id === String(yr));
+                  if (fy && fy.months) {
+                    let foundOpen = '';
+                    for (let m = 1; m <= 12; m++) {
+                      if (fy.months[m] === 'Abierto') {
+                        foundOpen = `${yr}-${String(m).padStart(2, '0')}`;
+                        break;
+                      }
+                    }
+                    if (foundOpen) {
+                      setSelectedRcvPeriod(foundOpen);
+                    }
+                  }
+                }}
+                className="font-bold text-[#0D253D] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-indigo-500/20 cursor-pointer"
+              >
+                {[2027, 2026, 2025].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
 
-            {/* Contenedor desplazable de herramientas / sub-pestañas */}
-            <div
-              ref={subRibbonScrollRef}
-              className="flex-1 flex items-center gap-1.5 overflow-x-auto scroll-smooth no-scrollbar py-0.5 px-1"
+            <div className="flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs">
+              <label className="text-slate-500 font-bold text-[10px] flex items-center gap-1">
+                <span>Mes:</span>
+                {(() => {
+                  const check = checkIsPeriodClosed(selectedRcvPeriod);
+                  return (
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold flex items-center gap-0.5 ${
+                      check.isClosed 
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    }`}>
+                      {check.isClosed ? (
+                        <>
+                          <Lock className="w-2.5 h-2.5 stroke-[2]" />
+                          <span>Cerrado</span>
+                        </>
+                      ) : (
+                        <>
+                          <Unlock className="w-2.5 h-2.5 stroke-[2]" />
+                          <span>Abierto</span>
+                        </>
+                      )}
+                    </span>
+                  );
+                })()}
+              </label>
+              <select
+                value={selectedRcvPeriod}
+                onChange={(e) => {
+                  const newPeriod = e.target.value;
+                  if (!newPeriod) return;
+                  const check = checkIsPeriodClosed(newPeriod);
+                  if (check.isClosed) {
+                    alert(`⚠️ Período Cerrado:\n\nEl período ${newPeriod} se encuentra CERRADO.\n\nSolo se permite seleccionar períodos ABIERTOS. Para trabajar en este mes, debes abrirlo primero en 'Configuraciones > Períodos Contables'.`);
+                    return;
+                  }
+                  setSelectedRcvPeriod(newPeriod);
+                }}
+                className="font-bold text-[#0D253D] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-indigo-500/20 cursor-pointer"
+                title="Período de trabajo activo"
+              >
+                {(() => {
+                  const currFy = fiscalYears.find(f => f.id === String(selectedYear));
+                  const monthNames = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+                  const monthOptions: { periodStr: string; label: string; isOpen: boolean }[] = [];
+                  for (let m = 1; m <= 12; m++) {
+                    const mStr = String(m).padStart(2, '0');
+                    const periodStr = `${selectedYear}-${mStr}`;
+                    const isOpen = currFy ? currFy.months[m] === 'Abierto' : false;
+                    monthOptions.push({
+                      periodStr,
+                      label: `${monthNames[m]} ${selectedYear} — ${isOpen ? 'Abierto' : '🔒 Cerrado'}`,
+                      isOpen
+                    });
+                  }
+                  const hasAnyOpen = monthOptions.some(o => o.isOpen);
+                  if (!hasAnyOpen) {
+                    return (
+                      <option value="" disabled>
+                        ⚠️ Sin meses abiertos en {selectedYear}
+                      </option>
+                    );
+                  }
+                  return monthOptions.map((opt) => (
+                    <option 
+                      key={opt.periodStr} 
+                      value={opt.periodStr}
+                      disabled={!opt.isOpen}
+                      className={!opt.isOpen ? 'text-slate-400 bg-slate-100 italic' : 'text-slate-900 font-bold'}
+                    >
+                      {opt.label}
+                    </option>
+                  ));
+                })()}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setShowExcelImportModal(true)}
+              className="bg-[#533AFD] hover:bg-[#4326EB] text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+              title="Cargar Plan de Cuentas, Clientes, Proveedores o Comprobantes desde archivo Excel/CSV"
             >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline">Importar Excel</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Fila Inferior: Sub-Ribbon Horizontal de Fichas de Trabajo */}
+        <div className="relative bg-slate-50/90 rounded-xl p-1 border border-slate-200/70 flex items-center">
+          {/* Flecha izquierda */}
+          <button
+            type="button"
+            onClick={() => scrollSubRibbon('left')}
+            className="flex-shrink-0 p-1 text-slate-500 hover:text-slate-800 hover:bg-white rounded-md border border-slate-200 transition-colors mr-1 z-10 shadow-2xs cursor-pointer"
+            title="Desplazar opciones hacia la izquierda"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Contenedor desplazable de herramientas / sub-pestañas */}
+          <div
+            ref={subRibbonScrollRef}
+            className="flex-1 flex items-center gap-1.5 overflow-x-auto scroll-smooth no-scrollbar py-0.5 px-1"
+          >
               {/* 1. GRUPO: FINANZAS */}
               {activeRibbonGroup === 'FINANZAS' && (
                 <>
@@ -3803,6 +4800,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   >
                     <Sliders className={`w-3.5 h-3.5 ${activeTab === 'analisisCuentas' ? 'text-indigo-300' : 'text-slate-500'}`} />
                     <span>Análisis de Cuentas</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('reportesAnaliticos')}
+                    className={getSubRibbonBtnClass(activeTab === 'reportesAnaliticos')}
+                  >
+                    <TableIcon className={`w-3.5 h-3.5 ${activeTab === 'reportesAnaliticos' ? 'text-indigo-300' : 'text-slate-500'}`} />
+                    <span>Reportes Analíticos & Ventas</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('balance8')}
@@ -3850,7 +4854,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 </>
               )}
 
-              {/* 2. GRUPO: COMERCIAL */}
+              {/* 2. GRUPO: COMERCIAL / OPERACIONES */}
               {activeRibbonGroup === 'OPERACIONES' && (
                 <>
                   <button
@@ -3868,11 +4872,25 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     <span>Control de Inventario & Kardex PMP</span>
                   </button>
                   <button
+                    onClick={() => setActiveTab('warehouses')}
+                    className={getSubRibbonBtnClass(activeTab === 'warehouses')}
+                  >
+                    <WarehouseIcon className={`w-3.5 h-3.5 ${activeTab === 'warehouses' ? 'text-indigo-300' : 'text-slate-500'}`} />
+                    <span>Maestro Multi-Bodega</span>
+                  </button>
+                  <button
                     onClick={() => setActiveTab('productsServices')}
                     className={getSubRibbonBtnClass(activeTab === 'productsServices')}
                   >
                     <Boxes className={`w-3.5 h-3.5 ${activeTab === 'productsServices' ? 'text-indigo-300' : 'text-slate-500'}`} />
                     <span>Catálogo de Productos & Servicios</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('reportesAnaliticos')}
+                    className={getSubRibbonBtnClass(activeTab === 'reportesAnaliticos')}
+                  >
+                    <TableIcon className={`w-3.5 h-3.5 ${activeTab === 'reportesAnaliticos' ? 'text-indigo-300' : 'text-slate-500'}`} />
+                    <span>Reportes Dinámicos & Ventas</span>
                   </button>
                 </>
               )}
@@ -3907,6 +4925,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   >
                     <Landmark className={`w-3.5 h-3.5 ${activeTab === 'conciliacionBancaria' ? 'text-indigo-300' : 'text-slate-500'}`} />
                     <span>Conciliación Bancaria</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('libroBancoColaborativo')}
+                    className={getSubRibbonBtnClass(activeTab === 'libroBancoColaborativo', 'indigo')}
+                  >
+                    <Landmark className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Libro Banco & Cartola (Aclaraciones)</span>
                   </button>
                 </>
               )}
@@ -4050,6 +5075,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   >
                     <BarChart3 className={`w-3.5 h-3.5 ${activeTab === 'indicadoresFinancieros' ? 'text-indigo-300' : 'text-slate-500'}`} />
                     <span>Tablero de Indicadores Financieros & KPIs</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('reportesAnaliticos')}
+                    className={getSubRibbonBtnClass(activeTab === 'reportesAnaliticos')}
+                  >
+                    <TableIcon className={`w-3.5 h-3.5 ${activeTab === 'reportesAnaliticos' ? 'text-indigo-300' : 'text-slate-500'}`} />
+                    <span>Matriz Dinámica & Ventas</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('auditorEstadosFinancieros')}
@@ -4204,14 +5236,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   onChange={(e) => setHistoricalRatesFilterYear(e.target.value)}
                   className="text-xs bg-white border border-slate-300 rounded-md px-2.5 py-1.5 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
-                  <option value="Todos">Todos los Años (2020-2026)</option>
+                  <option value="Todos">Todos los Años (2025-2027)</option>
+                  <option value="2027">2027</option>
                   <option value="2026">2026</option>
                   <option value="2025">2025</option>
-                  <option value="2024">2024</option>
-                  <option value="2023">2023</option>
-                  <option value="2022">2022</option>
-                  <option value="2021">2021</option>
-                  <option value="2020">2020</option>
                 </select>
               </div>
 
@@ -4316,7 +5344,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             costCenters={costCenters}
             expenseItems={expenseItems}
             projects={projects}
-            products={products}
+            products={products as unknown as ProductMaster[]}
             onRefresh={fetchData}
             onCreate={() => {
               setEditingAuxiliary(null);
@@ -4341,7 +5369,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             costCenters={costCenters}
             expenseItems={expenseItems}
             projects={projects}
-            products={products}
+            products={products as unknown as ProductMaster[]}
             customAccountColumns={company.customAccountColumns || []}
             customAnalysisItems={customAnalysisItems}
             isReadOnly={isReadOnly}
@@ -4419,6 +5447,40 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     <option value="">Seleccione una cuenta...</option>
                     {accounts.map(a => <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>)}
                   </select>
+                </div>
+
+                <div className="bg-amber-50/80 p-3.5 rounded-lg border border-amber-300">
+                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
+                    <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <span>🏗️</span>
+                      <span>Franquicia Tributaria Empresas Constructoras (CEEC Art. 21 D.L. 910)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 bg-white px-2.5 py-1 rounded border border-amber-300 shadow-sm">
+                      <input
+                        type="checkbox"
+                        name="isEmpresaConstructora"
+                        defaultChecked={rcvParams?.isEmpresaConstructora ?? company.isEmpresaConstructora ?? true}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                      />
+                      <span>Habilitar Régimen Constructora (Rebaja Crédito CEEC en Ventas)</span>
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-amber-800 mb-2 leading-relaxed">
+                    Las empresas constructoras tienen derecho a rebajar crédito en sus facturas de venta (hasta 65% del débito IVA en contratos generales de construcción). El sistema imputa esta deducción automáticamente a la cuenta de activo tributario para cuadrar la partida doble sin desbalances.
+                  </p>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-amber-950 mb-1">
+                      Cuenta de Activo: Crédito Especial Empresas Constructoras (CEEC Art. 21 D.L. 910)
+                    </label>
+                    <select
+                      name="ceecAccountId"
+                      defaultValue={rcvParams?.ceecAccountId || accounts.find(a => a.code === '1107001' || a.name.toLowerCase().includes('ceec') || a.name.toLowerCase().includes('crédito especial') || a.name.toLowerCase().includes('credito especial'))?.id || ''}
+                      className="border border-amber-300 p-2 w-full rounded-lg text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value="">[1107001] Por Defecto: Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)</option>
+                      {accounts.map(a => <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -4925,6 +5987,41 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               </div>
             </div>
 
+            {/* ALERTA Y ACCION PARA PISAR BOLETAS DE VENTA DUPLICADAS */}
+            {(() => {
+              const boletasInPeriod = rcvDocuments.filter(d => 
+                d.period === selectedRcvPeriod && 
+                d.tipoRegistro === 'Venta' && 
+                (d.tipoDoc === '39' || d.tipoDoc === '41' || String(d.folio).includes('RESUMEN') || d.isBoletaResumen || String(d.nombreTipoDoc || '').toLowerCase().includes('boleta'))
+              );
+              if (boletasInPeriod.length <= 1) return null;
+
+              return (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-lg leading-none">⚠️</span>
+                    <div>
+                      <p className="font-bold text-amber-950">
+                        Se detectaron {boletasInPeriod.length} resúmenes de boletas en el período {selectedRcvPeriod} (Múltiples consultas o descargas)
+                      </p>
+                      <p className="text-amber-800 text-[11px] mt-0.5">
+                        Folios encontrados: {boletasInPeriod.map(b => `#${b.folio} ($${(b.montoTotal || 0).toLocaleString('es-CL')})`).join(', ')}.
+                        Las boletas deben pisarse para mantener únicamente el resumen final acumulado y no duplicar las ventas.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handlePisarBoletasAnteriores}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-lg text-xs shadow-xs transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer"
+                    title="Elimina las descargas previas intermedias y deja únicamente el resumen con el monto acumulado mayor"
+                  >
+                    <span>🧹</span>
+                    <span>Pisar y Dejar Solo Último Resumen</span>
+                  </button>
+                </div>
+              );
+            })()}
+
             <div className="border border-slate-200 rounded-lg overflow-auto max-h-[550px] relative shadow-2xs">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-700 uppercase font-semibold border-b border-slate-200 sticky top-0 z-10 shadow-2xs">
@@ -4977,6 +6074,43 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     const displayIva = isBHE ? (docItem.montoRetencion !== undefined ? docItem.montoRetencion : (docItem.montoIva || 0)) : (docItem.montoIva || 0);
                     const displayTotal = isBHE ? (docItem.montoLiquido !== undefined ? docItem.montoLiquido : (docItem.montoTotal || 0)) : (docItem.montoTotal || 0);
 
+                    // Resolución de contraparte correcta para no mostrar a la propia empresa emisora como cliente
+                    const isVenta = docItem.tipoRegistro === 'Venta';
+                    const isBoleta = docItem.tipoDoc === '39' || docItem.tipoDoc === '41' || String(docItem.folio).includes('RESUMEN') || docItem.isBoletaResumen || String(docItem.nombreTipoDoc || '').toLowerCase().includes('boleta');
+                    const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+                    const cleanReceptorRut = (docItem.rutReceptor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+                    const cleanEmisorRut = (docItem.rutEmisor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+
+                    let displayRut = '';
+                    let displayRazon = '';
+
+                    if (isVenta) {
+                      if (isBoleta) {
+                        displayRut = docItem.rutReceptor && docItem.rutReceptor !== docItem.rutEmisor ? docItem.rutReceptor : '66.666.666-6';
+                        displayRazon = docItem.razonSocialReceptor && docItem.razonSocialReceptor !== docItem.razonSocialEmisor
+                          ? docItem.razonSocialReceptor
+                          : (String(docItem.folio).includes('RESUMEN') ? `Clientes Varios (${String(docItem.folio).replace(/[^0-9]/g, '') || ''} Boletas)` : 'Clientes Varios (Boletas de Venta)');
+                      } else {
+                        // Factura de Venta: el cliente es el receptor
+                        if (cleanReceptorRut && cleanReceptorRut !== cleanCompRut) {
+                          displayRut = docItem.rutReceptor!;
+                          displayRazon = docItem.razonSocialReceptor || 'CLIENTE FACTURA';
+                        } else if (cleanEmisorRut && cleanEmisorRut !== cleanCompRut) {
+                          displayRut = docItem.rutEmisor;
+                          displayRazon = docItem.razonSocialEmisor;
+                        } else {
+                          displayRut = docItem.rutReceptor || '76.000.000-0';
+                          displayRazon = (docItem.razonSocialReceptor && docItem.razonSocialReceptor.toUpperCase() !== (company.name || '').toUpperCase())
+                            ? docItem.razonSocialReceptor
+                            : 'CLIENTE FACTURA';
+                        }
+                      }
+                    } else {
+                      // Compras y Honorarios: la contraparte es el emisor (proveedor o prestador)
+                      displayRut = docItem.rutEmisor || '11.111.111-1';
+                      displayRazon = docItem.razonSocialEmisor || (docItem.tipoRegistro === 'Honorarios' ? 'PRESTADOR HONORARIOS' : 'PROVEEDOR DTE');
+                    }
+
                     return (
                       <tr key={docItem.id} className={`hover:bg-slate-50 ${isNotaCredito ? 'bg-rose-50/30' : ''}`}>
                         <td className="p-3 text-center">
@@ -5002,11 +6136,21 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                           </span>
                         </td>
                         <td className="p-3 font-mono">{docItem.fechaEmision}</td>
-                        <td className="p-3 font-mono font-medium text-slate-800">{docItem.rutEmisor}</td>
-                        <td className="p-3 font-medium text-slate-900">{docItem.razonSocialEmisor}</td>
+                        <td className="p-3 font-mono font-medium text-slate-800" title={displayRut}>{displayRut}</td>
+                        <td className="p-3 font-medium text-slate-900" title={displayRazon}>{displayRazon}</td>
                         <td className="p-3">
                           <div className="font-semibold text-slate-800 text-[11px]">{formatChileanDteType(docItem.tipoDoc)}</div>
                           <div className="text-slate-500 font-mono text-[10px]">Folio #{docItem.folio}</div>
+                          {docItem.refFolioOrig && (
+                            <div className="text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block font-semibold">
+                              ↪ Modifica Factura #{docItem.refFolioOrig}
+                            </div>
+                          )}
+                          {(docItem.montoCeec || (docItem.tipoRegistro === 'Venta' && docItem.montoTotal > 0 && docItem.montoTotal < (docItem.montoNeto + docItem.montoIva + (docItem.montoExento || 0)))) ? (
+                            <div className="text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[9px] font-medium mt-0.5 inline-block ml-1">
+                              🏗️ CEEC Constructora
+                            </div>
+                          ) : null}
                         </td>
                         <td className={`p-3 text-right font-mono ${isNotaCredito ? 'text-rose-700' : 'text-slate-900'}`}>
                           ${displayNeto.toLocaleString('es-CL')}
@@ -5016,6 +6160,11 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                         </td>
                         <td className={`p-3 text-right font-mono font-bold ${isNotaCredito ? 'text-rose-700' : 'text-slate-900'}`}>
                           ${displayTotal.toLocaleString('es-CL')}
+                          {docItem.montoCeec && docItem.montoCeec > 0 ? (
+                            <div className="text-[10px] text-amber-700 font-normal">
+                              - CEEC: ${docItem.montoCeec.toLocaleString('es-CL')}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="p-3 text-center">
                           {docItem.estadoContabilizado ? (
@@ -5033,7 +6182,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                             <button
                               onClick={() => setEditingRcvDoc(docItem)}
                               className="text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition-colors text-[11px]"
-                              title="Editar montos o datos del documento"
+                              title="Editar cliente/proveedor o montos del documento"
                             >
                               Editar
                             </button>
@@ -5086,8 +6235,12 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
               <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col">
                 <div className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                   <div>
-                    <h3 className="font-bold text-slate-900 text-base">Editar Documento {editingRcvDoc.tipoRegistro}</h3>
-                    <p className="text-xs text-slate-500 font-mono">Folio #{editingRcvDoc.folio} - {editingRcvDoc.razonSocialEmisor}</p>
+                    <h3 className="font-bold text-slate-900 text-base">
+                      Editar Documento de {editingRcvDoc.tipoRegistro} (Folio #{editingRcvDoc.folio})
+                    </h3>
+                    <p className="text-xs text-slate-500 font-mono">
+                      {editingRcvDoc.tipoRegistro === 'Venta' ? 'Configuración de datos y Cliente DTE' : 'Configuración de datos y Proveedor DTE'}
+                    </p>
                   </div>
                   <button onClick={() => setEditingRcvDoc(null)} className="text-slate-400 hover:text-slate-600">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -5095,95 +6248,273 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     </svg>
                   </button>
                 </div>
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const form = e.target as HTMLFormElement;
-                      const neto = parseFloat((form.elements.namedItem('neto') as HTMLInputElement).value) || 0;
-                      const iva = parseFloat((form.elements.namedItem('iva') as HTMLInputElement).value) || 0;
-                      const exento = parseFloat((form.elements.namedItem('exento') as HTMLInputElement).value) || 0;
-                      const total = parseFloat((form.elements.namedItem('total') as HTMLInputElement).value) || (neto + iva + exento);
-                      const fecha = (form.elements.namedItem('fecha') as HTMLInputElement).value;
-                      const razon = (form.elements.namedItem('razon') as HTMLInputElement).value;
-                      const tipoDoc = (form.elements.namedItem('tipoDoc') as HTMLInputElement).value;
+                {(() => {
+                  const isVenta = editingRcvDoc.tipoRegistro === 'Venta';
+                  const cleanCompRut = (company.rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+                  const cleanReceptorRut = (editingRcvDoc.rutReceptor || '').replace(/[^0-9kK]/g, '').toUpperCase();
+                  const cleanEmisorRut = (editingRcvDoc.rutEmisor || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
-                      await updateDoc(doc(companyRef, 'rcvDocuments', editingRcvDoc.id), {
-                        montoNeto: neto,
-                        montoIva: iva,
-                        montoExento: exento,
-                        montoTotal: total,
-                        fechaEmision: fecha,
-                        razonSocialEmisor: razon,
-                        tipoDoc: tipoDoc
-                      });
+                  let initialRut = '';
+                  let initialRazon = '';
 
-                      setEditingRcvDoc(null);
-                      await fetchData();
-                      alert('Documento actualizado correctamente.');
-                    } catch (err: any) {
-                      alert('Error actualizando documento: ' + err.message);
+                  if (isVenta) {
+                    if (cleanReceptorRut && cleanReceptorRut !== cleanCompRut) {
+                      initialRut = editingRcvDoc.rutReceptor || '';
+                      initialRazon = editingRcvDoc.razonSocialReceptor || '';
+                    } else if (cleanEmisorRut && cleanEmisorRut !== cleanCompRut) {
+                      initialRut = editingRcvDoc.rutEmisor || '';
+                      initialRazon = editingRcvDoc.razonSocialEmisor || '';
+                    } else {
+                      initialRut = editingRcvDoc.rutReceptor || '76.000.000-0';
+                      initialRazon = editingRcvDoc.razonSocialReceptor && editingRcvDoc.razonSocialReceptor.toUpperCase() !== (company.name || '').toUpperCase()
+                        ? editingRcvDoc.razonSocialReceptor
+                        : 'CLIENTE FACTURA';
                     }
-                  }}
-                  className="p-5 space-y-4 text-xs"
-                >
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Tipo DTE (ej: 33, 34, 61)</label>
-                      <input name="tipoDoc" defaultValue={editingRcvDoc.tipoDoc} className="border border-slate-300 p-2 w-full rounded-lg" required />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Fecha Emisión</label>
-                      <input name="fecha" type="date" defaultValue={editingRcvDoc.fechaEmision} className="border border-slate-300 p-2 w-full rounded-lg" required />
-                    </div>
-                  </div>
+                  } else {
+                    initialRut = editingRcvDoc.rutEmisor || '';
+                    initialRazon = editingRcvDoc.razonSocialEmisor || '';
+                  }
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Razón Social / Nombre</label>
-                    <input name="razon" defaultValue={editingRcvDoc.razonSocialEmisor} className="border border-slate-300 p-2 w-full rounded-lg" required />
-                  </div>
+                  return (
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        try {
+                          const form = e.target as HTMLFormElement;
+                          const neto = parseFloat((form.elements.namedItem('neto') as HTMLInputElement).value) || 0;
+                          const iva = parseFloat((form.elements.namedItem('iva') as HTMLInputElement).value) || 0;
+                          const exento = parseFloat((form.elements.namedItem('exento') as HTMLInputElement).value) || 0;
+                          const total = parseFloat((form.elements.namedItem('total') as HTMLInputElement).value) || (neto + iva + exento);
+                          const fecha = (form.elements.namedItem('fecha') as HTMLInputElement).value;
+                          const rut = (form.elements.namedItem('rut') as HTMLInputElement).value.trim();
+                          const razon = (form.elements.namedItem('razon') as HTMLInputElement).value.trim();
+                          const tipoDoc = (form.elements.namedItem('tipoDoc') as HTMLInputElement).value;
 
-                  <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Monto Neto ($)</label>
-                      <input
-                        id="modal_neto"
-                        name="neto"
-                        type="number"
-                        defaultValue={editingRcvDoc.montoNeto}
-                        onChange={(e) => {
-                          const n = parseFloat(e.target.value) || 0;
-                          const ivaInput = document.getElementById('modal_iva') as HTMLInputElement;
-                          const totalInput = document.getElementById('modal_total') as HTMLInputElement;
-                          if (ivaInput && totalInput) {
-                            const calculatedIva = Math.round(n * 0.19);
-                            ivaInput.value = String(calculatedIva);
-                            totalInput.value = String(n + calculatedIva);
+                          const updatePayload: any = {
+                            montoNeto: neto,
+                            montoIva: iva,
+                            montoExento: exento,
+                            montoTotal: total,
+                            fechaEmision: fecha,
+                            tipoDoc: tipoDoc
+                          };
+
+                          const refFolioVal = (form.elements.namedItem('refFolioOrig') as HTMLInputElement)?.value?.trim();
+                          const refTipoVal = (form.elements.namedItem('refTipoDocOrig') as HTMLInputElement)?.value?.trim();
+                          const ceecVal = parseFloat((form.elements.namedItem('montoCeec') as HTMLInputElement)?.value) || 0;
+
+                          if (refFolioVal !== undefined) {
+                            updatePayload.refFolioOrig = refFolioVal || null;
                           }
-                        }}
-                        className="border border-slate-300 p-2 w-full rounded-lg bg-white"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">IVA Crédito/Débito ($)</label>
-                      <input id="modal_iva" name="iva" type="number" defaultValue={editingRcvDoc.montoIva} className="border border-slate-300 p-2 w-full rounded-lg bg-white" required />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Monto Exento ($)</label>
-                      <input name="exento" type="number" defaultValue={editingRcvDoc.montoExento || 0} className="border border-slate-300 p-2 w-full rounded-lg bg-white" />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Monto Total ($)</label>
-                      <input id="modal_total" name="total" type="number" defaultValue={editingRcvDoc.montoTotal} className="border border-slate-300 p-2 w-full rounded-lg bg-white font-bold" required />
-                    </div>
-                  </div>
+                          if (refTipoVal !== undefined) {
+                            updatePayload.refTipoDocOrig = refTipoVal || null;
+                          }
+                          if (ceecVal > 0) {
+                            updatePayload.montoCeec = ceecVal;
+                            updatePayload.isConstructoraCeec = true;
+                          } else {
+                            updatePayload.montoCeec = 0;
+                            updatePayload.isConstructoraCeec = false;
+                          }
 
-                  <div className="flex justify-end gap-2 pt-2">
-                    <button type="button" onClick={() => setEditingRcvDoc(null)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                    <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold">Guardar Cambios</button>
-                  </div>
-                </form>
+                          if (isVenta) {
+                            updatePayload.rutReceptor = rut;
+                            updatePayload.razonSocialReceptor = razon;
+                            updatePayload.rutEmisor = company.rut;
+                            updatePayload.razonSocialEmisor = company.name;
+                          } else {
+                            updatePayload.rutEmisor = rut;
+                            updatePayload.razonSocialEmisor = razon;
+                            updatePayload.rutReceptor = company.rut;
+                            updatePayload.razonSocialReceptor = company.name;
+                          }
+
+                          await updateDoc(doc(companyRef, 'rcvDocuments', editingRcvDoc.id), updatePayload);
+
+                          // Auto-registrar en Maestro de Auxiliares si no existe
+                          const cleanRut = rut.replace(/[^0-9kK]/g, '').toUpperCase();
+                          const isGeneric = ['666666666', '111111111', '555555555'].includes(cleanRut);
+                          if (cleanRut && cleanRut.length >= 7 && cleanRut !== cleanCompRut && !isGeneric) {
+                            const auxMatch = auxiliaries.find(a => (a.rut || '').replace(/[^0-9kK]/g, '').toUpperCase() === cleanRut);
+                            if (!auxMatch) {
+                              await addDoc(collection(companyRef, 'auxiliaries'), {
+                                rut: rut,
+                                name: razon,
+                                role: isVenta ? 'Deudor' : 'Acreedor',
+                                estado: 'Activo',
+                                defaultDebtorAccountIds: [],
+                                defaultCreditorAccountIds: [],
+                                createdAt: new Date().toISOString()
+                              });
+                            }
+                          }
+
+                          setEditingRcvDoc(null);
+                          await fetchData();
+                          alert('✅ Documento actualizado y datos sincronizados correctamente.');
+                        } catch (err: any) {
+                          alert('Error actualizando documento: ' + err.message);
+                        }
+                      }}
+                      className="p-5 space-y-4 text-xs"
+                      data-rcv-edit-form="true"
+                    >
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Tipo DTE (ej: 33, 34, 39, 61)</label>
+                          <input name="tipoDoc" defaultValue={editingRcvDoc.tipoDoc} className="border border-slate-300 p-2 w-full rounded-lg" required />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Fecha Emisión</label>
+                          <input name="fecha" type="date" defaultValue={editingRcvDoc.fechaEmision} className="border border-slate-300 p-2 w-full rounded-lg" required />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
+                        <div>
+                          <label className="block font-semibold text-indigo-950 mb-1">
+                            {isVenta ? 'RUT Cliente (Receptor)' : 'RUT Proveedor (Emisor)'}
+                          </label>
+                          <input
+                            name="rut"
+                            defaultValue={initialRut}
+                            placeholder="12.345.678-9"
+                            className="border border-slate-300 p-2 w-full rounded-lg font-mono bg-white"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-indigo-950 mb-1">
+                            {isVenta ? 'Razón Social / Nombre Cliente' : 'Razón Social Proveedor'}
+                          </label>
+                          <input
+                            name="razon"
+                            defaultValue={initialRazon}
+                            placeholder="Nombre o Razón Social"
+                            className="border border-slate-300 p-2 w-full rounded-lg bg-white"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Monto Neto ($)</label>
+                          <input
+                            id="modal_neto"
+                            name="neto"
+                            type="number"
+                            defaultValue={editingRcvDoc.montoNeto}
+                            onChange={(e) => {
+                              const n = parseFloat(e.target.value) || 0;
+                              const ivaInput = document.getElementById('modal_iva') as HTMLInputElement;
+                              const totalInput = document.getElementById('modal_total') as HTMLInputElement;
+                              if (ivaInput && totalInput) {
+                                const calculatedIva = Math.round(n * 0.19);
+                                ivaInput.value = String(calculatedIva);
+                                totalInput.value = String(n + calculatedIva);
+                              }
+                            }}
+                            className="border border-slate-300 p-2 w-full rounded-lg bg-white"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">IVA Crédito/Débito ($)</label>
+                          <input id="modal_iva" name="iva" type="number" defaultValue={editingRcvDoc.montoIva} className="border border-slate-300 p-2 w-full rounded-lg bg-white" required />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Monto Exento ($)</label>
+                          <input name="exento" type="number" defaultValue={editingRcvDoc.montoExento || 0} className="border border-slate-300 p-2 w-full rounded-lg bg-white" />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Monto Total ($)</label>
+                          <input id="modal_total" name="total" type="number" defaultValue={editingRcvDoc.montoTotal} className="border border-slate-300 p-2 w-full rounded-lg bg-white font-bold" required />
+                        </div>
+                      </div>
+
+                      {/* Referencia para Notas de Crédito / Débito */}
+                      <div className="grid grid-cols-2 gap-3 bg-amber-50/70 p-3 rounded-lg border border-amber-200">
+                        <div>
+                          <label className="block font-semibold text-amber-950 mb-1">
+                            Folio Factura Referencia
+                          </label>
+                          <input
+                            name="refFolioOrig"
+                            type="text"
+                            defaultValue={editingRcvDoc.refFolioOrig || ''}
+                            placeholder="Ej: 1450"
+                            className="border border-amber-300 p-2 w-full rounded-lg bg-white font-mono"
+                          />
+                          <p className="text-[10px] text-amber-700 mt-0.5">Folio del documento que modifica, rebaja o anula</p>
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-amber-950 mb-1">
+                            Tipo Doc Referencia
+                          </label>
+                          <input
+                            name="refTipoDocOrig"
+                            type="text"
+                            defaultValue={editingRcvDoc.refTipoDocOrig || '33'}
+                            placeholder="33"
+                            className="border border-amber-300 p-2 w-full rounded-lg bg-white font-mono"
+                          />
+                          <p className="text-[10px] text-amber-700 mt-0.5">33: Factura, 34: Factura Exenta</p>
+                        </div>
+                      </div>
+
+                      {/* Franquicia CEEC para Empresa Constructora */}
+                      {isVenta && (
+                        <div className="bg-emerald-50/70 p-3 rounded-lg border border-emerald-200">
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="font-bold text-emerald-950 flex items-center gap-1.5">
+                              <span>🏗️</span>
+                              <span>Crédito Especial Empresa Constructora (CEEC Art. 21 D.L. 910)</span>
+                            </label>
+                          </div>
+                          <p className="text-[10px] text-emerald-800 mb-2">
+                            Monto de la rebaja de crédito constructora deducida de la factura. El asiento contable la registrará como débito a la cuenta de activo tributario.
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <div className="w-1/2">
+                              <label className="block font-semibold text-emerald-950 mb-1">Monto Deducción CEEC ($)</label>
+                              <input
+                                name="montoCeec"
+                                type="number"
+                                defaultValue={editingRcvDoc.montoCeec || (editingRcvDoc.montoTotal > 0 && editingRcvDoc.montoTotal < (editingRcvDoc.montoNeto + editingRcvDoc.montoIva + (editingRcvDoc.montoExento || 0)) ? (editingRcvDoc.montoNeto + editingRcvDoc.montoIva + (editingRcvDoc.montoExento || 0)) - editingRcvDoc.montoTotal : 0)}
+                                placeholder="0"
+                                className="border border-emerald-300 p-2 w-full rounded-lg bg-white font-mono"
+                              />
+                            </div>
+                            <div className="w-1/2 pt-4">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const n = parseFloat((document.getElementById('modal_neto') as HTMLInputElement)?.value) || 0;
+                                  const iv = parseFloat((document.getElementById('modal_iva') as HTMLInputElement)?.value) || Math.round(n * 0.19);
+                                  const maxCeec = Math.round(iv * 0.65);
+                                  const ceecInput = document.querySelector('input[name="montoCeec"]') as HTMLInputElement;
+                                  if (ceecInput) ceecInput.value = String(maxCeec);
+                                }}
+                                className="text-[11px] bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 cursor-pointer"
+                              >
+                                ⚡ Sugerir Tope 65% IVA
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" onClick={() => setEditingRcvDoc(null)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancelar</button>
+                        <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold cursor-pointer flex items-center gap-1.5">
+                          <span>Guardar Cambios</span>
+                          <kbd className="ml-1 px-1.5 py-0.5 bg-indigo-800 text-indigo-100 rounded text-[10px] font-mono border border-indigo-400/40 font-bold">F2</kbd>
+                        </button>
+                      </div>
+                    </form>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -5215,13 +6546,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 onChange={e => setVoucherFilterYear(e.target.value)}
                 className="border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 bg-white"
               >
-                <option value="Todos">Todos los Años</option>
-                <option value="2028">2028</option>
+                <option value="Todos">Todos los Años (2025-2027)</option>
                 <option value="2027">2027</option>
                 <option value="2026">2026</option>
                 <option value="2025">2025</option>
-                <option value="2024">2024</option>
-                <option value="2023">2023</option>
               </select>
 
               <select
@@ -5252,6 +6580,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 className="border border-slate-300 p-2 rounded-lg text-xs w-56 focus:ring-2 focus:ring-indigo-500"
               />
               <button
+                onClick={() => setShowExcelImportModal(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+              >
+                <span>📥</span>
+                Importar Excel
+              </button>
+              <button
                 onClick={handleOpenCreateVoucher}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
               >
@@ -5261,6 +6596,39 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 Nuevo Comprobante
               </button>
             </div>
+          </div>
+
+          {/* Barra de estado de filtros y comprobantes */}
+          <div className="flex flex-wrap justify-between items-center bg-slate-50 px-4 py-2.5 rounded-lg border border-slate-200 text-xs text-slate-600 gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-slate-800">
+                Mostrando <span className="text-indigo-700 font-bold">{filteredVouchers.length}</span> de <span className="font-bold">{vouchers.length}</span> comprobantes
+              </span>
+              {(voucherFilterType !== 'Todos' || voucherFilterYear !== 'Todos' || voucherFilterMonth !== 'Todos' || voucherSearchQuery.trim() !== '') && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800">
+                  Filtros activos ({[
+                    voucherFilterType !== 'Todos' ? `Tipo: ${voucherFilterType}` : null,
+                    voucherFilterYear !== 'Todos' ? `Año: ${voucherFilterYear}` : null,
+                    voucherFilterMonth !== 'Todos' ? `Mes: ${voucherFilterMonth}` : null,
+                    voucherSearchQuery.trim() !== '' ? `Búsqueda: "${voucherSearchQuery}"` : null
+                  ].filter(Boolean).join(', ')})
+                </span>
+              )}
+            </div>
+
+            {(voucherFilterType !== 'Todos' || voucherFilterYear !== 'Todos' || voucherFilterMonth !== 'Todos' || voucherSearchQuery.trim() !== '') && (
+              <button
+                onClick={() => {
+                  setVoucherFilterType('Todos');
+                  setVoucherFilterYear('Todos');
+                  setVoucherFilterMonth('Todos');
+                  setVoucherSearchQuery('');
+                }}
+                className="text-indigo-600 hover:text-indigo-800 font-bold text-xs flex items-center gap-1 hover:underline cursor-pointer"
+              >
+                <span>✕</span> Restablecer filtros (Ver todos)
+              </button>
+            )}
           </div>
 
           <div className="border border-slate-200 rounded-lg overflow-auto max-h-[550px] relative shadow-2xs">
@@ -5368,33 +6736,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {vouchers
-                  .filter(v => voucherFilterType === 'Todos' || v.type === voucherFilterType)
-                  .filter(v => {
-                    if (voucherFilterYear === 'Todos') return true;
-                    if (!v.date) return false;
-                    return v.date.startsWith(voucherFilterYear);
-                  })
-                  .filter(v => {
-                    if (voucherFilterMonth === 'Todos') return true;
-                    if (!v.date) return false;
-                    const m = v.date.slice(5, 7);
-                    return m === voucherFilterMonth;
-                  })
-                  .filter(v => 
-                    !voucherSearchQuery ||
-                    (v.gloss || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) ||
-                    String(v.voucherNumber || '').includes(voucherSearchQuery) ||
-                    (v.lines && v.lines.some(l => (l.auxiliaryRut || '').toLowerCase().includes(voucherSearchQuery.toLowerCase()) || (l.accountCode || '').includes(voucherSearchQuery)))
-                  )
-                  .filter(v => !colNumSearch || String(v.voucherNumber).toLowerCase().includes(colNumSearch.toLowerCase()))
-                  .filter(v => !colDateSearch || (v.date && v.date.toLowerCase().includes(colDateSearch.toLowerCase())))
-                  .filter(v => colTypeSearch === 'Todos' || v.type === colTypeSearch)
-                  .filter(v => colStatusSearch === 'Todos' || v.status === colStatusSearch)
-                  .filter(v => !colGlossSearch || (v.gloss && v.gloss.toLowerCase().includes(colGlossSearch.toLowerCase())))
-                  .filter(v => !colDebitSearch || String(v.totalDebit).includes(colDebitSearch))
-                  .filter(v => !colCreditSearch || String(v.totalCredit).includes(colCreditSearch))
-                  .map((v) => {
+                {filteredVouchers.map((v) => {
                     const isAnulado = v.status === 'Anulado';
                     return (
                       <tr key={v.id} className={`hover:bg-slate-50 transition-colors ${isAnulado ? 'bg-rose-50/40 text-slate-500' : ''}`}>
@@ -5452,10 +6794,40 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                       </tr>
                     );
                   })}
-                {vouchers.length === 0 && (
+                {filteredVouchers.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-500 italic">
-                      No hay comprobantes contables registrados en la empresa. Puedes crear uno manual o generarlos desde el módulo RCV.
+                    <td colSpan={8} className="p-8 text-center text-slate-500">
+                      {vouchers.length === 0 ? (
+                        <div className="space-y-3">
+                          <p className="italic">No hay comprobantes contables registrados en la empresa. Puedes crear uno manual, generarlos desde el módulo RCV o cargarlos vía Excel.</p>
+                          <button
+                            onClick={() => setShowExcelImportModal(true)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 font-medium rounded-lg text-xs hover:bg-indigo-100 border border-indigo-200 cursor-pointer"
+                          >
+                            <span>📥</span> Cargar Comprobantes desde Excel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="font-semibold text-slate-700">
+                            No se encontraron comprobantes con los filtros activos.
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Existen <span className="font-bold text-indigo-700">{vouchers.length}</span> comprobantes registrados en la empresa que no coinciden con la combinación actual de filtros (Año: {voucherFilterYear}, Mes: {voucherFilterMonth}, Tipo: {voucherFilterType}).
+                          </p>
+                          <button
+                            onClick={() => {
+                              setVoucherFilterType('Todos');
+                              setVoucherFilterYear('Todos');
+                              setVoucherFilterMonth('Todos');
+                              setVoucherSearchQuery('');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg text-xs hover:bg-indigo-700 shadow-xs cursor-pointer"
+                          >
+                            <span>🔄</span> Restablecer Filtros y Ver Todos ({vouchers.length})
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -5790,7 +7162,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                   </button>
                 </div>
 
-                <form onSubmit={handleSaveVoucherForm} className="flex-1 flex flex-col overflow-hidden">
+                <form data-voucher-form="true" onSubmit={handleSaveVoucherForm} className="flex-1 flex flex-col overflow-hidden">
                   <div className="p-5 space-y-4 overflow-y-auto flex-1">
                     {/* Header Controls */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
@@ -5875,7 +7247,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Líneas Contables ({voucherForm.lines.length})</h4>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button
                             type="button"
                             onClick={() => {
@@ -5902,6 +7274,42 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                             className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
                           >
                             ⚖️ Auto-cuadrar Saldo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const totalDeb = voucherForm.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
+                              const totalCred = voucherForm.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
+                              const diff = totalDeb - totalCred;
+                              if (diff === 0) {
+                                alert('El comprobante ya se encuentra perfectamente cuadrado.');
+                                return;
+                              }
+                              const ceecAcc = accounts.find(a => 
+                                a.code === '1107001' || 
+                                a.id === rcvParams?.ceecAccountId ||
+                                a.name.toLowerCase().includes('ceec') || 
+                                a.name.toLowerCase().includes('crédito especial') || 
+                                a.name.toLowerCase().includes('credito especial') ||
+                                a.name.toLowerCase().includes('constructora')
+                              ) || accounts.find(a => a.code.startsWith('1107') || a.code.startsWith('1.1.07'));
+
+                              const newLine: VoucherLine = {
+                                accountId: ceecAcc ? ceecAcc.id : '',
+                                accountCode: ceecAcc ? ceecAcc.code : '1107001',
+                                accountName: ceecAcc ? ceecAcc.name : 'Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)',
+                                debit: diff < 0 ? Math.abs(diff) : 0,
+                                credit: diff > 0 ? diff : 0,
+                                auxiliaryRut: voucherForm.lines[0]?.auxiliaryRut || '',
+                                documentRef: voucherForm.lines[0]?.documentRef || '',
+                                gloss: `Crédito Especial Constructora (Art. 21 D.L. 910) - ${voucherForm.gloss || ''}`
+                              };
+                              setVoucherForm({ ...voucherForm, lines: [...voucherForm.lines, newLine] });
+                            }}
+                            className="text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-3 py-1.5 rounded-lg font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Añadir línea automática de Crédito Especial Constructora CEEC (Art. 21 D.L. 910)"
+                          >
+                            🏗️ Cuadrar con CEEC (Constructora)
                           </button>
                           <button
                             type="button"
@@ -6235,12 +7643,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
                     </button>
                     <button
                       type="submit"
-                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5"
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      {voucherForm.id ? 'Guardar Cambios' : 'Registrar Comprobante'}
+                      <span>{voucherForm.id ? 'Guardar Cambios' : 'Registrar Comprobante'}</span>
+                      <kbd className="ml-1.5 px-1.5 py-0.5 bg-indigo-800 text-indigo-100 rounded text-[10px] font-mono border border-indigo-400/40 shadow-2xs font-bold">F2</kbd>
                     </button>
                   </div>
                 </form>
@@ -6691,6 +8100,8 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           vouchers={vouchers}
           accounts={accounts}
           fiscalYears={fiscalYears}
+          onEditVoucher={handleOpenEditVoucher}
+          onFixCeecVouchers={handleAutoFixCeecVouchers}
         />
       )}
 
@@ -6713,6 +8124,11 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           vouchers={vouchers}
           accounts={accounts}
           fiscalYears={fiscalYears}
+          onFixCeecVouchers={handleAutoFixCeecVouchers}
+          onNavigateToLibroDiario={() => {
+            setActiveTab('libroDiario');
+            setActiveRibbonGroup('FINANZAS');
+          }}
           onOpenAuditor={() => {
             setActiveTab('auditorEstadosFinancieros');
             setActiveRibbonGroup('INDICADORES');
@@ -6758,6 +8174,27 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           auxiliaries={auxiliaries}
           rcvDocuments={rcvDocuments}
           onVouchersUpdated={fetchData}
+        />
+      )}
+
+      {/* TAB: REPORTES ANALITICOS Y MATRIZ DINAMICA */}
+      {activeTab === 'reportesAnaliticos' && (
+        <ReportesAnaliticosView
+          studyId={studyId}
+          company={company}
+          accounts={accounts}
+          vouchers={vouchers}
+          costCenters={costCenters}
+          expenseItems={expenseItems}
+          projects={projects}
+          products={products}
+          auxiliaries={auxiliaries}
+          rcvDocuments={rcvDocuments}
+          customAnalysisItems={customAnalysisItems}
+          customAccountColumns={company.customAccountColumns || []}
+          fiscalYears={fiscalYears}
+          defaultYear={selectedYear}
+          isReadOnly={isReadOnly}
         />
       )}
 
@@ -6816,6 +8253,9 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
             fiscalYears={fiscalYears}
             bankReconciliations={bankReconciliations}
             rcvDocuments={rcvDocuments}
+            auxiliaries={auxiliaries}
+            costCenters={costCenters}
+            expenseItems={expenseItems}
           />
         )
       )}
@@ -6919,11 +8359,31 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           costCenters={costCenters}
           expenseItems={expenseItems}
           projects={projects}
-          products={products}
+          products={products as unknown as ProductMaster[]}
           customAnalysisItems={customAnalysisItems}
           onVouchersUpdated={fetchData}
+          onClose={() => setActiveTab('vouchers')}
         />
       </div>
+
+      {/* TAB: LIBRO BANCO & CARTOLA COLABORATIVA */}
+      {activeTab === 'libroBancoColaborativo' && (
+        <LibroBancoColaborativoView
+          studyId={studyId}
+          company={company}
+          accounts={accounts}
+          vouchers={vouchers}
+          fiscalYears={fiscalYears}
+          auxiliaries={auxiliaries}
+          rcvDocuments={rcvDocuments}
+          bankReconciliations={bankReconciliations}
+          currentUserRole={currentUserRole}
+          mode="CONTADOR"
+          onVouchersUpdated={fetchData}
+          onNavigateToConciliacion={() => setActiveTab('conciliacionBancaria')}
+          onClose={() => setActiveTab('vouchers')}
+        />
+      )}
 
       {/* TAB: CARGA MASIVA COMPROBANTES */}
       {activeTab === 'cargaMasiva' && (
@@ -6984,7 +8444,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           expenseItems={expenseItems}
           nonSiiDocTypes={nonSiiDocTypes}
           projects={projects}
-          products={products}
+          products={products as unknown as ProductMaster[]}
           customAnalysisItems={customAnalysisItems}
           onRefreshData={fetchData}
         />
@@ -7007,7 +8467,10 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           accounts={accounts}
           costCenters={costCenters}
           expenseItems={expenseItems}
-          products={products as unknown as ProductService[]}
+          products={products}
+          warehouses={warehouses}
+          onSaveProduct={handleSaveProduct}
+          onDeleteProduct={handleDeleteProduct}
           onProductsChange={() => fetchData()}
           isReadOnly={isAnalyst || isReadOnly}
         />
@@ -7019,12 +8482,13 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           companyId={company.id}
           companyName={company.name}
           companyRut={company.rut}
-          products={products as unknown as ProductService[]}
+          products={products}
           accounts={accounts}
           auxiliaries={auxiliaries}
           costCenters={costCenters}
           expenseItems={expenseItems}
           commercialDocs={commercialDocuments}
+          warehouses={warehouses}
           onSaveDocument={(docData, movements, newVouchers) => {
             handleSaveCommercialDocument(docData, movements, newVouchers);
           }}
@@ -7037,10 +8501,83 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         <StockKardexView
           companyId={company.id}
           companyName={company.name}
-          products={products as unknown as ProductService[]}
+          products={products}
           movements={inventoryMovements}
+          warehouses={warehouses}
           accounts={accounts}
+          onSaveMovement={handleSaveInventoryMovement}
           isReadOnly={isAnalyst || isReadOnly}
+        />
+      )}
+
+      {/* TAB: MAESTRO MULTI-BODEGA ERP (FASE 1) */}
+      {activeTab === 'warehouses' && (
+        <WarehousesView
+          companyId={company.id}
+          companyName={company.name}
+          warehouses={warehouses}
+          products={products}
+          onSaveWarehouse={handleSaveWarehouse}
+          onDeleteWarehouse={handleDeleteWarehouse}
+          onSetDefaultWarehouse={handleSetDefaultWarehouse}
+          isReadOnly={isAnalyst || isReadOnly}
+        />
+      )}
+
+      {/* TAB: ACTIVO FIJO Y DEPRECIACIÓN DUAL (ART. 31 LIR / IFRS) */}
+      {activeTab === 'activoFijo' && (
+        <ActivoFijoView
+          studyId={studyId}
+          company={company}
+          accounts={accounts}
+          onCentralizeVoucher={async (voucherData) => {
+            const vId = `v_${Date.now()}`;
+            const newV = { ...voucherData, id: vId };
+            setVouchers(prev => [...prev, newV as Voucher]);
+            return vId;
+          }}
+        />
+      )}
+
+      {/* TAB: DECLARACIONES JURADAS SII (DDJJ RENTA) */}
+      {activeTab === 'ddjj' && (
+        <DeclaracionesJuradasView
+          company={company}
+          employees={employees}
+          savedSlips={payrollSlips}
+          accounts={accounts}
+        />
+      )}
+
+      {/* COMMAND PALETTE OMNISEARCH CMD+K */}
+      <CommandPaletteModal
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigateToView={(viewKey) => {
+          if (viewKey === 'PLAN_CUENTAS') setActiveTab('accounts');
+          else if (viewKey === 'LIBRO_DIARIO') setActiveTab('libroDiario');
+          else if (viewKey === 'LIBRO_MAYOR') setActiveTab('libroMayor');
+          else if (viewKey === 'BALANCE_8_COLUMNAS') setActiveTab('balance8');
+          else if (viewKey === 'CONCILIACION_BANCARIA') setActiveTab('conciliacionBancaria');
+          else if (viewKey === 'REMUNERACIONES') setActiveTab('liquidaciones');
+          else if (viewKey === 'ACTIVO_FIJO') setActiveTab('activoFijo');
+          else if (viewKey === 'DDJJ_SII') setActiveTab('ddjj');
+          else if (viewKey === 'AUXILIARES') setActiveTab('auxiliaries');
+        }}
+        accounts={accounts}
+        auxiliaries={auxiliaries}
+        vouchers={vouchers}
+      />
+
+      {/* MODAL FINIQUITOS LEGALES */}
+      {showFiniquitoModal && (
+        <FiniquitosCalculatorModal
+          companyName={company.name}
+          companyRut={company.rut}
+          companyAddress={company.address}
+          employees={employees}
+          accounts={accounts}
+          onClose={() => setShowFiniquitoModal(false)}
         />
       )}
 
@@ -7057,7 +8594,7 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
           expenseItems={expenseItems}
           nonSiiDocTypes={nonSiiDocTypes}
           projects={projects}
-          products={products}
+          products={products as unknown as ProductMaster[]}
           customAnalysisItems={customAnalysisItems}
           customColumns={company.customAccountColumns || []}
           onApplyDistribution={(lineIdx, newLines) => {
@@ -7078,11 +8615,91 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         company={company}
         accounts={accounts}
         auxiliaries={auxiliaries}
+        vouchers={vouchers}
         fiscalYears={fiscalYears}
+        initialTab={activeTab === 'vouchers' ? 'comprobantes' : activeTab === 'accounts' ? 'cuentas' : activeTab === 'auxiliaries' ? 'proveedores' : 'cuentas'}
         onDataImported={async () => {
           await fetchData();
         }}
+        onNavigateToVouchers={(period, year, month) => {
+          setActiveTab('vouchers');
+          if (year) setVoucherFilterYear(year);
+          else setVoucherFilterYear('Todos');
+          if (month) setVoucherFilterMonth(month);
+          else setVoucherFilterMonth('Todos');
+          setVoucherFilterType('Todos');
+          setVoucherSearchQuery('');
+        }}
       />
+
+      {/* MODAL DE CONFIGURACIÓN DE ACCESO RÁPIDO ESTILO EXCEL */}
+      {showQuickAccessConfig && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Pin className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-sm font-bold tracking-tight">Barra de Acceso Rápido Personalizada</h3>
+              </div>
+              <button
+                onClick={() => setShowQuickAccessConfig(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 max-h-[65vh] overflow-y-auto">
+              <p className="text-xs text-slate-600">
+                Selecciona las herramientas que deseas anclar en tu barra superior para un acceso directo de 1 clic:
+              </p>
+
+              <div className="space-y-1.5 pt-1">
+                {QUICK_ACCESS_ITEMS.map((item) => {
+                  const IconComp = item.icon;
+                  const isPinned = pinnedQuickAccessIds.includes(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => togglePinQuickAccess(item.id)}
+                      className={`w-full p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
+                        isPinned
+                          ? 'bg-indigo-50/80 border-indigo-300 text-indigo-950 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-1.5 rounded-lg ${isPinned ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                          <IconComp className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold">{item.label}</p>
+                          <p className="text-[10px] text-slate-500 font-mono">{item.group}</p>
+                        </div>
+                      </div>
+
+                      <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all ${
+                        isPinned ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                      }`}>
+                        {isPinned && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setShowQuickAccessConfig(false)}
+                className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg shadow-2xs cursor-pointer"
+              >
+                Guardar Preferencias
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* COPILOTO CONTABLE INTELIGENTE (MULTI-TENANT EMPRESA ACTUAL) */}
       <InternalCompanyAccountingCopilot
@@ -7095,6 +8712,20 @@ export default function CompanyAccountingDashboard({ studyId, company, currentUs
         fiscalYears={fiscalYears}
         onNavigateTab={(tab) => {
           setActiveTab(tab as any);
+        }}
+        onVouchersUpdated={fetchData}
+      />
+
+      {/* Modal de Demostración y Reset 2025 para FERRETERIA DON ALI KT LTDA */}
+      <DemoFerreteriaManagerModal
+        isOpen={showDemoManagerModal}
+        onClose={() => setShowDemoManagerModal(false)}
+        studyId={studyId}
+        currentCompany={company}
+        userEmail={auth.currentUser?.email || undefined}
+        userId={auth.currentUser?.uid || undefined}
+        onSuccess={() => {
+          fetchData();
         }}
       />
     </div>

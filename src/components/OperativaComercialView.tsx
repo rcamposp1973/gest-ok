@@ -33,7 +33,8 @@ import {
   CostCenterMaster,
   ExpenseItemMaster,
   Voucher,
-  InventoryMovement
+  InventoryMovement,
+  Warehouse
 } from '../types';
 
 interface OperativaComercialViewProps {
@@ -46,6 +47,7 @@ interface OperativaComercialViewProps {
   costCenters: CostCenterMaster[];
   expenseItems: ExpenseItemMaster[];
   commercialDocs: CommercialDocument[];
+  warehouses?: Warehouse[];
   onSaveDocument: (doc: CommercialDocument, movements: InventoryMovement[], newVouchers: Voucher[]) => void;
   isReadOnly?: boolean;
 }
@@ -60,6 +62,7 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
   costCenters,
   expenseItems,
   commercialDocs,
+  warehouses = [],
   onSaveDocument,
   isReadOnly = false
 }) => {
@@ -78,6 +81,7 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
   const [selectedAuxId, setSelectedAuxId] = useState<string>('');
   const [rutContraparte, setRutContraparte] = useState<string>('');
   const [razonSocialContraparte, setRazonSocialContraparte] = useState<string>('');
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
   const [observations, setObservations] = useState<string>('');
 
   // Ítems de la orden / documento
@@ -193,6 +197,7 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
     setSelectedAuxId('');
     setRutContraparte('');
     setRazonSocialContraparte('');
+    setSelectedWarehouseId(warehouses.find(w => w.isDefault)?.id || (warehouses.length > 0 ? warehouses[0].id : ''));
     setObservations('');
     setLines([]);
     setTempProductId('');
@@ -215,6 +220,8 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
     const docId = `comm-${Date.now()}`;
     const period = date.slice(0, 7);
     const voucherPeriod = period;
+    const targetWh = warehouses.find(w => w.id === selectedWarehouseId);
+    const whName = targetWh?.name || 'Bodega Central';
 
     // 1. Crear Documento Comercial
     const newDoc: CommercialDocument = {
@@ -229,6 +236,8 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
       auxiliaryId: selectedAuxId,
       rutContraparte,
       razonSocialContraparte,
+      warehouseId: targetWh?.id || selectedWarehouseId || undefined,
+      warehouseName: whName,
       items: lines,
       subtotalNeto: formTotals.subtotalNeto,
       ivaAmount: formTotals.ivaAmount,
@@ -263,12 +272,14 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
           totalCost: line.quantity * unitCost,
           previousStock: prevStock,
           resultingStock,
+          warehouseId: targetWh?.id || selectedWarehouseId || undefined,
+          warehouseName: whName,
           commercialDocId: docId,
           documentNumber: String(folio),
           documentType: docType,
           rutContraparte,
           razonSocialContraparte,
-          observations: `Operación comercial #${folio} - ${razonSocialContraparte}`,
+          observations: `Operación comercial #${folio} (${whName}) - ${razonSocialContraparte}`,
           createdAt: new Date().toISOString()
         });
       }
@@ -668,7 +679,7 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
 
             <form onSubmit={handleSaveCommercialDoc} className="p-6 space-y-4 overflow-y-auto flex-1 text-xs">
               {/* Cabecera Documento */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Tipo Documento</label>
                   <select
@@ -701,6 +712,22 @@ export const OperativaComercialView: React.FC<OperativaComercialViewProps> = ({
                     onChange={e => setFolio(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono font-bold focus:ring-2 focus:ring-indigo-500"
                   />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    {opType === 'VENTA' ? 'Bodega Despacho' : 'Bodega Recepción'}
+                  </label>
+                  <select
+                    value={selectedWarehouseId}
+                    onChange={e => setSelectedWarehouseId(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {warehouses.map(w => (
+                      <option key={w.id} value={w.id}>
+                        {w.code} - {w.name} {w.isDefault ? '(Principal)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Fecha Emisión *</label>

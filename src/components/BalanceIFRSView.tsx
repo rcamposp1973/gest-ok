@@ -579,16 +579,6 @@ export default function BalanceIFRSView({
         </div>
       </div>
 
-      {/* Alerta de cuadratura */}
-      {descuadradosCount > 0 && (
-        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl text-amber-900 text-xs flex items-center gap-3 shadow-xs">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-          <div>
-            <span className="font-bold">Partida Doble Estricta:</span> Se han excluido automáticamente <strong>{descuadradosCount}</strong> comprobante(s) con descuadre en el Libro Diario para garantizar un balance fidedigno bajo IFRS.
-          </div>
-        </div>
-      )}
-
       {/* Barra de Filtros */}
       <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-3 flex-wrap text-xs">

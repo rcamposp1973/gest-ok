@@ -180,6 +180,7 @@ export default function CargaMasivaComprobantesView({
     const colIdxMap: { [key: string]: number } = {
       vNum: 0,
       vDate: 1,
+      vPeriod: -1,
       vType: 2,
       vGloss: 3,
       accCode: 4,
@@ -258,6 +259,10 @@ export default function CargaMasivaComprobantesView({
         // 4. Voucher Date (Fecha Comprobante)
         else if (head.includes('fecha') || head.includes('date')) {
           colIdxMap.vDate = idx;
+        }
+        // 4.1 Voucher Period (Período Contable)
+        else if (head.includes('periodo') || head.includes('period')) {
+          colIdxMap.vPeriod = idx;
         }
         // 5. Document Type (TipoDoc) (CRITICAL: MUST CHECK BEFORE TIPO COMPROBANTE!)
         else if (
@@ -444,8 +449,34 @@ export default function CargaMasivaComprobantesView({
       const fileNumVal = !isNaN(parsedNum) ? parsedNum : currentVoucherIndex;
 
       const rawDateCell = colIdxMap.vDate >= 0 ? row[colIdxMap.vDate] : null;
-      const vDate = parseDateToYYYYMMDD(rawDateCell) || new Date().toISOString().split('T')[0];
-      const vPeriod = vDate.slice(0, 7);
+      let vDate = parseDateToYYYYMMDD(rawDateCell);
+      const rawPeriodCell = colIdxMap.vPeriod >= 0 ? getSafeCellString(row, colIdxMap.vPeriod) : '';
+      let vPeriod = '';
+      if (rawPeriodCell) {
+        if (/^\d{4}-\d{2}$/.test(rawPeriodCell)) vPeriod = rawPeriodCell;
+        else if (/^\d{6}$/.test(rawPeriodCell)) vPeriod = `${rawPeriodCell.slice(0, 4)}-${rawPeriodCell.slice(4, 6)}`;
+        else if (/^\d{1,2}[\/\-]\d{4}$/.test(rawPeriodCell)) {
+          const parts = rawPeriodCell.split(/[\/\-]/);
+          vPeriod = `${parts[1]}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+      if (!vPeriod && vDate) {
+        vPeriod = vDate.slice(0, 7);
+      }
+      if (!vDate && vPeriod) {
+        vDate = `${vPeriod}-01`;
+      }
+      if (!vDate) {
+        // Si no hay fecha ni período, buscar en el grupo activo antes de asumir fecha
+        const existingInGroup = groupedByNumber.get(vNumKey);
+        if (existingInGroup?.date) {
+          vDate = existingInGroup.date;
+          vPeriod = existingInGroup.period;
+        } else {
+          vDate = '2026-01-01';
+          vPeriod = '2026-01';
+        }
+      }
 
       const rawType = getSafeCellString(row, colIdxMap.vType);
       const vType = (['Ingreso', 'Egreso', 'Traspaso'].includes(rawType) ? rawType : 'Traspaso') as 'Ingreso' | 'Egreso' | 'Traspaso';
@@ -694,83 +725,118 @@ export default function CargaMasivaComprobantesView({
     
     const sampleData = [
       {
-        NumComprobante: 1,
+        NumeroComprobante: 1,
         Fecha: '2026-08-01',
-        Tipo: 'Ingreso',
+        Periodo: '2026-08',
+        TipoComprobante: 'Ingreso',
         GlosaComprobante: 'Aporte Inicial de Capital',
-        CodigoCuenta: accounts[0]?.code || '1-1-01-01',
+        CodigoCuenta: accounts[0]?.code || '1.1.01.002',
+        NombreCuenta: accounts[0]?.name || 'Banco Estado Cta Cte',
         Debe: 5000000,
         Haber: 0,
-        RutAuxiliar: '',
-        NombreAuxiliar: '',
         GlosaLinea: 'Deposito Bancario Capital',
-        RefDTE: '',
-        CentroCosto: '',
-        RefBancaria: 'Cartola 0826',
+        RUTAuxiliar: '',
+        RazonSocialAuxiliar: '',
+        TipoDocumento: '',
+        FolioDocumento: '',
         FechaVencimiento: '',
+        CentroCosto: '',
         ItemGasto: '',
         Proyecto: '',
         Producto: '',
+        RefBancaria: 'Cartola 0826',
         ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
-        NumComprobante: 1,
+        NumeroComprobante: 1,
         Fecha: '2026-08-01',
-        Tipo: 'Ingreso',
+        Periodo: '2026-08',
+        TipoComprobante: 'Ingreso',
         GlosaComprobante: 'Aporte Inicial de Capital',
-        CodigoCuenta: accounts[1]?.code || '3-1-01-01',
+        CodigoCuenta: accounts[1]?.code || '3.1.01',
+        NombreCuenta: accounts[1]?.name || 'Capital Social',
         Debe: 0,
         Haber: 5000000,
-        RutAuxiliar: '',
-        NombreAuxiliar: '',
         GlosaLinea: 'Capital Pagado',
-        RefDTE: '',
-        CentroCosto: '',
-        RefBancaria: '',
+        RUTAuxiliar: '',
+        RazonSocialAuxiliar: '',
+        TipoDocumento: '',
+        FolioDocumento: '',
         FechaVencimiento: '',
+        CentroCosto: '',
         ItemGasto: '',
         Proyecto: '',
         Producto: '',
+        RefBancaria: '',
         ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
-        NumComprobante: 2,
+        NumeroComprobante: 2,
         Fecha: '2026-08-05',
-        Tipo: 'Egreso',
+        Periodo: '2026-08',
+        TipoComprobante: 'Egreso',
         GlosaComprobante: 'Pago de Arriendo Oficina y Servicios',
-        CodigoCuenta: accounts[2]?.code || '4-2-01-01',
+        CodigoCuenta: accounts[2]?.code || '5.2.01',
+        NombreCuenta: accounts[2]?.name || 'Gastos de Administracion',
         Debe: 650000,
         Haber: 0,
-        RutAuxiliar: '76.123.456-7',
-        NombreAuxiliar: 'INMOBILIARIA CENTRAL SPA',
         GlosaLinea: 'Gasto Arriendo Casa Matriz',
-        RefDTE: 'FAC 102',
-        CentroCosto: 'ADMINISTRACION',
-        RefBancaria: 'TRF 98231',
+        RUTAuxiliar: '76.123.456-7',
+        RazonSocialAuxiliar: 'INMOBILIARIA CENTRAL SPA',
+        TipoDocumento: 'Factura',
+        FolioDocumento: '102',
         FechaVencimiento: '2026-08-10',
+        CentroCosto: 'ADMINISTRACION',
         ItemGasto: 'ARRIENDOS',
         Proyecto: 'SEDE CENTRAL',
         Producto: '',
+        RefBancaria: 'TRF 98231',
         ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       },
       {
-        NumComprobante: 2,
+        NumeroComprobante: 2,
         Fecha: '2026-08-05',
-        Tipo: 'Egreso',
+        Periodo: '2026-08',
+        TipoComprobante: 'Egreso',
         GlosaComprobante: 'Pago de Arriendo Oficina y Servicios',
-        CodigoCuenta: accounts[0]?.code || '1-1-01-01',
+        CodigoCuenta: accounts[0]?.code || '1.1.01.002',
+        NombreCuenta: accounts[0]?.name || 'Banco Estado Cta Cte',
         Debe: 0,
         Haber: 650000,
-        RutAuxiliar: '76.123.456-7',
-        NombreAuxiliar: 'INMOBILIARIA CENTRAL SPA',
         GlosaLinea: 'Transferencia Bancaria Cuenta Corriente',
-        RefDTE: 'FAC 102',
-        CentroCosto: 'ADMINISTRACION',
-        RefBancaria: 'TRF 98231',
+        RUTAuxiliar: '76.123.456-7',
+        RazonSocialAuxiliar: 'INMOBILIARIA CENTRAL SPA',
+        TipoDocumento: 'Factura',
+        FolioDocumento: '102',
         FechaVencimiento: '2026-08-10',
+        CentroCosto: 'ADMINISTRACION',
         ItemGasto: '',
         Proyecto: '',
         Producto: '',
+        RefBancaria: 'TRF 98231',
+        ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
+      },
+      {
+        NumeroComprobante: 3,
+        Fecha: '2026-08-31',
+        Periodo: '2026-08',
+        TipoComprobante: 'Traspaso',
+        GlosaComprobante: 'Centralización de Remuneraciones Agosto 2026',
+        CodigoCuenta: '4202002',
+        NombreCuenta: 'Sueldo Base',
+        Debe: 1500000,
+        Haber: 0,
+        GlosaLinea: 'SUELDO BASE | RECURSOS HUMANOS',
+        RUTAuxiliar: '15.432.109-8',
+        RazonSocialAuxiliar: 'GONZALEZ PEREZ JUAN PABLO',
+        TipoDocumento: 'Liquidacion',
+        FolioDocumento: '202608',
+        FechaVencimiento: '2026-08-31',
+        CentroCosto: 'RRHH',
+        ItemGasto: 'SUELDOS',
+        Proyecto: '',
+        Producto: '',
+        RefBancaria: '',
         ...customCols.reduce((acc, c) => ({ ...acc, [c]: '' }), {})
       }
     ];
@@ -786,12 +852,13 @@ export default function CargaMasivaComprobantesView({
     const customHeaderStr = customCols.length > 0 ? ';' + customCols.join(';') : '';
     const customEmptyStr = customCols.length > 0 ? ';' + customCols.map(() => '').join(';') : '';
 
-    const headers = `NumComprobante;Fecha;Tipo;GlosaComprobante;CodigoCuenta;Debe;Haber;RutAuxiliar;NombreAuxiliar;GlosaLinea;RefDTE;CentroCosto;RefBancaria;FechaVencimiento;ItemGasto;Proyecto;Producto${customHeaderStr}`;
+    const headers = `NumeroComprobante;Fecha;Periodo;TipoComprobante;GlosaComprobante;CodigoCuenta;NombreCuenta;Debe;Haber;GlosaLinea;RUTAuxiliar;RazonSocialAuxiliar;TipoDocumento;FolioDocumento;FechaVencimiento;CentroCosto;ItemGasto;Proyecto;Producto;RefBancaria${customHeaderStr}`;
     const sampleRows = [
-      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[0]?.code || '1-1-01-01'};5000000;0;;;Deposito Bancario Capital;;;Cartola 0826;;;;${customEmptyStr}`,
-      `1;2026-08-01;Ingreso;Aporte Inicial de Capital;${accounts[1]?.code || '3-1-01-01'};0;5000000;;;Capital Pagado;;;;;;;${customEmptyStr}`,
-      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[2]?.code || '4-2-01-01'};650000;0;76.123.456-7;INMOBILIARIA CENTRAL SPA;Gasto Arriendo Casa Matriz;FAC 102;ADMINISTRACION;TRF 98231;2026-08-10;ARRIENDOS;SEDE CENTRAL;${customEmptyStr}`,
-      `2;2026-08-05;Egreso;Pago de Arriendo Oficina;${accounts[0]?.code || '1-1-01-01'};0;650000;76.123.456-7;INMOBILIARIA CENTRAL SPA;Transferencia Bancaria Cuenta Corriente;FAC 102;ADMINISTRACION;TRF 98231;2026-08-10;;;${customEmptyStr}`
+      `1;2026-08-01;2026-08;Ingreso;Aporte Inicial de Capital;${accounts[0]?.code || '1.1.01.002'};${accounts[0]?.name || 'Banco Estado Cta Cte'};5000000;0;Deposito Bancario Capital;;;;;;;;;;Cartola 0826${customEmptyStr}`,
+      `1;2026-08-01;2026-08;Ingreso;Aporte Inicial de Capital;${accounts[1]?.code || '3.1.01'};${accounts[1]?.name || 'Capital Social'};0;5000000;Capital Pagado;;;;;;;;;;${customEmptyStr}`,
+      `2;2026-08-05;2026-08;Egreso;Pago de Arriendo Oficina;${accounts[2]?.code || '5.2.01'};${accounts[2]?.name || 'Gastos de Administracion'};650000;0;Gasto Arriendo Casa Matriz;76.123.456-7;INMOBILIARIA CENTRAL SPA;Factura;102;2026-08-10;ADMINISTRACION;ARRIENDOS;SEDE CENTRAL;;TRF 98231${customEmptyStr}`,
+      `2;2026-08-05;2026-08;Egreso;Pago de Arriendo Oficina;${accounts[0]?.code || '1.1.01.002'};${accounts[0]?.name || 'Banco Estado Cta Cte'};0;650000;Transferencia Bancaria Cuenta Corriente;76.123.456-7;INMOBILIARIA CENTRAL SPA;Factura;102;2026-08-10;ADMINISTRACION;;;;TRF 98231${customEmptyStr}`,
+      `3;2026-08-31;2026-08;Traspaso;Centralización Remuneraciones;4202002;Sueldo Base;1500000;0;SUELDO BASE | RECURSOS HUMANOS;15.432.109-8;GONZALEZ PEREZ JUAN PABLO;Liquidacion;202608;2026-08-31;RRHH;SUELDOS;;;;${customEmptyStr}`
     ];
 
     const content = '\uFEFF' + [headers, ...sampleRows].join('\n');

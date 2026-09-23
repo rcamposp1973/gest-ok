@@ -932,7 +932,7 @@ export const LiquidacionSueldosView: React.FC<LiquidacionSueldosViewProps> = ({
               onChange={(e) => setSelectedYear(Number(e.target.value))}
               className="bg-white text-xs font-bold text-slate-900 rounded-lg px-2 py-1.5 border-none shadow-2xs focus:outline-none font-mono"
             >
-              {[2023, 2024, 2025, 2026].map(y => (
+              {[2025, 2026, 2027].map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>

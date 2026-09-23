@@ -39,6 +39,7 @@ export default function CobranzaView({
 
   // Filters
   const [agingFilter, setAgingFilter] = useState<string>('Todos');
+  const [isAgingCollapsed, setIsAgingCollapsed] = useState<boolean>(false);
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [selectedCustomerRut, setSelectedCustomerRut] = useState<string>('');
 
@@ -541,134 +542,123 @@ export default function CobranzaView({
   };
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
+    <div className="space-y-3">
+      {/* AGING CARDS / KPIS - COLLAPSIBLE */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-200">
           <div className="flex items-center gap-2">
-            <span className="text-xl">📑</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Cobranza y Cuentas por Cobrar</h3>
+            <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Antigüedad de Saldos (Aging)</span>
+            <span className="text-[11px] font-mono font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+              Total Cartera: ${agingStats.totalPending.toLocaleString('es-CL')} ({agingStats.totalCount} docs)
+            </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Control de facturas de venta pendientes, antigüedad de saldos (Aging) y registro de recaudaciones con emisión automática de Ingresos ({company.name})
-          </p>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {Object.keys(selectedInvoiceIds).length > 0 && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowCollectModal(true)}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg flex items-center gap-2 shadow-xs transition-colors"
+              onClick={() => setIsAgingCollapsed(!isAgingCollapsed)}
+              className="px-2.5 py-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 transition-all flex items-center gap-1 cursor-pointer"
             >
-              <span>⚡</span>
-              <span>Registrar Cobro ({Object.keys(selectedInvoiceIds).length} facturas)</span>
+              <span>{isAgingCollapsed ? '🔽 Mostrar Tramos' : '🔼 Comprimir'}</span>
             </button>
-          )}
-
-          <button
-            onClick={handleExportAgingCSV}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
-          >
-            <span>📥</span>
-            <span>Exportar Aging CSV</span>
-          </button>
-        </div>
-      </div>
-
-      {/* AGING CARDS / KPIS */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="bg-slate-900 text-white p-3 rounded-xl shadow-xs">
-          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Cartera Total</span>
-          <span className="text-xl font-black font-mono text-emerald-400 block mt-1">
-            ${agingStats.totalPending.toLocaleString('es-CL')}
-          </span>
-          <span className="text-[10px] text-slate-400">{agingStats.totalCount} facturas pendientes</span>
+          </div>
         </div>
 
-        <div
-          onClick={() => setAgingFilter('0-30')}
-          className={`p-3 rounded-xl border cursor-pointer transition-all ${
-            agingFilter === '0-30' ? 'bg-emerald-100 border-emerald-500 ring-2 ring-emerald-400' : 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-100/60'
-          }`}
-        >
-          <span className="text-[10px] text-emerald-900 font-bold uppercase tracking-wider block">0 - 30 Días (Vigente)</span>
-          <span className="text-lg font-black font-mono text-emerald-900 block mt-1">
-            ${agingStats.sum0_30.toLocaleString('es-CL')}
-          </span>
-          <span className="text-[10px] text-emerald-700 font-semibold">{agingStats.count0_30} documentos</span>
-        </div>
+        {!isAgingCollapsed && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 p-3">
+            <div className="bg-slate-900 text-white p-2.5 rounded-lg shadow-2xs">
+              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Cartera Total</span>
+              <span className="text-base font-black font-mono text-emerald-400 block mt-0.5">
+                ${agingStats.totalPending.toLocaleString('es-CL')}
+              </span>
+              <span className="text-[9px] text-slate-400">{agingStats.totalCount} pendientes</span>
+            </div>
 
-        <div
-          onClick={() => setAgingFilter('31-60')}
-          className={`p-3 rounded-xl border cursor-pointer transition-all ${
-            agingFilter === '31-60' ? 'bg-blue-100 border-blue-500 ring-2 ring-blue-400' : 'bg-blue-50/70 border-blue-200 hover:bg-blue-100/60'
-          }`}
-        >
-          <span className="text-[10px] text-blue-900 font-bold uppercase tracking-wider block">31 - 60 Días</span>
-          <span className="text-lg font-black font-mono text-blue-900 block mt-1">
-            ${agingStats.sum31_60.toLocaleString('es-CL')}
-          </span>
-          <span className="text-[10px] text-blue-700 font-semibold">{agingStats.count31_60} documentos</span>
-        </div>
+            <div
+              onClick={() => setAgingFilter('0-30')}
+              className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                agingFilter === '0-30' ? 'bg-emerald-100 border-emerald-500 ring-2 ring-emerald-400' : 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-100/60'
+              }`}
+            >
+              <span className="text-[9px] text-emerald-900 font-bold uppercase tracking-wider block">0 - 30 Días (Vigente)</span>
+              <span className="text-sm font-black font-mono text-emerald-900 block mt-0.5">
+                ${agingStats.sum0_30.toLocaleString('es-CL')}
+              </span>
+              <span className="text-[9px] text-emerald-700 font-semibold">{agingStats.count0_30} docs</span>
+            </div>
 
-        <div
-          onClick={() => setAgingFilter('61-90')}
-          className={`p-3 rounded-xl border cursor-pointer transition-all ${
-            agingFilter === '61-90' ? 'bg-amber-100 border-amber-500 ring-2 ring-amber-400' : 'bg-amber-50/70 border-amber-200 hover:bg-amber-100/60'
-          }`}
-        >
-          <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider block">61 - 90 Días</span>
-          <span className="text-lg font-black font-mono text-amber-900 block mt-1">
-            ${agingStats.sum61_90.toLocaleString('es-CL')}
-          </span>
-          <span className="text-[10px] text-amber-700 font-semibold">{agingStats.count61_90} documentos</span>
-        </div>
+            <div
+              onClick={() => setAgingFilter('31-60')}
+              className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                agingFilter === '31-60' ? 'bg-blue-100 border-blue-500 ring-2 ring-blue-400' : 'bg-blue-50/70 border-blue-200 hover:bg-blue-100/60'
+              }`}
+            >
+              <span className="text-[9px] text-blue-900 font-bold uppercase tracking-wider block">31 - 60 Días</span>
+              <span className="text-sm font-black font-mono text-blue-900 block mt-0.5">
+                ${agingStats.sum31_60.toLocaleString('es-CL')}
+              </span>
+              <span className="text-[9px] text-blue-700 font-semibold">{agingStats.count31_60} docs</span>
+            </div>
 
-        <div
-          onClick={() => setAgingFilter('+90')}
-          className={`p-3 rounded-xl border cursor-pointer transition-all ${
-            agingFilter === '+90' ? 'bg-rose-100 border-rose-500 ring-2 ring-rose-400' : 'bg-rose-50/70 border-rose-200 hover:bg-rose-100/60'
-          }`}
-        >
-          <span className="text-[10px] text-rose-900 font-bold uppercase tracking-wider block">+90 Días (Vencido)</span>
-          <span className="text-lg font-black font-mono text-rose-900 block mt-1">
-            ${agingStats.sumOver90.toLocaleString('es-CL')}
-          </span>
-          <span className="text-[10px] text-rose-700 font-semibold">{agingStats.countOver90} documentos</span>
-        </div>
+            <div
+              onClick={() => setAgingFilter('61-90')}
+              className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                agingFilter === '61-90' ? 'bg-amber-100 border-amber-500 ring-2 ring-amber-400' : 'bg-amber-50/70 border-amber-200 hover:bg-amber-100/60'
+              }`}
+            >
+              <span className="text-[9px] text-amber-900 font-bold uppercase tracking-wider block">61 - 90 Días</span>
+              <span className="text-sm font-black font-mono text-amber-900 block mt-0.5">
+                ${agingStats.sum61_90.toLocaleString('es-CL')}
+              </span>
+              <span className="text-[9px] text-amber-700 font-semibold">{agingStats.count61_90} docs</span>
+            </div>
+
+            <div
+              onClick={() => setAgingFilter('+90')}
+              className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                agingFilter === '+90' ? 'bg-rose-100 border-rose-500 ring-2 ring-rose-400' : 'bg-rose-50/70 border-rose-200 hover:bg-rose-100/60'
+              }`}
+            >
+              <span className="text-[9px] text-rose-900 font-bold uppercase tracking-wider block">+90 Días (Vencido)</span>
+              <span className="text-sm font-black font-mono text-rose-900 block mt-0.5">
+                ${agingStats.sumOver90.toLocaleString('es-CL')}
+              </span>
+              <span className="text-[9px] text-rose-700 font-semibold">{agingStats.countOver90} docs</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 bg-white rounded-t-xl px-4 pt-2 gap-2">
+      <div className="flex border-b border-slate-200 bg-white rounded-t-xl px-3 pt-1.5 gap-2">
         <button
           onClick={() => setActiveTab('pendientes')}
-          className={`px-4 py-2 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors ${
+          className={`px-3 py-1.5 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'pendientes'
-              ? 'border-indigo-600 text-indigo-600'
+              ? 'border-[#533AFD] text-[#533AFD]'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <span>⏳ Facturas Pendientes</span>
-          <span className="bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-full text-[10px]">{invoicesWithAging.length}</span>
+          <span className="bg-indigo-100 text-[#533AFD] px-1.5 py-0.2 rounded-full text-[10px] font-bold">{invoicesWithAging.length}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('historial')}
-          className={`px-4 py-2 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors ${
+          className={`px-3 py-1.5 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'historial'
-              ? 'border-indigo-600 text-indigo-600'
+              ? 'border-[#533AFD] text-[#533AFD]'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <span>📑 Historial de Recaudaciones</span>
-          <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full text-[10px]">{collectionRecords.length}</span>
+          <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full text-[10px] font-bold">{collectionRecords.length}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('cuentaCorriente')}
-          className={`px-4 py-2 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors ${
+          className={`px-3 py-1.5 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
             activeTab === 'cuentaCorriente'
-              ? 'border-indigo-600 text-indigo-600'
+              ? 'border-[#533AFD] text-[#533AFD]'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -678,14 +668,14 @@ export default function CobranzaView({
 
       {/* TAB 1: PENDING INVOICES & AGING */}
       {activeTab === 'pendientes' && (
-        <div className="bg-white rounded-b-xl border border-slate-200 shadow-xs overflow-hidden space-y-3 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <label className="text-xs font-semibold text-slate-700">Filtrar Tramo:</label>
+        <div className="bg-white rounded-b-xl border border-slate-200 shadow-xs overflow-hidden space-y-3 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <label className="text-xs font-bold text-slate-600">Filtrar Tramo:</label>
               <select
                 value={agingFilter}
                 onChange={(e) => setAgingFilter(e.target.value)}
-                className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500"
+                className="bg-white border border-slate-200 rounded px-2 py-1 text-xs font-medium focus:ring-1 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="Todos">Todos los Tramos</option>
                 <option value="0-30">0 a 30 días</option>
@@ -700,25 +690,45 @@ export default function CobranzaView({
                   filteredPending.forEach(inv => { next[inv.id] = inv.montoTotal; });
                   setSelectedInvoiceIds(next);
                 }}
-                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded border border-indigo-200"
+                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#533AFD] text-xs font-bold rounded border border-indigo-200 cursor-pointer"
               >
                 Seleccionar Visibles
               </button>
               <button
                 onClick={() => setSelectedInvoiceIds({})}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded border border-slate-300"
+                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded border border-slate-300 cursor-pointer"
               >
                 Limpiar
               </button>
             </div>
 
-            <div>
+            {/* Actions: Export Aging CSV & Search Input & Registrar Cobro */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {Object.keys(selectedInvoiceIds).length > 0 && (
+                <button
+                  onClick={() => setShowCollectModal(true)}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                >
+                  <span>⚡</span>
+                  <span>Registrar Cobro ({Object.keys(selectedInvoiceIds).length})</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleExportAgingCSV}
+                className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg border border-slate-200 shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                title="Descargar reporte de antigüedad de saldos en formato CSV / Excel"
+              >
+                <span>📥</span>
+                <span>Exportar CSV</span>
+              </button>
+
               <input
                 type="text"
                 placeholder="Buscar cliente, RUT, folio..."
                 value={customerSearch}
                 onChange={(e) => setCustomerSearch(e.target.value)}
-                className="bg-white border border-slate-300 rounded px-3 py-1 text-xs w-64 focus:ring-2 focus:ring-indigo-500"
+                className="bg-white border border-slate-200 rounded-lg px-3 py-1 text-xs w-60 md:w-72 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
               />
             </div>
           </div>

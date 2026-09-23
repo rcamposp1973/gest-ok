@@ -29,7 +29,7 @@ const MONTH_NAMES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 
-const AVAILABLE_YEARS = [2028, 2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
+const AVAILABLE_YEARS = [2027, 2026, 2025];
 
 export default function PeriodsGrid({
   selectedYear,
@@ -53,9 +53,9 @@ export default function PeriodsGrid({
     return fiscalYears.find(f => f.id === String(selectedYear));
   }, [fiscalYears, selectedYear]);
 
-  // Si no existe el registro del año fiscal seleccionado, crearlo automáticamente
+  // Si no existe el registro del año fiscal seleccionado, crearlo automáticamente con todos los meses cerrados
   React.useEffect(() => {
-    if (!currentFy) {
+    if (!currentFy && selectedYear >= 2025) {
       onEnsureFiscalYear(selectedYear);
     }
   }, [selectedYear, currentFy, onEnsureFiscalYear]);
@@ -65,15 +65,13 @@ export default function PeriodsGrid({
     setColumnFilters(prev => ({ ...prev, year: 'ALL' }));
   }, [selectedYear]);
 
-  // Lista unificada de períodos (12 meses por año garantizados)
+  // Lista unificada de períodos (12 meses por año garantizados, todos cerrados por defecto)
   const periodRows = useMemo(() => {
     const monthsData = currentFy?.months || {};
 
     return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(mNum => {
-      // Por defecto en nuevo año solo mes 1 (Enero) abierto, resto cerrado salvo definición explícita
-      const status: 'Abierto' | 'Cerrado' = monthsData[mNum] !== undefined
-        ? monthsData[mNum]
-        : (mNum === 1 ? 'Abierto' : 'Cerrado');
+      // Por defecto todos los meses nacen CERRADOS salvo habilitación explícita
+      const status: 'Abierto' | 'Cerrado' = monthsData[mNum] === 'Abierto' ? 'Abierto' : 'Cerrado';
       const periodCode = `${selectedYear}-${String(mNum).padStart(2, '0')}`;
       const monthName = MONTH_NAMES[mNum] || `Mes ${mNum}`;
 

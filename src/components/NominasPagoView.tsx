@@ -571,42 +571,23 @@ export default function NominasPagoView({
   }, [paymentBatches, periodFilter, searchQuery]);
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">💰</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Nóminas de Pago a Proveedores</h3>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Gestión de pagos masivos, transferencias bancarias y emisión automática de Comprobantes de Egreso ({company.name})
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {!isCreating ? (
-            <button
-              onClick={() => setIsCreating(true)}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg flex items-center gap-2 shadow-xs transition-colors"
-            >
-              <span>➕</span>
-              <span>Nueva Nómina de Pago</span>
-            </button>
-          ) : (
+    <div className="space-y-3">
+      {/* CREATE NEW PAYMENT BATCH VIEW */}
+      {isCreating ? (
+        <div className="space-y-3">
+          {/* Top Back Action */}
+          <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
             <button
               onClick={() => setIsCreating(false)}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-colors"
+              className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <span>← Volver al Listado</span>
             </button>
-          )}
-        </div>
-      </div>
+            <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
+              Generar Nueva Nómina de Pago
+            </span>
+          </div>
 
-      {/* CREATE NEW PAYMENT BATCH VIEW */}
-      {isCreating ? (
-        <div className="space-y-4">
           {/* Top Form Parameters */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-4">
             <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide flex items-center gap-2">
@@ -1005,16 +986,26 @@ export default function NominasPagoView({
         </div>
       ) : (
         /* BATCHES LIST / HISTORY VIEW */
-        <div className="space-y-4">
-          {/* Filters */}
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex items-center gap-3 flex-wrap text-xs">
-              <div className="flex items-center gap-1.5">
-                <label className="font-semibold text-slate-700">Período:</label>
+        <div className="space-y-3">
+          {/* Filters & Actions Bar */}
+          <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-2.5 items-center justify-between">
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <button
+                onClick={() => setIsCreating(true)}
+                className="px-3 py-1.5 bg-[#533AFD] hover:bg-[#4326EB] text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <span>➕</span>
+                <span>Nueva Nómina de Pago</span>
+              </button>
+
+              <div className="h-4 w-px bg-slate-200 hidden sm:block"></div>
+
+              <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200">
+                <label className="font-bold text-slate-600 text-[11px]">Período:</label>
                 <select
                   value={periodFilter}
                   onChange={(e) => setPeriodFilter(e.target.value)}
-                  className="bg-white border border-slate-300 rounded-md px-2.5 py-1 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="bg-white border border-slate-200 rounded px-2 py-0.5 text-xs font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-none cursor-pointer"
                 >
                   <option value="Todos">Todos los Períodos</option>
                   {Array.from(new Set(paymentBatches.map(b => b.period))).sort().reverse().map(p => (
@@ -1024,16 +1015,16 @@ export default function NominasPagoView({
               </div>
 
               <span className="text-slate-400">|</span>
-              <span className="text-slate-600 font-semibold">{filteredBatches.length} nóminas registradas</span>
+              <span className="text-slate-600 font-bold text-[11px]">{filteredBatches.length} nóminas registradas</span>
             </div>
 
-            <div>
+            <div className="flex items-center gap-2">
               <input
                 type="text"
                 placeholder="Buscar por N° nómina, banco, glosa..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-white border border-slate-300 rounded-md px-3 py-1 text-xs w-64 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                className="bg-white border border-slate-200 rounded-lg px-3 py-1 text-xs w-64 md:w-80 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
               />
             </div>
           </div>

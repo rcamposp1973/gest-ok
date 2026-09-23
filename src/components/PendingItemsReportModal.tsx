@@ -11,8 +11,10 @@ import {
   Landmark, 
   Calendar,
   Layers,
-  Sparkles
+  Sparkles,
+  Move
 } from 'lucide-react';
+import { useDraggableModal } from '../hooks/useDraggableModal';
 import { 
   Company, 
   ChartOfAccount, 
@@ -117,22 +119,31 @@ export default function PendingItemsReportModal({
     document.body.removeChild(link);
   };
 
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen: true });
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+    <div className="fixed inset-0 z-50 bg-slate-900/30 flex items-center justify-center p-4 overflow-y-auto">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden font-sans"
+      >
         
         {/* Header */}
-        <div className="bg-slate-900 text-white p-4 flex justify-between items-center border-b border-slate-800">
+        <div
+          {...dragProps}
+          className="bg-slate-900 text-white p-4 flex justify-between items-center border-b border-slate-800 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md">
-              <FileText className="w-5 h-5" />
+              <Move className="w-5 h-5" />
             </div>
             <div>
               <h3 className="font-black text-base uppercase tracking-wide">
                 Reporte de Partidas Pendientes de Conciliación Bancaria
               </h3>
               <p className="text-xs text-slate-300">
-                {company.name} ({company.rut}) • Período: <strong className="text-amber-300 font-mono">{period}</strong>
+                {company.name} ({company.rut}) • Período: <strong className="text-amber-300 font-mono">{period}</strong> (Ventana movible)
               </p>
             </div>
           </div>

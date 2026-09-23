@@ -6,7 +6,8 @@ import {
   parseBankCartola
 } from '../utils/bankCartolaParser';
 import { BankStatementLine, ChartOfAccount } from '../types';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Copy, ShieldAlert, ArrowRight, RefreshCw } from 'lucide-react';
+import { useDraggableModal } from '../hooks/useDraggableModal';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Copy, ShieldAlert, ArrowRight, RefreshCw, Sparkles, Layers, Move } from 'lucide-react';
 
 interface BankCartolaSmartImportModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ interface BankCartolaSmartImportModalProps {
   selectedBankAccount: ChartOfAccount | undefined;
   selectedPeriod: string;
   existingLines: BankStatementLine[];
+  allExistingLines?: BankStatementLine[];
   currentInitialBalance: number;
   onImportComplete: (result: {
     newLines: BankStatementLine[];
@@ -28,7 +30,8 @@ export default function BankCartolaSmartImportModal({
   onClose,
   selectedBankAccount,
   selectedPeriod,
-  existingLines,
+  existingLines = [],
+  allExistingLines,
   currentInitialBalance,
   onImportComplete
 }: BankCartolaSmartImportModalProps) {
@@ -43,6 +46,8 @@ export default function BankCartolaSmartImportModal({
   const [parseError, setParseError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const linesForDedup = allExistingLines && allExistingLines.length > 0 ? allExistingLines : existingLines;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -65,12 +70,12 @@ export default function BankCartolaSmartImportModal({
           rawMatrix,
           selectedPeriod,
           bankTemplateId,
-          existingLines,
+          linesForDedup,
           customInitialBal
         );
 
         setParsedPreview(result);
-        if (result.previousBalance !== customInitialBal) {
+        if (result.previousBalance !== customInitialBal && existingLines.length === 0) {
           setCustomInitialBal(result.previousBalance);
         }
       } catch (err: any) {
@@ -101,12 +106,12 @@ export default function BankCartolaSmartImportModal({
         rows,
         selectedPeriod,
         bankTemplateId,
-        existingLines,
+        linesForDedup,
         customInitialBal
       );
 
       setParsedPreview(result);
-      if (result.previousBalance !== customInitialBal) {
+      if (result.previousBalance !== customInitialBal && existingLines.length === 0) {
         setCustomInitialBal(result.previousBalance);
       }
     } catch (err: any) {
@@ -121,14 +126,14 @@ export default function BankCartolaSmartImportModal({
     if (!parsedPreview) return;
 
     if (parsedPreview.newLines.length === 0 && parsedPreview.duplicateCount > 0) {
-      alert(`⚠️ Todos los movimientos detectados (${parsedPreview.duplicateCount}) ya se encuentran registrados en la cartola de este período. No se agregaron duplicados.`);
+      alert(`⚠️ Todos los movimientos detectados (${parsedPreview.duplicateCount}) ya se encuentran registrados en la cartola. No se agregaron duplicados.`);
       onClose();
       return;
     }
 
     onImportComplete({
       newLines: parsedPreview.newLines,
-      initialBalance: parsedPreview.previousBalance,
+      initialBalance: existingLines.length > 0 ? currentInitialBalance : parsedPreview.previousBalance,
       finalBalance: parsedPreview.calculatedFinalBalance,
       bankName: parsedPreview.detectedBank
     });
@@ -136,20 +141,38 @@ export default function BankCartolaSmartImportModal({
     onClose();
   };
 
+  const conciliatedCount = existingLines.filter(l => l.matchedStatus === 'Conciliado').length;
+
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen });
+
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 md:p-6 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 my-auto max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-3 md:p-6 overflow-y-auto">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 my-auto max-h-[92vh] flex flex-col border border-slate-200"
+      >
         
         {/* Header */}
-        <div className="flex justify-between items-start border-b border-slate-200 pb-3">
-          <div>
-            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
-              <span>Lectura Inteligente de Cartolas Bancarias</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Cuenta: <span className="font-bold text-slate-800">{selectedBankAccount?.name} ({selectedBankAccount?.code})</span> | Período: <span className="font-bold text-indigo-700">{selectedPeriod}</span>
-            </p>
+        <div
+          {...dragProps}
+          className="flex justify-between items-start border-b border-slate-200 pb-3 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1 rounded bg-slate-100 text-slate-500 hover:text-slate-700">
+              <Move className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+                <span>Lectura Inteligente y Fusión de Cartolas Bancarias</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Cuenta: <span className="font-bold text-slate-800">{selectedBankAccount?.name} ({selectedBankAccount?.code})</span> | Período: <span className="font-bold text-indigo-700">{selectedPeriod}</span>
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -158,6 +181,26 @@ export default function BankCartolaSmartImportModal({
             ✕
           </button>
         </div>
+
+        {/* Multi-Cartola Cumulative Banner */}
+        {existingLines.length > 0 && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-950 flex items-start gap-2.5">
+            <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-indigo-900 flex items-center gap-2">
+                <span>Carga Acumulativa Inteligente Activa (Múltiples Cartolas en el Mismo Mes)</span>
+                {conciliatedCount > 0 && (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                    🛡️ {conciliatedCount} conciliados protegidos
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-indigo-800 mt-0.5">
+                El período ya tiene <strong>{existingLines.length} movimientos</strong> registrados. Al cargar una segunda (o tercera) cartola, el sistema <strong>incorporará los nuevos movimientos</strong>, <strong>omitirá duplicados</strong>, <strong>preservará tus movimientos conciliados</strong> y <strong>ordenará todo cronológicamente por fecha</strong> recalculando los saldos progresivos continuos.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Configuration Bar */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs">
@@ -181,7 +224,7 @@ export default function BankCartolaSmartImportModal({
 
           <div>
             <label className="block font-bold text-slate-700 mb-1">
-              💰 Saldo Anterior / Inicial ($):
+              💰 Saldo Apertura / Inicial del Mes ($):
             </label>
             <input
               type="number"
@@ -191,7 +234,9 @@ export default function BankCartolaSmartImportModal({
               className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 font-mono font-bold text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
             <p className="text-[10px] text-slate-500 mt-1">
-              Punto de partida acumulativo. Se autocalculará si viene indicado en la cartola.
+              {existingLines.length > 0
+                ? 'Punto de partida del mes actual. Se preserva automáticamente en cargas acumulativas.'
+                : 'Punto de partida acumulativo. Se autocalculará si viene indicado en la cartola.'}
             </p>
           </div>
         </div>
@@ -245,7 +290,7 @@ export default function BankCartolaSmartImportModal({
                     {selectedFileName || 'Haga clic para seleccionar o arrastrar la Cartola (Excel / CSV)'}
                   </span>
                   <span className="text-xs text-slate-500 block mt-0.5">
-                    Formatos admitidos: .xlsx, .xls, .csv de cualquier banco chileno
+                    Formatos admitidos: .xlsx, .xls, .csv de cualquier banco chileno (1ª, 2ª o 3ª cartola del mes)
                   </span>
                 </div>
               </label>
@@ -292,12 +337,22 @@ export default function BankCartolaSmartImportModal({
                 </span>
               </div>
               <div className="flex items-center gap-2 font-mono text-[11px]">
+                {existingLines.length > 0 && (
+                  <span className="bg-slate-200 text-slate-800 px-2 py-0.5 rounded font-bold">
+                    {existingLines.length} existentes
+                  </span>
+                )}
                 <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">
-                  +{parsedPreview.newLines.length} nuevos a inyectar
+                  +{parsedPreview.newLines.length} nuevos a incorporar
                 </span>
                 {parsedPreview.duplicateCount > 0 && (
                   <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">
                     {parsedPreview.duplicateCount} omitidos (duplicados)
+                  </span>
+                )}
+                {existingLines.length > 0 && (
+                  <span className="bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded font-bold">
+                    = {existingLines.length + parsedPreview.newLines.length} total combinado
                   </span>
                 )}
               </div>
@@ -306,19 +361,19 @@ export default function BankCartolaSmartImportModal({
             {/* Financial Reconciliation Box */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-3 rounded-lg border border-slate-200">
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold block">Saldo Anterior</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Saldo Anterior Archivo</span>
                 <span className="font-mono font-bold text-slate-800 text-xs">
                   ${parsedPreview.previousBalance.toLocaleString('es-CL')}
                 </span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold block">Total Abonos (+)</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Abonos Archivo (+)</span>
                 <span className="font-mono font-bold text-emerald-600 text-xs">
                   +${parsedPreview.totalDeposits.toLocaleString('es-CL')} ({parsedPreview.depositsCount})
                 </span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold block">Total Cargos (-)</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Cargos Archivo (-)</span>
                 <span className="font-mono font-bold text-rose-600 text-xs">
                   -${parsedPreview.totalCharges.toLocaleString('es-CL')} ({parsedPreview.chargesCount})
                 </span>
@@ -336,7 +391,7 @@ export default function BankCartolaSmartImportModal({
               <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 text-[11px] flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <strong>Saldos Cuadrados:</strong> El saldo final coincide exactamente con la secuencia matemática de cargos y abonos.
+                  <strong>Saldos Cuadrados:</strong> El saldo final de este archivo coincide con la secuencia de cargos y abonos.
                 </span>
               </div>
             ) : (
@@ -396,7 +451,7 @@ export default function BankCartolaSmartImportModal({
                 : 'bg-slate-300 cursor-not-allowed'
             }`}
           >
-            <span>Inyectar Movimientos a la Cartola</span>
+            <span>{existingLines.length > 0 ? 'Fusionar e Incorporar a la Cartola' : 'Inyectar Movimientos a la Cartola'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

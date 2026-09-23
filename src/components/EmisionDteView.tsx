@@ -5,6 +5,7 @@ import { Company, Auxiliary, ChartOfAccount, DTEDocument, DTEConfig, DTEDocument
 import { sanitizeVoucherLines } from '../utils/voucherValidation';
 import { generateDteXml, downloadDteXml, simulateSiiConnectionTest, SiiConnectionDiagnostic } from '../utils/siiDteGenerator';
 import { fetchRcvFromSii } from '../utils/siiRcvClient';
+import { formatRut } from '../utils/rutMatcher';
 
 interface EmisionDteViewProps {
   studyId: string;
@@ -1581,11 +1582,9 @@ export default function EmisionDteView({
                       onChange={(e) => setSelectedSyncYear(parseInt(e.target.value, 10))}
                       className="text-xs font-bold text-slate-900 bg-transparent focus:outline-none cursor-pointer"
                     >
+                      <option value={2027}>2027</option>
                       <option value={2026}>2026 (Año Actual)</option>
                       <option value={2025}>2025 (Histórico)</option>
-                      <option value={2024}>2024 (Histórico)</option>
-                      <option value={2023}>2023 (Histórico)</option>
-                      <option value={2022}>2022 (Histórico)</option>
                     </select>
                   </div>
 
@@ -1989,7 +1988,8 @@ export default function EmisionDteView({
                       <input
                         type="text"
                         value={config.rutRepresentante}
-                        onChange={(e) => setConfig({ ...config, rutRepresentante: e.target.value })}
+                        onChange={(e) => setConfig({ ...config, rutRepresentante: formatRut(e.target.value) })}
+                        onBlur={(e) => setConfig({ ...config, rutRepresentante: formatRut(e.target.value) })}
                         placeholder="Ej. 10.555.908-9"
                         required
                         className="w-full border border-slate-300 rounded-lg p-2.5 font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"

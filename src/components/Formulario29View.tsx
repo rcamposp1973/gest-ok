@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, addDoc, updateDoc } from 'firebase/firestore';
 import { getOfficialUTM } from '../utils/chileanEconomicIndicators';
-import { getLatestOpenPeriod } from '../utils/periodUtils';
+import { getLatestOpenPeriod, getAllOpenPeriods } from '../utils/periodUtils';
 import {
   Company,
   ChartOfAccount,
@@ -20,6 +20,7 @@ import {
   F29AccountingParams
 } from '../types';
 import { sanitizeVoucherLines } from '../utils/voucherValidation';
+import { Receipt, Download, Save, Zap } from 'lucide-react';
 
 interface Formulario29ViewProps {
   studyId: string;
@@ -188,7 +189,7 @@ export default function Formulario29View({
         const prevDec = list.find(d => d.period === prevPeriodStr) || list.find(d => d.period < selectedPeriod);
         
         let inheritedPpmRate = 0.25;
-        let inheritedRemanenteUTM = 0;
+        let inheritedRemanenteUTM = company.initialRemanenteUTM || 0;
         let inheritedRegimen: any = '14_D3_PROPYME_GENERAL';
         let inheritedHonorariosRate = 13.75;
         let inheritedImpuestoUnico = 0;
@@ -215,6 +216,9 @@ export default function Formulario29View({
         }
 
         const periodUTM = getOfficialUTM(selectedPeriod);
+        const initialPesos = inheritedRemanenteUTM > 0 
+          ? Math.round(inheritedRemanenteUTM * periodUTM)
+          : (company.initialRemanentePesos || 0);
 
         setDeclarationStatus('Borrador');
         setFolioSII('');
@@ -230,7 +234,7 @@ export default function Formulario29View({
         setManualAdjustments({
           debitoAjuste: 0,
           creditoAjuste: 0,
-          remanenteManualPesos: 0,
+          remanenteManualPesos: initialPesos,
           impuestoUnicoManual: inheritedImpuestoUnico,
           retencionTercerosManual: 0,
           otrosImpuestosManual: 0,
@@ -269,14 +273,35 @@ export default function Formulario29View({
     let debitoNotasDebito = 0;
     let creditoNotasCreditoEmitidas = 0;
     let ventasExentasTotal = 0;
+    let ceecCreditoConstructora = 0;
+
+    const isConstructora = company.isEmpresaConstructora || 
+      (company.razonSocial && (company.razonSocial.toUpperCase().includes('CONSTRUCTORA') || company.razonSocial.toUpperCase().includes('CONSTRUCCION'))) ||
+      (company.name && (company.name.toUpperCase().includes('CONSTRUCTORA') || company.name.toUpperCase().includes('CONSTRUCCION'))) ||
+      (company.giro && (company.giro.toUpperCase().includes('CONSTRUCTORA') || company.giro.toUpperCase().includes('CONSTRUCCION') || company.giro.toUpperCase().includes('EDIFICACION')));
 
     ventasDocs.forEach(doc => {
       const t = doc.tipoDoc;
       const net = doc.montoNeto || 0;
       const iva = doc.montoIva || 0;
       const exento = doc.montoExento || 0;
+      const total = doc.montoTotal || 0;
 
       ventasExentasTotal += exento;
+
+      // Detección de Franquicia CEEC Empresas Constructoras (Art. 21 DL 910)
+      // En facturas de constructoras con CEEC: Total = (Neto + IVA) - CEEC (donde CEEC es habitualmente 65% del IVA)
+      if (isConstructora && (t === '33' || t === 'Factura Electrónica' || t === '30')) {
+        const expectedTotal = net + iva + exento;
+        if (doc.montoCeec && doc.montoCeec > 0) {
+          ceecCreditoConstructora += doc.montoCeec;
+        } else if (total > 0 && total < expectedTotal) {
+          const docCeec = expectedTotal - total;
+          ceecCreditoConstructora += docCeec;
+        } else if ((doc as any).montoRetencion && (doc as any).montoRetencion > 0 && total < expectedTotal) {
+          ceecCreditoConstructora += (doc as any).montoRetencion;
+        }
+      }
 
       if (t === '33' || t === '30' || t === 'Factura' || t === 'Factura Electrónica') {
         ventasAfectasNeto += net;
@@ -290,6 +315,14 @@ export default function Formulario29View({
       } else if (t === '61' || t === 'Nota de Crédito' || t === 'Nota de Crédito Electrónica') {
         creditoNotasCreditoEmitidas += iva;
         ventasAfectasNeto -= net;
+        if (isConstructora) {
+          if (doc.montoCeec && doc.montoCeec > 0) {
+            ceecCreditoConstructora -= doc.montoCeec;
+          } else if (total > 0 && total < (net + iva)) {
+            const docCeec = (net + iva) - total;
+            ceecCreditoConstructora -= docCeec;
+          }
+        }
       } else if (t === '34' || t === 'Factura Exenta') {
         ventasExentasTotal += net;
       } else {
@@ -298,7 +331,7 @@ export default function Formulario29View({
       }
     });
 
-    const totalDebitoFiscal = Math.max(0, debitoFacturasEmitidas + debitoBoletasEmitidas + debitoNotasDebito - creditoNotasCreditoEmitidas + manualAdjustments.debitoAjuste);
+    const totalDebitoFiscal = Math.max(0, debitoFacturasEmitidas + debitoBoletasEmitidas + debitoNotasDebito - creditoNotasCreditoEmitidas - ceecCreditoConstructora + manualAdjustments.debitoAjuste);
 
     return {
       ventasAfectasNeto,
@@ -307,11 +340,12 @@ export default function Formulario29View({
       debitoBoletasEmitidas,
       debitoNotasDebito,
       creditoNotasCreditoEmitidas,
+      ceecCreditoConstructora: Math.max(0, ceecCreditoConstructora),
       totalDebitoFiscal,
       ventasExentasTotal,
       docsCount: ventasDocs.length
     };
-  }, [periodDocs, manualAdjustments.debitoAjuste]);
+  }, [periodDocs, manualAdjustments.debitoAjuste, company]);
 
   // 2. CALCULATE CRÉDITO FISCAL (COMPRAS)
   const creditoFiscalData: F29CreditoFiscal = useMemo(() => {
@@ -371,8 +405,10 @@ export default function Formulario29View({
     // Reajuste DL 825 Art. 27: Variación UTM = (UTM Actual - UTM Anterior) * Remanente UTM
     const reajusteCorreccionMonetariaRemanente = Math.max(0, remanenteMesAnteriorPesos - remanenteHistoricoPesos);
 
-    const totalCreditoFiscal = Math.max(
-      0,
+    // 🛑 CRUCIAL: El Total Crédito Fiscal NO debe recortarse a 0 con Math.max
+    // Si las notas de crédito recibidas (debitoNotasCreditoRecibidas) son mayores a las facturas recibidas,
+    // el saldo neto es negativo y debe fluir con su signo negativo para liquidarse en F29 o aumentar el impuesto a pagar.
+    const totalCreditoFiscal = (
       creditoFacturasRecibidas +
       creditoActivoFijo +
       creditoNotasDebitoRecibidas +
@@ -553,6 +589,14 @@ export default function Formulario29View({
     }
   };
 
+  const [isConstructoraSetting, setIsConstructoraSetting] = useState<boolean>(
+    company.isEmpresaConstructora || 
+    (company.name && (company.name.toUpperCase().includes('CONSTRUCTORA') || company.name.toUpperCase().includes('CONSTRUCCION'))) ||
+    false
+  );
+  const [initialRemanenteUTMSetting, setInitialRemanenteUTMSetting] = useState<number>(company.initialRemanenteUTM || 0);
+  const [initialRemanentePesosSetting, setInitialRemanentePesosSetting] = useState<number>(company.initialRemanentePesos || 0);
+
   // Guardar Parámetros de Cuentas y Códigos Adicionales en la Empresa
   const handleSaveCompanyF29Settings = async () => {
     setIsSubmitting(true);
@@ -561,9 +605,12 @@ export default function Formulario29View({
         f29CodeSettings,
         f29AccountParams,
         customF29Codes: customCodes,
+        isEmpresaConstructora: isConstructoraSetting,
+        initialRemanenteUTM: initialRemanenteUTMSetting,
+        initialRemanentePesos: initialRemanentePesosSetting,
         updatedAt: new Date().toISOString()
       });
-      alert('✅ Parámetros de Cuentas Contables y Maestro de Códigos F.29 guardados exitosamente para la empresa.');
+      alert('✅ Parámetros de Cuentas Contables, Maestro F.29 y Tratamiento Tributario de la Empresa guardados exitosamente.');
     } catch (err: any) {
       console.error('Error saving company F29 settings:', err);
       alert('Error al guardar parámetros: ' + err.message);
@@ -869,45 +916,43 @@ export default function Formulario29View({
   return (
     <div className="space-y-4">
       {/* HEADER */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📑</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">
-              Formulario 29 y Determinación de Impuestos Mensuales
-            </h3>
+      <div className="bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs flex flex-wrap justify-between items-center gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center text-indigo-700 border border-indigo-200/60">
+            <Receipt className="w-4 h-4" />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cálculo oficial de Débito/Crédito Fiscal IVA, Retenciones de Segunda Categoría, PPM y Liquidación Contable ({company.name} - RUT: {company.rut})
-          </p>
+          <h3 className="text-sm font-bold text-slate-900 tracking-tight uppercase">
+            Formulario 29 y Determinación de Impuestos Mensuales
+          </h3>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
+            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center justify-center cursor-pointer"
+            title="Exportar Resumen F29 a CSV / Excel"
           >
-            <span>📥</span>
-            <span>Exportar F29 CSV</span>
+            <Download className="w-4 h-4 text-slate-600" />
           </button>
 
           <button
             onClick={handleCentralizeF29Voucher}
             disabled={isSubmitting}
-            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-            title="Generar asiento contable de liquidación mensual en Libro Diario"
+            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Generar y contabilizar asiento de liquidación mensual F29 en Libro Diario"
           >
-            <span>⚡</span>
-            <span>Contabilizar Asiento F29</span>
+            <Zap className="w-3.5 h-3.5 text-indigo-200" />
+            <span className="hidden sm:inline">Contabilizar F29</span>
           </button>
 
           <button
             onClick={handleSaveDeclaration}
             disabled={isSubmitting}
-            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Guardar estado de la declaración F29"
           >
-            <span>💾</span>
-            <span>{isSubmitting ? 'Guardando...' : 'Guardar Declaración'}</span>
+            <Save className="w-3.5 h-3.5 text-emerald-200" />
+            <span>{isSubmitting ? 'Guardando...' : 'Guardar'}</span>
           </button>
         </div>
       </div>
@@ -915,13 +960,24 @@ export default function Formulario29View({
       {/* TOP CONTROL BAR: PERIOD, REGIMEN & STATUS */}
       <div className="bg-slate-900 text-white p-4 rounded-xl shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
         <div>
-          <label className="block text-slate-400 font-bold uppercase text-[10px] mb-1">Período Tributario:</label>
-          <input
-            type="month"
+          <label className="block text-slate-400 font-bold uppercase text-[10px] mb-1">Período Tributario (Abierto):</label>
+          <select
             value={selectedPeriod}
             onChange={(e) => setSelectedPeriod(e.target.value)}
             className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-1.5 font-mono font-bold text-white text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-          />
+          >
+            {(() => {
+              const openPeriods = getAllOpenPeriods(fiscalYears);
+              if (openPeriods.length === 0) {
+                return <option value={selectedPeriod || '2026-01'}>{selectedPeriod ? `${selectedPeriod} (Sin períodos abiertos)` : '⚠️ No hay períodos abiertos'}</option>;
+              }
+              return openPeriods.map(op => (
+                <option key={op.period} value={op.period}>
+                  {op.label}
+                </option>
+              ));
+            })()}
+          </select>
         </div>
 
         <div>
@@ -981,16 +1037,25 @@ export default function Formulario29View({
         </div>
 
         {/* Card 2: Crédito Fiscal */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+        <div className={`p-3.5 rounded-xl border shadow-xs ${
+          creditoFiscalData.totalCreditoFiscal < 0 ? 'bg-rose-50/50 border-rose-200' : 'bg-white border-slate-200'
+        }`}>
           <div className="flex justify-between items-start">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Crédito Fiscal (IVA Compras)</span>
-            <span className="text-xs bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded font-mono font-bold">Cód. 537</span>
+            <span className={`text-xs px-1.5 py-0.2 rounded font-mono font-bold ${
+              creditoFiscalData.totalCreditoFiscal < 0 ? 'bg-rose-100 text-rose-800' : 'bg-indigo-50 text-indigo-700'
+            }`}>Cód. 537</span>
           </div>
-          <span className="text-xl font-black font-mono text-slate-900 block mt-1">
+          <span className={`text-xl font-black font-mono block mt-1 ${
+            creditoFiscalData.totalCreditoFiscal < 0 ? 'text-rose-700' : 'text-slate-900'
+          }`}>
             ${creditoFiscalData.totalCreditoFiscal.toLocaleString('es-CL')}
           </span>
           <span className="text-[10px] text-slate-500">
-            {creditoFiscalData.docsCount} compras | Remanente ant: ${creditoFiscalData.remanenteMesAnteriorPesos.toLocaleString('es-CL')}
+            {creditoFiscalData.totalCreditoFiscal < 0
+              ? '⚠️ Saldo crédito negativo (NC superan compras)'
+              : `${creditoFiscalData.docsCount} compras | Remanente ant: $${creditoFiscalData.remanenteMesAnteriorPesos.toLocaleString('es-CL')}`
+            }
           </span>
         </div>
 
@@ -1135,6 +1200,17 @@ export default function Formulario29View({
                     <td className="py-2 px-3 text-right text-slate-600">-</td>
                     <td className="py-2 px-3 text-right font-bold text-rose-700">-${debitoFiscalData.creditoNotasCreditoEmitidas.toLocaleString('es-CL')}</td>
                   </tr>
+                  {(debitoFiscalData.ceecCreditoConstructora || 0) > 0 && (
+                    <tr className="bg-amber-50/60 hover:bg-amber-50">
+                      <td className="py-2 px-3 font-bold text-amber-800">[126 / 128]</td>
+                      <td className="py-2 px-3 font-sans text-amber-900">
+                        <span className="font-bold block">(-) Crédito Especial Empresas Constructoras - CEEC (Art. 21 D.L. 910)</span>
+                        <span className="text-[10px] text-amber-700">Deducción de franquicia tributaria habitacional sobre ventas de construcción</span>
+                      </td>
+                      <td className="py-2 px-3 text-right text-slate-600">-</td>
+                      <td className="py-2 px-3 text-right font-black text-amber-900">-${debitoFiscalData.ceecCreditoConstructora?.toLocaleString('es-CL')}</td>
+                    </tr>
+                  )}
                   <tr className="hover:bg-slate-50">
                     <td className="py-2 px-3 font-bold text-slate-500">[585 / 142]</td>
                     <td className="py-2 px-3 font-sans text-slate-600">Ventas y Servicios Exentos o No Gravados</td>
@@ -1159,7 +1235,9 @@ export default function Formulario29View({
                 <span className="font-bold text-xs text-slate-800 uppercase tracking-wide">
                   II. Crédito Fiscal IVA y Compras / Gastos (Líneas 16 a 35)
                 </span>
-                <span className="font-mono text-xs font-black text-slate-900">
+                <span className={`font-mono text-xs font-black ${
+                  creditoFiscalData.totalCreditoFiscal < 0 ? 'text-rose-700' : 'text-slate-900'
+                }`}>
                   Total Crédito: ${creditoFiscalData.totalCreditoFiscal.toLocaleString('es-CL')}
                 </span>
               </div>
@@ -1200,18 +1278,58 @@ export default function Formulario29View({
                   </tr>
                   {f29CodeSettings.remanente504 !== false && (
                     <>
-                      <tr className="hover:bg-slate-50">
+                      <tr className="bg-emerald-50/40 hover:bg-emerald-50/70 transition-colors">
                         <td className="py-2 px-3 font-bold text-indigo-700">[504 / 563]</td>
                         <td className="py-2 px-3 font-sans text-slate-800">
                           <div>
-                            <span className="font-bold">Remanente de Crédito Fiscal Mes Anterior</span>
-                            <span className="text-[11px] text-slate-500 block">
-                              Base: {creditoFiscalData.remanenteMesAnteriorUTM} UTM (Valor histórico: ${creditoFiscalData.remanenteHistoricoPesos?.toLocaleString('es-CL') || 0})
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-emerald-950">Remanente de Crédito Fiscal Mes Anterior</span>
+                              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-mono font-bold">
+                                UTM: ${taxSettings.utmValue.toLocaleString('es-CL')}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 block mt-0.5">
+                              Ingreso inicial / arrastre: Puede editar directamente en UTM o en Pesos ($).
                             </span>
                           </div>
                         </td>
-                        <td className="py-2 px-3 text-right text-slate-600">{creditoFiscalData.remanenteMesAnteriorUTM} UTM</td>
-                        <td className="py-2 px-3 text-right font-bold text-emerald-700">+${creditoFiscalData.remanenteMesAnteriorPesos.toLocaleString('es-CL')}</td>
+                        <td className="py-2 px-3 text-right text-slate-600">
+                          <div className="flex items-center justify-end gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={taxSettings.previousMonthRemanenteUTM || ''}
+                              onChange={e => {
+                                const valUTM = parseFloat(e.target.value) || 0;
+                                const valPesos = Math.round(valUTM * taxSettings.utmValue);
+                                setTaxSettings({ ...taxSettings, previousMonthRemanenteUTM: valUTM });
+                                setManualAdjustments({ ...manualAdjustments, remanenteManualPesos: valPesos });
+                              }}
+                              placeholder="0.00"
+                              className="w-20 bg-white border border-emerald-300 rounded px-1.5 py-0.5 text-right font-mono font-bold text-emerald-900 text-xs focus:ring-2 focus:ring-emerald-500"
+                              title="Remanente Mes Anterior en UTM (Cód. 504)"
+                            />
+                            <span className="text-[10px] font-bold text-emerald-800 font-sans">UTM</span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-slate-400">$</span>
+                            <input
+                              type="number"
+                              value={creditoFiscalData.remanenteMesAnteriorPesos || ''}
+                              onChange={e => {
+                                const valPesos = parseFloat(e.target.value) || 0;
+                                const valUTM = taxSettings.utmValue > 0 ? parseFloat((valPesos / taxSettings.utmValue).toFixed(2)) : 0;
+                                setManualAdjustments({ ...manualAdjustments, remanenteManualPesos: valPesos });
+                                setTaxSettings({ ...taxSettings, previousMonthRemanenteUTM: valUTM });
+                              }}
+                              placeholder="0"
+                              className="w-28 bg-white border border-emerald-300 rounded px-1.5 py-0.5 text-right font-mono font-bold text-emerald-900 text-xs focus:ring-2 focus:ring-emerald-500"
+                              title="Remanente Mes Anterior en Pesos actualizados (Cód. 563)"
+                            />
+                          </div>
+                        </td>
                       </tr>
                       {creditoFiscalData.reajusteCorreccionMonetariaRemanente !== undefined && creditoFiscalData.reajusteCorreccionMonetariaRemanente > 0 && (
                         <tr className="bg-emerald-50/50 text-[11px]">
@@ -1226,11 +1344,26 @@ export default function Formulario29View({
                       )}
                     </>
                   )}
-                  <tr className="bg-slate-100 font-bold border-t border-slate-300">
+                  <tr className={`font-bold border-t border-slate-300 ${
+                    creditoFiscalData.totalCreditoFiscal < 0 ? 'bg-rose-50 text-rose-900' : 'bg-slate-100 text-indigo-900'
+                  }`}>
                     <td className="py-2 px-3 text-indigo-900">[537]</td>
-                    <td className="py-2 px-3 font-sans uppercase text-slate-900">TOTAL CRÉDITO FISCAL DEL PERÍODO</td>
+                    <td className="py-2 px-3 font-sans uppercase">
+                      <div className="flex items-center gap-2">
+                        <span>TOTAL CRÉDITO FISCAL DEL PERÍODO</span>
+                        {creditoFiscalData.totalCreditoFiscal < 0 && (
+                          <span className="text-[10px] bg-rose-200 text-rose-800 px-2 py-0.5 rounded font-sans font-bold normal-case">
+                            ⚠️ Saldo Crédito Negativo (Notas de Crédito superan compras)
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-2 px-3 text-right">-</td>
-                    <td className="py-2 px-3 text-right text-indigo-900 text-xs">${creditoFiscalData.totalCreditoFiscal.toLocaleString('es-CL')}</td>
+                    <td className={`py-2 px-3 text-right text-xs ${
+                      creditoFiscalData.totalCreditoFiscal < 0 ? 'text-rose-700 font-black' : 'text-indigo-900'
+                    }`}>
+                      ${creditoFiscalData.totalCreditoFiscal.toLocaleString('es-CL')}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -1707,28 +1840,72 @@ export default function Formulario29View({
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-            {[
-              { key: 'debito', label: 'Débito Fiscal IVA (Ventas / Cód. 538)' },
-              { key: 'credito', label: 'Crédito Fiscal IVA (Compras / Cód. 537)' },
-              { key: 'remanente504', label: 'Remanente Mes Anterior (Cód. 504 / 563)' },
-              { key: 'posterga756', label: 'Posterga IVA / Pago Postergado (Cód. 756)' },
-              { key: 'honorarios151', label: 'Retención Honorarios 2da Cat (Cód. 151)' },
-              { key: 'impuestoUnico48', label: 'Impuesto Único Segunda Categoría (Cód. 48/49)' },
-              { key: 'retencionTerceros', label: 'IVA Retenido a Terceros / Cambio Sujeto (Cód. 538)' },
-              { key: 'ppm062', label: 'Pagos Provisionales Mensuales - PPM (Cód. 62)' },
-              { key: 'otrosImpuestos', label: 'Otros Impuestos / PPM Adicionales' }
-            ].map(item => (
-              <label key={item.key} className="flex items-center gap-2 p-2.5 bg-slate-50 hover:bg-slate-100 rounded-lg border border-slate-200 cursor-pointer font-semibold text-slate-800">
+          {/* GIRO CONSTRUCTORA Y REMANENTE INICIAL DE APERTURA */}
+          <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-xs font-bold uppercase text-amber-950 flex items-center gap-1.5">
+                  <span>🏗️</span>
+                  <span>Tratamiento Tributario Especial para Empresas Constructoras (CEEC Art. 21 D.L. 910)</span>
+                </h4>
+                <p className="text-[11px] text-amber-800 mt-0.5">
+                  Active esta opción para habilitar la deducción del Crédito Especial a Empresas Constructoras en la línea [126 / 128] del Débito Fiscal sobre ventas y contratos habitacionales.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-amber-300 cursor-pointer font-bold text-xs text-amber-900 shadow-2xs">
                 <input
                   type="checkbox"
-                  checked={f29CodeSettings[item.key] !== false}
-                  onChange={e => setF29CodeSettings({ ...f29CodeSettings, [item.key]: e.target.checked })}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                  checked={isConstructoraSetting}
+                  onChange={e => setIsConstructoraSetting(e.target.checked)}
+                  className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
                 />
-                <span>{item.label}</span>
+                <span>Empresa Constructora (Aplica CEEC)</span>
               </label>
-            ))}
+            </div>
+
+            <div className="border-t border-amber-200 pt-3">
+              <h4 className="text-xs font-bold uppercase text-slate-900 mb-1">
+                💰 Remanente de Crédito Fiscal Inicial / Apertura del Sistema
+              </h4>
+              <p className="text-[11px] text-slate-600 mb-2">
+                Si esta empresa viene con saldo remanente de IVA anterior al ingresar a este sistema, defina su valor de partida en UTM o Pesos ($):
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-xs mb-1">Remanente Inicial en UTM (Cód. 504):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={initialRemanenteUTMSetting || ''}
+                    onChange={e => {
+                      const utm = parseFloat(e.target.value) || 0;
+                      setInitialRemanenteUTMSetting(utm);
+                      if (taxSettings.utmValue > 0) {
+                        setInitialRemanentePesosSetting(Math.round(utm * taxSettings.utmValue));
+                      }
+                    }}
+                    placeholder="0.00"
+                    className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 font-mono font-bold text-xs text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-xs mb-1">Remanente Inicial en Pesos ($ - Cód. 563):</label>
+                  <input
+                    type="number"
+                    value={initialRemanentePesosSetting || ''}
+                    onChange={e => {
+                      const pesos = parseFloat(e.target.value) || 0;
+                      setInitialRemanentePesosSetting(pesos);
+                      if (taxSettings.utmValue > 0) {
+                        setInitialRemanenteUTMSetting(parseFloat((pesos / taxSettings.utmValue).toFixed(2)));
+                      }
+                    }}
+                    placeholder="0"
+                    className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 font-mono font-bold text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="border-t border-slate-200 pt-4">

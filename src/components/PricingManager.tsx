@@ -29,53 +29,98 @@ import { useAuth } from '../context/AuthContext';
 
 export const DEFAULT_INITIAL_PRICING_PLANS: Omit<LandingPricingPlan, 'id'>[] = [
   {
-    name: 'Pyme / Emprendedor',
+    name: 'Plan de Entrada',
+    priceUF: 0.5,
+    priceText: 'UF 0,5 + IVA',
     priceCLP: 19900,
     period: '/ mes + IVA',
     popular: false,
-    description: 'Para empresas que gestionan su propia contabilidad y facturación.',
+    badge: 'Individual / 1 Empresa',
+    subtitle: 'Plan individual para una empresa, solo contabilidad.',
+    description: 'Para contadores con empresas individuales o pymes que requieren contabilidad tributaria esencial y RCV.',
+    maxCompanies: 1,
+    maxUsers: 1,
     features: [
       '1 Empresa / RUT Comercial',
       'Sincronización RCV Automática con SII',
       'Formulario 29 con Códigos SII oficiales',
-      'Facturación Electrónica Ilimitada',
-      'Importación masiva de cartolas bancarias'
+      'Importación masiva de cartolas bancarias',
+      'Libros Diario, Mayor y Auxiliares de Cuentas Corrientes'
     ],
     status: 'active',
     order: 1
   },
   {
-    name: 'Estudio Contable',
-    priceCLP: 49900,
+    name: 'Plan Estudio 10',
+    priceUF: 1.2,
+    priceText: 'UF 1,2 + IVA',
+    priceCLP: 47900,
     period: '/ mes + IVA',
-    popular: true,
-    description: 'Para contadores independientes y firmas contables en crecimiento.',
+    popular: false,
+    badge: '10 Empresas / 2 Usuarios',
+    subtitle: 'Plan para 2 usuarios y 10 empresas.',
+    description: 'Para contadores independientes y firmas contables con cartera de clientes en crecimiento.',
+    maxCompanies: 10,
+    maxUsers: 2,
     features: [
-      'Empresas y Clientes Ilimitados',
-      'Multi-usuario con roles diferenciados (Contador, Analista, Observador)',
-      'Balance 8 Columnas e IFRS Auditado en tiempo real',
-      'Conciliación Bancaria Automática Inteligente',
-      'Copiloto de Auditoría Junior IA con detección preventiva de errores',
-      'Libros Diario, Mayor y Auxiliares analíticos con exportación Excel'
+      '10 Empresas / Clientes',
+      '1 Usuario Administrador - 1 Usuario Analista',
+      'Balance 8 Columnas e IFRS',
+      'Conciliación Bancaria Inteligente',
+      'Libros Diario, Mayor y Auxiliares analíticos con exportación Excel',
+      'Indicadores Financieros (KPIs)',
+      'Asistencia en la Implementación y puesta en marcha de 5 empresas'
     ],
     status: 'active',
     order: 2
   },
   {
-    name: 'Corporativo / Holding',
-    priceCLP: 0, // A convenir
-    period: '/ anual',
-    popular: false,
-    description: 'Para grandes estudios, holdings y grupos de empresas consolidadas.',
+    name: 'Plan Estudio Full',
+    priceUF: 2.4,
+    priceText: 'UF 2,4 + IVA',
+    priceCLP: 94900,
+    period: '/ mes + IVA',
+    popular: true,
+    badge: 'Más Popular / 100 Empresas',
+    subtitle: 'Plan para 4 usuarios y 100 empresas.',
+    description: 'Para firmas contables medianas y consolidadas con alta productividad y atención a clientes.',
+    maxCompanies: 100,
+    maxUsers: 4,
     features: [
-      'Todo lo del Plan Estudio Contable',
-      'Integración API directa y ERP corporativo a medida',
-      'Soporte prioritario 24/7 con SLA garantizado',
-      'Capacitación in-company para todo el equipo contable',
-      'Servidor dedicado y respaldos automáticos por hora'
+      '100 Empresas / Clientes',
+      '1 Usuario Administrador - 3 Usuarios Analistas',
+      'Balance 8 Columnas e IFRS',
+      'Conciliación Bancaria Inteligente',
+      'Libros Diario, Mayor y Auxiliares analíticos con exportación Excel',
+      'Indicadores Financieros (KPIs)',
+      'Asistencia en la Implementación y puesta en marcha de 5 empresas',
+      'Visor para Clientes (Portal de Consulta)'
     ],
     status: 'active',
     order: 3
+  },
+  {
+    name: 'Plan Corporativo / PYMES',
+    priceUF: 4.0,
+    priceText: 'Desde UF 4,0 + IVA',
+    priceCLP: 159900,
+    period: '/ mes + IVA',
+    popular: false,
+    badge: 'Holding / A Convenir',
+    subtitle: 'Módulos y Usuarios a convenir según requerimientos.',
+    description: 'Para grandes estudios, holdings y corporativos con requerimientos avanzados y alto volumen.',
+    maxCompanies: 500,
+    maxUsers: 20,
+    features: [
+      'Módulos y Usuarios a convenir (Escalable)',
+      'Todos los módulos del sistema (Finanzas, Comercial, KPIs, RCV, Personal, Tesorería)',
+      'Integración con facturadores electrónicos y ERP',
+      'Soporte prioritario 24/7 con SLA garantizado',
+      'Capacitación in-company para todo el equipo contable',
+      'Servidor dedicado y respaldos automáticos'
+    ],
+    status: 'active',
+    order: 4
   }
 ];
 
@@ -88,9 +133,13 @@ export default function PricingManager() {
 
   // Form states
   const [name, setName] = useState('');
-  const [priceCLP, setPriceCLP] = useState<number>(19900);
+  const [priceUF, setPriceUF] = useState<number | ''>(1.2);
+  const [priceText, setPriceText] = useState('UF 1,2 + IVA');
+  const [priceCLP, setPriceCLP] = useState<number>(47900);
   const [period, setPeriod] = useState('/ mes + IVA');
   const [popular, setPopular] = useState(false);
+  const [badge, setBadge] = useState('');
+  const [subtitle, setSubtitle] = useState('');
   const [description, setDescription] = useState('');
   const [featuresText, setFeaturesText] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
@@ -103,11 +152,22 @@ export default function PricingManager() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const items = snapshot.docs.map(d => ({
+        const rawItems = snapshot.docs.map(d => ({
           id: d.id,
           ...d.data()
         })) as LandingPricingPlan[];
 
+        const uniqueMap = new Map<string, LandingPricingPlan>();
+        for (const plan of rawItems) {
+          if (plan.name) {
+            const key = plan.name.trim().toUpperCase();
+            if (!uniqueMap.has(key)) {
+              uniqueMap.set(key, plan);
+            }
+          }
+        }
+
+        const items = Array.from(uniqueMap.values());
         items.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
         setPlans(items);
         setLoading(false);
@@ -123,9 +183,13 @@ export default function PricingManager() {
 
   const handleResetForm = () => {
     setName('');
-    setPriceCLP(19900);
+    setPriceUF(1.2);
+    setPriceText('UF 1,2 + IVA');
+    setPriceCLP(47900);
     setPeriod('/ mes + IVA');
     setPopular(false);
+    setBadge('');
+    setSubtitle('');
     setDescription('');
     setFeaturesText('');
     setStatus('active');
@@ -137,9 +201,13 @@ export default function PricingManager() {
   const handleOpenEdit = (p: LandingPricingPlan) => {
     setEditingId(p.id);
     setName(p.name || '');
+    setPriceUF(p.priceUF !== undefined && p.priceUF !== null ? p.priceUF : '');
+    setPriceText(p.priceText || (p.priceUF ? `UF ${p.priceUF} + IVA` : ''));
     setPriceCLP(p.priceCLP ?? 0);
     setPeriod(p.period || '/ mes + IVA');
     setPopular(!!p.popular);
+    setBadge(p.badge || '');
+    setSubtitle(p.subtitle || '');
     setDescription(p.description || '');
     setFeaturesText((p.features || []).join('\n'));
     setStatus(p.status === 'inactive' ? 'inactive' : 'active');
@@ -166,9 +234,13 @@ export default function PricingManager() {
     try {
       const payload = {
         name: name.trim(),
+        priceUF: priceUF === '' ? null : Number(priceUF),
+        priceText: priceText.trim() || (priceUF !== '' ? `UF ${priceUF} + IVA` : 'A Convenir'),
         priceCLP: Number(priceCLP) || 0,
         period: period.trim(),
         popular: Boolean(popular),
+        badge: badge.trim(),
+        subtitle: subtitle.trim(),
         description: description.trim(),
         features: featuresArray,
         status,
@@ -234,16 +306,28 @@ export default function PricingManager() {
   };
 
   const handleSeedDefaults = async () => {
-    if (!window.confirm('¿Cargar los 3 planes de precios oficiales en la base de datos?')) return;
+    if (!window.confirm('¿Cargar los 4 planes de precios oficiales (UF 0.5, UF 1.2, UF 2.4 y Corporativo) en la base de datos?')) return;
     setIsSaving(true);
     try {
+      // 1. Eliminar planes antiguos para no duplicar
+      for (const p of plans) {
+        if (p.id) {
+          try {
+            await deleteDoc(doc(db, 'landing_pricing', p.id));
+          } catch (delErr) {
+            console.warn('Error borrando plan anterior:', delErr);
+          }
+        }
+      }
+
+      // 2. Insertar los 4 planes oficiales
       for (const item of DEFAULT_INITIAL_PRICING_PLANS) {
         await addDoc(collection(db, 'landing_pricing'), {
           ...item,
           createdAt: new Date().toISOString()
         });
       }
-      setNotice({ type: 'success', text: 'Se cargaron los 3 planes iniciales con éxito.' });
+      setNotice({ type: 'success', text: 'Se cargaron los 4 planes oficiales con éxito.' });
     } catch (err: any) {
       console.error('Error seeding pricing plans:', err);
       setNotice({ type: 'error', text: 'Error al cargar planes: ' + err.message });
@@ -278,7 +362,7 @@ export default function PricingManager() {
               className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-[#0D253D] text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Cargar 3 Planes Base</span>
+              <span>Cargar 4 Planes Oficiales</span>
             </button>
           )}
 
@@ -353,7 +437,7 @@ export default function PricingManager() {
               <input
                 type="text"
                 required
-                placeholder="Ej. Estudio Contable Pro"
+                placeholder="Ej. PLAN ESTUDIO 10"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white font-medium"
@@ -362,16 +446,63 @@ export default function PricingManager() {
 
             <div>
               <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
-                Precio Mensual CLP (0 = A convenir) *
+                Precio en UF (Ej. 0.5, 1.2, 2.4)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                placeholder="Ej. 1.2"
+                value={priceUF}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? '' : Number(e.target.value);
+                  setPriceUF(val);
+                  if (val !== '') {
+                    setPriceText(`UF ${String(val).replace('.', ',')} + IVA`);
+                  }
+                }}
+                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white font-mono font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                Texto del Precio (Portada) *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. UF 1,2 + IVA"
+                value={priceText}
+                onChange={(e) => setPriceText(e.target.value)}
+                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                Precio Ref. Mensual CLP
               </label>
               <input
                 type="number"
                 min={0}
                 step={100}
-                required
                 value={priceCLP}
                 onChange={(e) => setPriceCLP(Number(e.target.value))}
-                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white font-mono font-bold"
+                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                Insignia / Badge
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. 10 Empresas / 2 Usuarios"
+                value={badge}
+                onChange={(e) => setBadge(e.target.value)}
+                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white"
               />
             </div>
 
@@ -390,11 +521,24 @@ export default function PricingManager() {
 
             <div className="lg:col-span-2">
               <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
-                Descripción Corta del Plan
+                Subtítulo / Resumen
               </label>
               <input
                 type="text"
-                placeholder="Ej. Para contadores independientes y firmas contables."
+                placeholder="Ej. Plan para 2 usuarios y 10 empresas."
+                value={subtitle}
+                onChange={(e) => setSubtitle(e.target.value)}
+                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white"
+              />
+            </div>
+
+            <div className="lg:col-span-2">
+              <label className="block text-xs font-bold text-[#0D253D] mb-1.5">
+                Descripción del Plan
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. Para contadores independientes y firmas contables en crecimiento."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#0D253D] focus:outline-none focus:border-[#533AFD] focus:bg-white"
@@ -565,10 +709,17 @@ export default function PricingManager() {
                     </div>
 
                     <div className="my-2">
-                      <span className="text-2xl sm:text-3xl font-extrabold font-mono text-[#0D253D]">
-                        {p.priceCLP > 0 ? `$${p.priceCLP.toLocaleString('es-CL')}` : 'A Convenir'}
-                      </span>
-                      <span className="text-xs text-[#64748D] font-medium"> {p.period}</span>
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="text-2xl sm:text-3xl font-extrabold font-mono text-indigo-600">
+                          {p.priceText || (p.priceUF ? `UF ${String(p.priceUF).replace('.', ',')} + IVA` : (p.priceCLP > 0 ? `$${p.priceCLP.toLocaleString('es-CL')}` : 'A Convenir'))}
+                        </span>
+                        <span className="text-xs text-[#64748D] font-medium"> {p.period}</span>
+                      </div>
+                      {p.priceCLP > 0 && (
+                        <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          Ref. CLP: ${p.priceCLP.toLocaleString('es-CL')} / mes
+                        </p>
+                      )}
                     </div>
 
                     <ul className="space-y-2 text-xs text-[#425466] pt-2 border-t border-slate-200/60">

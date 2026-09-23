@@ -11,6 +11,8 @@ import {
   CustomAnalysisTableItem
 } from '../types';
 import { validateVoucherLine } from '../utils/voucherValidation';
+import { useDraggableModal } from '../hooks/useDraggableModal';
+import { Move } from 'lucide-react';
 
 interface VoucherLineDistributionModalProps {
   isOpen: boolean;
@@ -284,20 +286,33 @@ export default function VoucherLineDistributionModal({
     onClose();
   };
 
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen });
+
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 bg-slate-900/30 flex items-center justify-center p-3 sm:p-5">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden"
+      >
         
         {/* Modal Header */}
-        <div className="p-4 bg-slate-900 text-white flex justify-between items-center border-b border-slate-800">
+        <div
+          {...dragProps}
+          className="p-4 bg-slate-900 text-white flex justify-between items-center border-b border-slate-800 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
           <div className="flex items-center gap-2.5">
-            <span className="text-xl">🔀</span>
+            <div className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white">
+              <Move className="w-4 h-4" />
+            </div>
             <div>
               <h3 className="font-bold text-sm leading-tight">
                 Distribución Contable de Línea (Prorrateo de Centros de Costo / Ítems)
               </h3>
               <p className="text-[11px] text-slate-400">
-                Divida el monto de la línea en múltiples centros de costos, ítems de gasto o cuentas contables.
+                Divida el monto de la línea en múltiples centros de costos, ítems de gasto o cuentas contables. (Ventana movible)
               </p>
             </div>
           </div>

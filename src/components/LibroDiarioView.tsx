@@ -12,6 +12,7 @@ interface LibroDiarioViewProps {
   fiscalYears: FiscalPeriodYear[];
   onEditVoucher?: (voucher: Voucher) => void;
   onViewVoucher?: (voucher: Voucher) => void;
+  onFixCeecVouchers?: () => Promise<void>;
 }
 
 export default function LibroDiarioView({
@@ -21,7 +22,8 @@ export default function LibroDiarioView({
   accounts,
   fiscalYears,
   onEditVoucher,
-  onViewVoucher
+  onViewVoucher,
+  onFixCeecVouchers
 }: LibroDiarioViewProps) {
   const currentYear = new Date().getFullYear();
   const currentMonthStr = `${currentYear}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -30,7 +32,7 @@ export default function LibroDiarioView({
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('Todos');
-  const [statusFilter, setStatusFilter] = useState<'Valido' | 'Todos' | 'Anulado'>('Valido');
+  const [statusFilter, setStatusFilter] = useState<'Valido' | 'Todos' | 'Anulado' | 'Descuadrado'>('Valido');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>('detailed');
   const [isPrintingOfficial, setIsPrintingOfficial] = useState<boolean>(false);
@@ -43,6 +45,17 @@ export default function LibroDiarioView({
     });
     return Array.from(set).sort().reverse();
   }, [vouchers]);
+
+  // Overall unbalance count for period (regardless of statusFilter)
+  const totalDescuadradosPeriodo = useMemo(() => {
+    return vouchers.filter(v => {
+      if (v.status === 'Anulado') return false;
+      if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
+      const vDebit = v.totalDebit || v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) || 0;
+      const vCredit = v.totalCredit || v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) || 0;
+      return Math.abs(vDebit - vCredit) > 0.01;
+    }).length;
+  }, [vouchers, periodFilter]);
 
   // Account map for quick name lookups if line is missing name
   const accountMap = useMemo(() => {
@@ -61,6 +74,12 @@ export default function LibroDiarioView({
         // Status filter
         if (statusFilter === 'Valido' && v.status === 'Anulado') return false;
         if (statusFilter === 'Anulado' && v.status !== 'Anulado') return false;
+        if (statusFilter === 'Descuadrado') {
+          if (v.status === 'Anulado') return false;
+          const vDebit = v.totalDebit || v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) || 0;
+          const vCredit = v.totalCredit || v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) || 0;
+          if (Math.abs(vDebit - vCredit) <= 0.01) return false;
+        }
 
         // Period filter
         if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
@@ -304,56 +323,65 @@ export default function LibroDiarioView({
   return (
     <div className="space-y-4">
       {/* Header & Controls */}
-      <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-2xs flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-slate-700 border border-slate-200">
-              <BookOpen className="w-4 h-4 text-slate-700" />
-            </div>
-            <h3 className="text-base font-bold text-slate-900 tracking-tight uppercase">Libro Diario Contable</h3>
+      <div className="bg-white px-4 py-2.5 rounded-lg border border-slate-200 shadow-2xs flex flex-wrap justify-between items-center gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center text-indigo-700 border border-indigo-200/60">
+            <BookOpen className="w-4 h-4" />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Registro cronológico a partida doble de todas las transacciones y comprobantes • {company.name} (RUT: {company.rut})
-          </p>
+          <h3 className="text-sm font-bold text-slate-900 tracking-tight uppercase">Libro Diario Contable</h3>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {onFixCeecVouchers && (
+            <button
+              onClick={onFixCeecVouchers}
+              className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-md border border-amber-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+              title="Detectar y regularizar automáticamente comprobantes con Crédito Especial Constructora CEEC"
+            >
+              <span className="text-sm">⚡</span>
+            </button>
+          )}
+
           <button
             onClick={handlePrintOfficialBook}
             disabled={isPrintingOfficial}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50 cursor-pointer"
             title="Emisión oficial con numeración correlativa de folios timbrados por el SII"
           >
             <Printer className="w-3.5 h-3.5 text-slate-300" />
-            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Libro Diario Oficial (Folios SII)'}</span>
+            <span className="hidden sm:inline">{isPrintingOfficial ? 'Emitiendo...' : 'Folios SII'}</span>
           </button>
+
           <button
             onClick={handleDownloadSIIReport}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-700 rounded-md border border-slate-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Descargar Informe SII en PDF"
           >
-            <FileText className="w-3.5 h-3.5 text-slate-600" />
-            <span>Informe SII (PDF)</span>
+            <FileText className="w-4 h-4 text-slate-600" />
           </button>
+
           <button
             onClick={() => setViewMode(viewMode === 'detailed' ? 'compact' : 'detailed')}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-700 rounded-md border border-slate-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title={viewMode === 'detailed' ? 'Cambiar a Vista Compacta' : 'Cambiar a Vista Detallada'}
           >
-            <LayoutList className="w-3.5 h-3.5 text-slate-600" />
-            <span>{viewMode === 'detailed' ? 'Vista Compacta' : 'Vista Detallada'}</span>
+            <LayoutList className="w-4 h-4 text-slate-600" />
           </button>
+
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-700 rounded-md border border-slate-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Exportar datos a archivo CSV / Excel"
           >
-            <Download className="w-3.5 h-3.5 text-slate-600" />
-            <span>Exportar CSV</span>
+            <Download className="w-4 h-4 text-slate-600" />
           </button>
+
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-700 rounded-md border border-slate-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Imprimir Libro Diario"
           >
-            <Printer className="w-3.5 h-3.5 text-slate-600" />
-            <span>Imprimir</span>
+            <Printer className="w-4 h-4 text-slate-600" />
           </button>
         </div>
       </div>
@@ -419,6 +447,9 @@ export default function LibroDiarioView({
               <option value="Valido">Solo Válidos</option>
               <option value="Todos">Todos (Inc. Anulados)</option>
               <option value="Anulado">Solo Anulados</option>
+              <option value="Descuadrado">
+                ⚠️ Solo Descuadrados {totalDescuadradosPeriodo > 0 ? `(${totalDescuadradosPeriodo})` : ''}
+              </option>
             </select>
           </div>
         </div>
@@ -469,7 +500,28 @@ export default function LibroDiarioView({
           <p className="text-lg font-bold text-emerald-950 font-mono tabular-nums mt-0.5">${totals.totalCredit.toLocaleString('es-CL')}</p>
         </div>
         <div className={`p-3 rounded-md border shadow-2xs ${totals.difference === 0 ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' : 'bg-rose-50/50 border-rose-200 text-rose-900'}`}>
-          <span className="text-[10px] font-semibold uppercase tracking-wider block">Cuadratura Período</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-wider block">Cuadratura Período</span>
+            {totalDescuadradosPeriodo > 0 && statusFilter !== 'Descuadrado' && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Descuadrado')}
+                className="text-[10px] bg-rose-600 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded cursor-pointer transition-colors shadow-2xs"
+                title="Filtrar Libro Diario por comprobantes con descuadre"
+              >
+                Ver {totalDescuadradosPeriodo} Descuadre(s)
+              </button>
+            )}
+            {statusFilter === 'Descuadrado' && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Valido')}
+                className="text-[10px] bg-slate-700 hover:bg-slate-800 text-white font-bold px-2 py-0.5 rounded cursor-pointer transition-colors shadow-2xs"
+              >
+                Ver Todos
+              </button>
+            )}
+          </div>
           <p className="text-lg font-bold font-mono tabular-nums mt-0.5 flex items-center gap-1.5">
             {totals.difference === 0 ? (
               <span className="flex items-center gap-1 text-emerald-700">
@@ -505,12 +557,12 @@ export default function LibroDiarioView({
               <div
                 key={v.id}
                 className={`bg-white rounded-lg border transition-all shadow-2xs overflow-hidden ${
-                  isAnulado ? 'border-red-200 bg-red-50/20 opacity-75' : isBalanced ? 'border-slate-200' : 'border-amber-300 ring-1 ring-amber-300'
+                  isAnulado ? 'border-red-200 bg-red-50/20 opacity-75' : isBalanced ? 'border-slate-200' : 'border-rose-400 ring-1 ring-rose-400'
                 }`}
               >
                 {/* Voucher Header Banner */}
                 <div className={`px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 border-b ${
-                  isAnulado ? 'bg-red-100/60 border-red-200' : 'bg-slate-50 border-slate-200'
+                  isAnulado ? 'bg-red-100/60 border-red-200' : !isBalanced ? 'bg-rose-50/80 border-rose-200' : 'bg-slate-50 border-slate-200'
                 }`}>
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-300 text-xs">
@@ -535,23 +587,36 @@ export default function LibroDiarioView({
                       </span>
                     )}
                     {!isBalanced && !isAnulado && (
-                      <span className="text-[10px] bg-amber-500 text-white font-bold px-2 py-0.5 rounded uppercase">
-                        DESCUADRADO
+                      <span className="text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded uppercase flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        DESCUADRADO (${Math.abs(vDebit - vCredit).toLocaleString('es-CL')})
                       </span>
                     )}
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className="text-xs font-mono tabular-nums">
-                      <span className="text-slate-500 mr-1 font-sans">Total:</span>
-                      <span className="font-bold text-slate-900">${vDebit.toLocaleString('es-CL')}</span>
+                      {isBalanced ? (
+                        <>
+                          <span className="text-slate-500 mr-1 font-sans">Total:</span>
+                          <span className="font-bold text-slate-900">${vDebit.toLocaleString('es-CL')}</span>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2 text-rose-700 font-semibold">
+                          <span>Debe: ${vDebit.toLocaleString('es-CL')}</span>
+                          <span>vs</span>
+                          <span>Haber: ${vCredit.toLocaleString('es-CL')}</span>
+                        </div>
+                      )}
                     </div>
                     {onEditVoucher && !isAnulado && (
                       <button
                         onClick={() => onEditVoucher(v)}
-                        className="text-[11px] text-slate-600 hover:text-slate-900 font-semibold underline"
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded transition-colors ${
+                          !isBalanced ? 'bg-rose-100 hover:bg-rose-200 text-rose-900 font-bold border border-rose-300' : 'text-slate-600 hover:text-slate-900 underline'
+                        }`}
                       >
-                        Editar Comprobante
+                        {!isBalanced ? '⚠️ Corregir Descuadre' : 'Editar Comprobante'}
                       </button>
                     )}
                   </div>

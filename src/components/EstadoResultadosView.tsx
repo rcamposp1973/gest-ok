@@ -498,7 +498,7 @@ export default function EstadoResultadosView({
               onChange={(e) => setSelectedYear(parseInt(e.target.value))}
               className="bg-white border border-slate-300 rounded-md px-2.5 py-1 text-xs font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             >
-              {[2024, 2025, 2026, 2027].map(y => (
+              {[2025, 2026, 2027].map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>

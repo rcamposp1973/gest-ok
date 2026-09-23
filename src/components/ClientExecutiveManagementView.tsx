@@ -11,6 +11,7 @@ import {
 } from '../types';
 import AuditorEstadosFinancierosView from './AuditorEstadosFinancierosView';
 import CompanyNotebooksView from './CompanyNotebooksView';
+import LibroBancoColaborativoView from './LibroBancoColaborativoView';
 import {
   Building2,
   TrendingUp,
@@ -28,7 +29,8 @@ import {
   ChevronRight,
   Calendar,
   PieChart as PieChartIcon,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles
 } from 'lucide-react';
 
 interface ClientExecutiveManagementViewProps {
@@ -60,7 +62,7 @@ export default function ClientExecutiveManagementView({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const [activeTab, setActiveTab] = useState<'RESUMEN' | 'VENTAS' | 'GASTOS' | 'CXC' | 'CXP' | 'BANCOS' | 'AUDITORIA' | 'CUADERNOS'>('RESUMEN');
+  const [activeTab, setActiveTab] = useState<'RESUMEN' | 'LIBRO_BANCO' | 'VENTAS' | 'GASTOS' | 'CXC' | 'CXP' | 'BANCOS' | 'AUDITORIA' | 'CUADERNOS'>('RESUMEN');
 
   // Available periods list derived from vouchers and RCV
   const availablePeriods = useMemo(() => {
@@ -294,6 +296,23 @@ export default function ClientExecutiveManagementView({
         >
           <PieChartIcon className="w-3.5 h-3.5" />
           <span>Panel General (KPIs)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('LIBRO_BANCO')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'LIBRO_BANCO'
+              ? 'bg-[#533AFD] text-white shadow-md shadow-indigo-500/20'
+              : 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200/60'
+          }`}
+        >
+          <Landmark className="w-3.5 h-3.5 text-amber-500" />
+          <span>Libro Banco & Cartola (Aclarar Movs)</span>
+          {bankMetrics.accountSummaries.reduce((sum, a) => sum + a.pendingCartolaLines.length, 0) > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-[10px] font-black rounded-full leading-none">
+              {bankMetrics.accountSummaries.reduce((sum, a) => sum + a.pendingCartolaLines.length, 0)}
+            </span>
+          )}
         </button>
 
         <button
@@ -532,23 +551,33 @@ export default function ClientExecutiveManagementView({
                   Resumen de Conciliación Bancaria ({selectedPeriod})
                 </h3>
               </div>
-              <span className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 ${
-                bankMetrics.isFullyBalanced
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-amber-100 text-amber-800'
-              }`}>
-                {bankMetrics.isFullyBalanced ? (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Cartola Cuadrada con Libro Mayor</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Diferencia de Cuadratura: ${Math.abs(bankMetrics.totalDifference).toLocaleString('es-CL')}</span>
-                  </>
-                )}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveTab('LIBRO_BANCO')}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Aclarar Movimientos en Libro Banco</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+                <span className={`text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 ${
+                  bankMetrics.isFullyBalanced
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {bankMetrics.isFullyBalanced ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Cartola Cuadrada con Libro Mayor</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Diferencia: ${Math.abs(bankMetrics.totalDifference).toLocaleString('es-CL')}</span>
+                    </>
+                  )}
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -580,6 +609,23 @@ export default function ClientExecutiveManagementView({
           </div>
 
         </div>
+      )}
+
+      {/* 1.5. LIBRO BANCO & CARTOLA INTERACTIVA (COLABORACIÓN CLIENTE - CONTADOR) */}
+      {activeTab === 'LIBRO_BANCO' && (
+        <LibroBancoColaborativoView
+          studyId={studyId || company.studyId || 'default-study'}
+          company={company}
+          accounts={accounts}
+          vouchers={vouchers}
+          fiscalYears={fiscalYears}
+          auxiliaries={auxiliaries}
+          rcvDocuments={rcvDocuments}
+          bankReconciliations={bankReconciliations}
+          currentUserRole="OBSERVER"
+          mode="CLIENTE"
+          onNavigateToConciliacion={() => setActiveTab('BANCOS')}
+        />
       )}
 
       {/* 2. DETALLE DE VENTAS */}

@@ -85,8 +85,14 @@ export default function ExecutiveHeader({
     if (!rateObj) return '...';
     const raw = (rateObj as any)[key];
     if (raw === undefined || raw === null) return 'N/A';
-    if (key === 'ipc') return `${raw > 0 ? '+' : ''}${raw}%`;
-    return `$${Number(raw).toLocaleString('es-CL')}`;
+    if (key === 'ipc') {
+      const num = Number(raw);
+      return `${num > 0 ? '+' : ''}${num.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`;
+    }
+    if (key === 'utm') {
+      return `$${Math.round(Number(raw)).toLocaleString('es-CL')}`;
+    }
+    return `$${Number(raw).toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   return (

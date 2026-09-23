@@ -1,14 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, addDoc, getDocs, query, where, doc, setDoc } from 'firebase/firestore';
-import { Plan, UserRole, StudyAdmin } from '../types';
-import { Building2, UserCheck, Shield, Lock, Eye, EyeOff } from 'lucide-react';
+import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { UserRole, StudyAdmin, StudyModulePermissions, StudySubscriptionStatus } from '../types';
+import { Building2, UserCheck, Shield, Lock, Eye, EyeOff, CreditCard, Sparkles, Check } from 'lucide-react';
+import { formatRut } from '../utils/rutMatcher';
+import { 
+  StudyPlanCode, 
+  OFFICIAL_SUBSCRIPTION_PLANS, 
+  getDefaultModulesForPlan,
+  getOfficialPlansList 
+} from '../constants/subscriptionPlans';
+import ModuleAccessMatrix from './ModuleAccessMatrix';
 
 interface CreateStudyProps {
   onSuccess?: () => void;
 }
 
 export default function CreateStudy({ onSuccess }: CreateStudyProps) {
+  // Plan y Módulos
+  const [selectedPlanCode, setSelectedPlanCode] = useState<StudyPlanCode>('PLAN_ESTUDIO_10');
+  const [modules, setModules] = useState<StudyModulePermissions>(() => getDefaultModulesForPlan('PLAN_ESTUDIO_10'));
+  const [subscriptionStatus, setSubscriptionStatus] = useState<StudySubscriptionStatus>('Vigente');
+  const [paymentNotes, setPaymentNotes] = useState('');
+
   // Datos del Estudio
   const [name, setName] = useState('');
   const [rut, setRut] = useState('');
@@ -17,7 +31,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
   const [email, setEmail] = useState('');
   const [giro, setGiro] = useState('');
   const [maxCompanies, setMaxCompanies] = useState<number>(10);
-  const [maxUsers, setMaxUsers] = useState<number>(5);
+  const [maxUsers, setMaxUsers] = useState<number>(2);
   const [estado, setEstado] = useState<'Vigente' | 'Sin Vigencia'>('Vigente');
 
   // Datos del Administrador del Estudio
@@ -33,6 +47,13 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const handlePlanSelect = (code: StudyPlanCode, limitComp: number, limitUsers: number, defModules: StudyModulePermissions) => {
+    setSelectedPlanCode(code);
+    setMaxCompanies(limitComp);
+    setMaxUsers(limitUsers);
+    setModules(defModules);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return; // Anti-double-click guard
@@ -40,7 +61,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
     setSuccessMsg('');
 
     const cleanStudyName = name.trim();
-    const cleanStudyRut = rut.trim();
+    const cleanStudyRut = formatRut(rut);
     const cleanAdminEmail = adminEmail.trim().toLowerCase();
 
     if (!cleanStudyName || !cleanStudyRut || !cleanAdminEmail || !adminPassword) {
@@ -70,7 +91,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
 
       const initialAdmin: StudyAdmin = {
         name: adminName.trim() || cleanStudyName,
-        rut: adminRut.trim(),
+        rut: formatRut(adminRut),
         email: cleanAdminEmail,
         password: adminPassword,
         phone: adminPhone.trim(),
@@ -79,7 +100,9 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
         isPrimary: true
       };
 
-      // 2. Crear documento de Estudio con límites directos de empresas y usuarios
+      const planDef = OFFICIAL_SUBSCRIPTION_PLANS[selectedPlanCode] || OFFICIAL_SUBSCRIPTION_PLANS.CUSTOM;
+
+      // 2. Crear documento de Estudio con límites directos de empresas y usuarios + Grilla de Módulos
       const newStudyRef = await addDoc(collection(db, 'studies'), {
         name: cleanStudyName,
         rut: cleanStudyRut,
@@ -87,8 +110,13 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
         phone: phone.trim(),
         email: email.trim() || cleanAdminEmail,
         giro: giro.trim(),
+        planCode: selectedPlanCode,
+        planName: planDef.name,
+        modules: modules,
+        subscriptionStatus: subscriptionStatus,
+        paymentNotes: paymentNotes.trim(),
         maxCompanies: Math.max(1, Number(maxCompanies) || 10),
-        maxUsers: Math.max(1, Number(maxUsers) || 5),
+        maxUsers: Math.max(1, Number(maxUsers) || 2),
         estado,
         adminId: auth.currentUser?.uid || 'superadmin',
         adminName: initialAdmin.name,
@@ -118,7 +146,7 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
         console.warn("Subcollection user creation warning:", subErr);
       }
 
-      setSuccessMsg(`¡Estudio "${cleanStudyName}" y Administrador creados exitosamente!`);
+      setSuccessMsg(`¡Estudio "${cleanStudyName}" con ${planDef.name} y Administrador creados exitosamente!`);
       // Reset form
       setName('');
       setRut('');
@@ -126,8 +154,10 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
       setPhone('');
       setEmail('');
       setGiro('');
+      setSelectedPlanCode('PLAN_ESTUDIO_10');
       setMaxCompanies(10);
-      setMaxUsers(5);
+      setMaxUsers(2);
+      setModules(getDefaultModulesForPlan('PLAN_ESTUDIO_10'));
       setAdminName('');
       setAdminRut('');
       setAdminEmail('');
@@ -160,11 +190,37 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
       )}
 
       <form onSubmit={handleCreate} className="space-y-6">
-        {/* SECCIÓN 1: DATOS DEL ESTUDIO */}
+        {/* SECCIÓN 1: SELECCIÓN DE PLAN Y GRILLA PREDEFINIDA */}
+        <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
+            <CreditCard className="w-5 h-5 text-indigo-600" />
+            <div>
+              <h4 className="text-sm font-bold text-slate-900">1. Selección de Plan y Grilla Predefinida de Accesos</h4>
+              <p className="text-[11px] text-slate-500">Selecciona el plan contratado. Los módulos y límites se configurarán automáticamente.</p>
+            </div>
+          </div>
+
+          <ModuleAccessMatrix
+            selectedPlanCode={selectedPlanCode}
+            modules={modules}
+            subscriptionStatus={subscriptionStatus}
+            maxCompanies={maxCompanies}
+            maxUsers={maxUsers}
+            paymentNotes={paymentNotes}
+            onPlanChange={handlePlanSelect}
+            onModulesChange={(updated) => setModules(updated)}
+            onSubscriptionStatusChange={(st) => setSubscriptionStatus(st)}
+            onMaxCompaniesChange={(val) => setMaxCompanies(val)}
+            onMaxUsersChange={(val) => setMaxUsers(val)}
+            onPaymentNotesChange={(txt) => setPaymentNotes(txt)}
+          />
+        </div>
+
+        {/* SECCIÓN 2: DATOS GENERALES DEL ESTUDIO */}
         <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
             <Building2 className="w-5 h-5 text-indigo-600" />
-            <h4 className="text-sm font-bold text-slate-900">1. Datos Generales del Estudio Contable</h4>
+            <h4 className="text-sm font-bold text-slate-900">2. Datos Generales del Estudio Contable</h4>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
@@ -186,7 +242,8 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
                 type="text"
                 placeholder="Ej: 76.123.456-7"
                 value={rut}
-                onChange={(e) => setRut(e.target.value)}
+                onChange={(e) => setRut(formatRut(e.target.value))}
+                onBlur={(e) => setRut(formatRut(e.target.value))}
                 className="w-full p-2.5 border border-slate-300 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
                 required
               />
@@ -280,13 +337,13 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
           </div>
         </div>
 
-        {/* SECCIÓN 2: ADMINISTRADOR / SUPER USUARIO DEL ESTUDIO */}
+        {/* SECCIÓN 3: ADMINISTRADOR / SUPER USUARIO DEL ESTUDIO */}
         <div className="bg-indigo-50/50 p-5 rounded-xl border border-indigo-200 space-y-4">
           <div className="flex items-center justify-between border-b border-indigo-200 pb-2.5">
             <div className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-indigo-700" />
               <div>
-                <h4 className="text-sm font-bold text-slate-900">2. Administrador Designado (Super Usuario del Estudio)</h4>
+                <h4 className="text-sm font-bold text-slate-900">3. Administrador Designado (Super Usuario del Estudio)</h4>
                 <p className="text-[11px] text-slate-500">Tendrá acceso para gestionar contadores, empresas y parametrización.</p>
               </div>
             </div>
@@ -312,7 +369,8 @@ export default function CreateStudy({ onSuccess }: CreateStudyProps) {
                 type="text"
                 placeholder="Ej: 15.678.901-2"
                 value={adminRut}
-                onChange={(e) => setAdminRut(e.target.value)}
+                onChange={(e) => setAdminRut(formatRut(e.target.value))}
+                onBlur={(e) => setAdminRut(formatRut(e.target.value))}
                 className="w-full p-2.5 border border-slate-300 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
               />
             </div>

@@ -22,7 +22,7 @@ import {
   SlidersHorizontal,
   X
 } from 'lucide-react';
-import { ProductService, ChartOfAccount, InventoryMovement, CostCenterMaster, ExpenseItemMaster } from '../types';
+import { ProductService, ChartOfAccount, InventoryMovement, CostCenterMaster, ExpenseItemMaster, Warehouse } from '../types';
 
 interface ProductsServicesViewProps {
   companyId: string;
@@ -31,7 +31,10 @@ interface ProductsServicesViewProps {
   costCenters?: CostCenterMaster[];
   expenseItems?: ExpenseItemMaster[];
   products?: ProductService[];
+  warehouses?: Warehouse[];
   onProductsChange?: (items: ProductService[]) => void;
+  onSaveProduct?: (item: ProductService) => Promise<void>;
+  onDeleteProduct?: (id: string) => Promise<void>;
   isReadOnly?: boolean;
 }
 
@@ -42,7 +45,10 @@ export const ProductsServicesView: React.FC<ProductsServicesViewProps> = ({
   costCenters = [],
   expenseItems = [],
   products: initialProducts,
+  warehouses = [],
   onProductsChange,
+  onSaveProduct,
+  onDeleteProduct,
   isReadOnly = false
 }) => {
   // Mock/Local initial state for demo & Firestore sync
@@ -191,30 +197,48 @@ export const ProductsServicesView: React.FC<ProductsServicesViewProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm('¿Estás seguro de eliminar este ítem del catálogo?')) {
       setItems(prev => prev.filter(i => i.id !== id));
+      if (onDeleteProduct) {
+        try {
+          await onDeleteProduct(id);
+        } catch (err: any) {
+          alert(`Error al eliminar: ${err.message || err}`);
+        }
+      }
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.code || !formData.name) {
       alert('Por favor ingresa al menos el código/SKU y la descripción del producto o servicio.');
       return;
     }
 
+    let savedItem: ProductService;
     if (editingItem) {
-      setItems(prev => prev.map(i => i.id === editingItem.id ? { ...i, ...formData } as ProductService : i));
+      savedItem = { ...editingItem, ...formData, updatedAt: new Date().toISOString() } as ProductService;
+      setItems(prev => prev.map(i => i.id === editingItem.id ? savedItem : i));
     } else {
-      const newItem: ProductService = {
+      savedItem = {
         ...formData as ProductService,
         id: `prod-${Date.now()}`,
         companyId,
         createdAt: new Date().toISOString()
       };
-      setItems(prev => [newItem, ...prev]);
+      setItems(prev => [savedItem, ...prev]);
     }
+
+    if (onSaveProduct) {
+      try {
+        await onSaveProduct(savedItem);
+      } catch (err: any) {
+        alert(`Error al guardar en base de datos: ${err.message || err}`);
+      }
+    }
+
     setIsModalOpen(false);
   };
 
@@ -665,14 +689,29 @@ export const ProductsServicesView: React.FC<ProductsServicesViewProps> = ({
 
               {/* Control de Inventario (si es PRODUCT) */}
               {formData.type === 'PRODUCT' && (
-                <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 animate-fadeIn">
-                  <h4 className="font-bold text-blue-900 mb-2 flex items-center gap-1.5">
+                <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 animate-fadeIn space-y-3">
+                  <h4 className="font-bold text-blue-900 flex items-center gap-1.5">
                     <Boxes className="w-4 h-4 text-blue-600" />
-                    <span>Parámetros de Stock y Kardex</span>
+                    <span>Parámetros de Stock, Bodega y Kardex PMP</span>
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Stock Actual</label>
+                      <label className="block font-semibold text-slate-700 mb-1">Bodega Predeterminada</label>
+                      <select
+                        value={formData.defaultWarehouseId || ''}
+                        onChange={e => setFormData({ ...formData, defaultWarehouseId: e.target.value })}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-800 font-semibold focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">-- Bodega Central --</option>
+                        {warehouses.map(w => (
+                          <option key={w.id} value={w.id}>
+                            {w.code} - {w.name} {w.isDefault ? '(Principal)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Stock Actual Físico</label>
                       <input
                         type="number"
                         value={formData.currentStock}
@@ -681,7 +720,7 @@ export const ProductsServicesView: React.FC<ProductsServicesViewProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Stock Mínimo (Alerta)</label>
+                      <label className="block font-semibold text-slate-700 mb-1">Stock Mínimo (Alerta Reorden)</label>
                       <input
                         type="number"
                         value={formData.minStock}
@@ -689,18 +728,53 @@ export const ProductsServicesView: React.FC<ProductsServicesViewProps> = ({
                         className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-800 font-mono focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                    <div className="flex items-center gap-2 pt-5">
-                      <input
-                        type="checkbox"
-                        id="allowNegative"
-                        checked={formData.allowNegativeStock}
-                        onChange={e => setFormData({ ...formData, allowNegativeStock: e.target.checked })}
-                        className="w-4 h-4 text-indigo-600 rounded border-slate-300"
-                      />
-                      <label htmlFor="allowNegative" className="font-semibold text-slate-700">
-                        Permitir Stock Negativo
-                      </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Cuenta Costo de Ventas (Automático)</label>
+                      <select
+                        value={formData.costOfGoodsAccountId || ''}
+                        onChange={e => setFormData({ ...formData, costOfGoodsAccountId: e.target.value })}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">-- Por defecto: 610101 Costo de Ventas --</option>
+                        {accounts.filter(a => a.type === 'Gasto' || a.code.startsWith('61') || a.code.startsWith('5')).map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.code} - {acc.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Cuenta Existencias / Mercaderías</label>
+                      <select
+                        value={formData.inventoryAssetAccountId || ''}
+                        onChange={e => setFormData({ ...formData, inventoryAssetAccountId: e.target.value })}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">-- Por defecto: 110601 Mercaderías en Bodega --</option>
+                        {accounts.filter(a => a.type === 'Activo' || a.code.startsWith('1106') || a.code.startsWith('1')).map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.code} - {acc.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="allowNegative"
+                      checked={formData.allowNegativeStock}
+                      onChange={e => setFormData({ ...formData, allowNegativeStock: e.target.checked })}
+                      className="w-4 h-4 text-indigo-600 rounded border-slate-300"
+                    />
+                    <label htmlFor="allowNegative" className="font-semibold text-slate-700">
+                      Permitir Stock Negativo (Ventas sin restricción de inventario físico previo)
+                    </label>
                   </div>
                 </div>
               )}

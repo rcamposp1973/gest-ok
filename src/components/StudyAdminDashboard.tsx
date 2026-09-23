@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { User, Company, UserRole, Assignment, Study, ChartOfAccount, Voucher, RCVDocument, BankReconciliation, FiscalPeriodYear, DTEConfig } from '../types';
 import CompanyAccountingDashboard from './CompanyAccountingDashboard';
 import ClientExecutiveManagementView from './ClientExecutiveManagementView';
 import { ShieldAlert, Users, Building2, UserCheck, Shield, Key, LogOut, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Lock, Eye, EyeOff, FileText, Upload, Sparkles, Server, Check, ArrowRight, Activity } from 'lucide-react';
 import ChangePasswordModal from './ChangePasswordModal';
 import { isTestStudy, executeTestStudyDataPurge, TestStudyPurgeStats } from '../utils/testStudyPurgeUtils';
+import DemoFerreteriaManagerModal from './DemoFerreteriaManagerModal';
+import { DEMO_COMPANY_NAME, DEMO_COMPANY_RUT, isDemoFerreteriaCompany } from '../utils/demoFerreteriaGenerator';
+import { formatRut } from '../utils/rutMatcher';
 
 export interface StudyAdminDashboardProps {
   studyId: string;
@@ -61,6 +64,7 @@ export default function StudyAdminDashboard({
   const [testPurgeSuccessMessage, setTestPurgeSuccessMessage] = useState<string | null>(null);
   const [testPurgeErrorMessage, setTestPurgeErrorMessage] = useState<string | null>(null);
   const [lastTestPurgeStats, setLastTestPurgeStats] = useState<TestStudyPurgeStats | null>(null);
+  const [showDemoFerreteriaModal, setShowDemoFerreteriaModal] = useState(false);
 
   const handleExecuteTestPurge = async () => {
     if (!isCurrentStudyTest) {
@@ -443,7 +447,7 @@ export default function StudyAdminDashboard({
     }
     const name = companyFormData.name.trim();
     const fantasyName = companyFormData.fantasyName.trim();
-    const rut = companyFormData.rut.toLowerCase().trim();
+    const rut = formatRut(companyFormData.rut);
     const giro = companyFormData.giro.trim();
     const address = companyFormData.address.trim();
     const comuna = companyFormData.comuna.trim();
@@ -451,7 +455,7 @@ export default function StudyAdminDashboard({
     const phone = companyFormData.phone.trim();
 
     const legalRepName = companyFormData.legalRepName.trim();
-    const legalRepRut = companyFormData.legalRepRut.toLowerCase().trim();
+    const legalRepRut = formatRut(companyFormData.legalRepRut);
     const legalRepEmail = companyFormData.legalRepEmail.trim();
 
     const contactName = companyFormData.contactName.trim();
@@ -484,7 +488,7 @@ export default function StudyAdminDashboard({
     setIsSavingCompany(true);
     try {
       const existingDteConfig = (editingCompany?.dteConfig || {}) as Partial<DTEConfig>;
-      const repRutClean = (companyFormData.rutRepresentanteSii || legalRepRut || rut).trim();
+      const repRutClean = formatRut(companyFormData.rutRepresentanteSii || legalRepRut || rut);
       const repClaveClean = companyFormData.claveRepLegalSii.trim();
       const compClaveClean = companyFormData.claveEmpresaSii.trim();
       const certClaveClean = companyFormData.claveCertificadoDigital.trim();
@@ -547,7 +551,21 @@ export default function StudyAdminDashboard({
           createdAt: new Date()
         });
         targetCompanyId = compRef.id;
-        alert('Empresa registrada exitosamente.');
+
+        // Inicializar todos los períodos contables 2025-2027 CERRADOS por defecto
+        const defaultClosedMonths: { [m: number]: 'Abierto' | 'Cerrado' } = {};
+        for (let m = 1; m <= 12; m++) {
+          defaultClosedMonths[m] = 'Cerrado';
+        }
+        for (const yr of [2025, 2026, 2027]) {
+          await setDoc(doc(compRef, 'fiscalPeriods', String(yr)), {
+            id: String(yr),
+            year: yr,
+            months: defaultClosedMonths
+          });
+        }
+
+        alert('Empresa registrada exitosamente. Todos los períodos contables 2025-2027 han sido inicializados cerrados por defecto.');
       }
 
       // Synchronize with 'assignments' collection
@@ -831,10 +849,11 @@ export default function StudyAdminDashboard({
     );
   }
 
-  const tabs: { id: 'users' | 'companies' | 'assignments'; label: string }[] = [
+  const tabs: { id: 'users' | 'companies' | 'assignments' | 'demoPurge'; label: string }[] = [
     { id: 'companies', label: 'Empresas Clientes' },
     { id: 'users', label: 'Gestión de Usuarios' },
     { id: 'assignments', label: 'Asignaciones' },
+    ...(isCurrentStudyTest ? [{ id: 'demoPurge' as const, label: '🎯 Sociedad Demo (2025)' }] : [])
   ];
 
   return (
@@ -915,6 +934,18 @@ export default function StudyAdminDashboard({
           </div>
 
           <div className="flex items-center gap-2">
+            {isCurrentStudyTest && (
+              <button
+                type="button"
+                onClick={() => setShowDemoFerreteriaModal(true)}
+                className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                title="Gestor y Generador de Demostración: FERRETERIA DON ALI KT LTDA (2025)"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">🎯 Sociedad Demo (2025)</span>
+              </button>
+            )}
+
             {currentUserEmail && (
               <button
                 type="button"
@@ -1196,7 +1227,8 @@ export default function StudyAdminDashboard({
                           <input
                             name="rut"
                             value={companyFormData.rut}
-                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, rut: e.target.value }))}
+                            onChange={(e) => setCompanyFormData(prev => ({ ...prev, rut: formatRut(e.target.value) }))}
+                            onBlur={(e) => setCompanyFormData(prev => ({ ...prev, rut: formatRut(e.target.value) }))}
                             placeholder="Ej. 76.123.456-7"
                             required
                             className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
@@ -1300,7 +1332,8 @@ export default function StudyAdminDashboard({
                               <input
                                 name="legalRepRut"
                                 value={companyFormData.legalRepRut}
-                                onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepRut: e.target.value, rutRepresentanteSii: prev.rutRepresentanteSii || e.target.value }))}
+                                onChange={(e) => setCompanyFormData(prev => ({ ...prev, legalRepRut: formatRut(e.target.value), rutRepresentanteSii: prev.rutRepresentanteSii || formatRut(e.target.value) }))}
+                                onBlur={(e) => setCompanyFormData(prev => ({ ...prev, legalRepRut: formatRut(e.target.value), rutRepresentanteSii: prev.rutRepresentanteSii || formatRut(e.target.value) }))}
                                 placeholder="Ej. 12.345.678-9"
                                 className="border border-slate-300 p-2 w-full rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono bg-white"
                               />
@@ -1398,7 +1431,8 @@ export default function StudyAdminDashboard({
                             <input
                               type="text"
                               value={companyFormData.rutRepresentanteSii || companyFormData.legalRepRut}
-                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, rutRepresentanteSii: e.target.value }))}
+                              onChange={(e) => setCompanyFormData(prev => ({ ...prev, rutRepresentanteSii: formatRut(e.target.value) }))}
+                              onBlur={(e) => setCompanyFormData(prev => ({ ...prev, rutRepresentanteSii: formatRut(e.target.value) }))}
                               placeholder="Ej. 12.345.678-9"
                               className="w-full border border-slate-300 rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                             />
@@ -1710,79 +1744,155 @@ export default function StudyAdminDashboard({
             </div>
           )}
 
-          {activeTab === 'assignments' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <h3 className="text-lg font-medium text-slate-900 mb-4">
-                  {editingAssignment ? 'Modificar Asignación' : 'Asignar Empresa a Contador / Analista'}
-                </h3>
-                <form onSubmit={handleSaveAssignment} key={editingAssignment?.id || 'new-assignment'} className="space-y-4">
+          {activeTab === 'demoPurge' && (
+            <div className="space-y-6">
+              {/* Card Destacada: Sociedad de Demostración 2025 */}
+              <div className="bg-gradient-to-br from-amber-500/10 via-orange-500/10 to-indigo-500/10 p-6 rounded-3xl border border-amber-300 shadow-sm space-y-4">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white uppercase tracking-wider">
+                        Sociedad Demo Exclusiva
+                      </span>
+                      <span className="text-xs font-mono font-bold text-amber-900">
+                        RUT: 77.892.410-K
+                      </span>
+                    </div>
+                    <h3 className="text-xl font-black text-slate-900">
+                      FERRETERIA DON ALI KT LTDA (Ejercicio 2025)
+                    </h3>
+                    <p className="text-xs text-slate-600 max-w-2xl">
+                      Diseñada especialmente para realizar demostraciones comerciales de alto nivel a potenciales clientes. Contiene 10 transacciones diarias por todo 2025 (ventas, compras, honorarios, gastos), nómina de 10 trabajadores con cálculo de Impuesto Único de Segunda Categoría (IUSC), cartolas bancarias 100% conciliables, formularios de IVA F29 mensuales, declaraciones juradas de renta, F.22 y RLI.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowDemoFerreteriaModal(true)}
+                    className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-sm rounded-2xl shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2 cursor-pointer shrink-0"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Cargar / Resetear Demo 2025</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                  <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-amber-200/80">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Transacciones Diarias</p>
+                    <p className="text-sm font-black text-slate-800">10 / día (3.650 año)</p>
+                  </div>
+                  <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-amber-200/80">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Trabajadores Activos</p>
+                    <p className="text-sm font-black text-slate-800">10 con IUSC</p>
+                  </div>
+                  <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-amber-200/80">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Conciliación Bancaria</p>
+                    <p className="text-sm font-black text-slate-800">12 meses (100%)</p>
+                  </div>
+                  <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-amber-200/80">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Impuestos & Renta</p>
+                    <p className="text-sm font-black text-slate-800">F29, DDJJ, RLI, F22</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panel de Purga de Datos de Prueba */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold text-base border border-rose-100">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Contador / Analista</label>
-                    <select name="userId" defaultValue={editingAssignment?.userId || ''} required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                      <option value="">Seleccionar contador o analista...</option>
-                      {users.map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.name} ({u.role === UserRole.ANALYST ? 'Analista' : u.role === UserRole.STUDY_ADMIN ? 'Admin' : 'Contador'}) - {u.email}
-                        </option>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Purga Segura de Datos de Demostración
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Elimina únicamente los documentos contables y transaccionales del estudio de prueba para reiniciar el ambiente sin tocar empresas ni usuarios.
+                    </p>
+                  </div>
+                </div>
+
+                {testPurgeSuccessMessage && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-medium">
+                    {testPurgeSuccessMessage}
+                  </div>
+                )}
+                {testPurgeErrorMessage && (
+                  <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-medium">
+                    {testPurgeErrorMessage}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Empresa Objetivo a Purgar:
+                    </label>
+                    <select
+                      value={testPurgeTargetCompanyId}
+                      onChange={(e) => setTestPurgeTargetCompanyId(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-semibold focus:ring-2 focus:ring-rose-500"
+                    >
+                      <option value="ALL">Todas las empresas del Estudio de Prueba</option>
+                      {companies.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} ({c.rut})</option>
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Empresa Cliente</label>
-                    <select name="companyId" defaultValue={editingAssignment?.companyId || ''} required className="border border-slate-300 p-2.5 w-full rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                      <option value="">Seleccionar empresa...</option>
-                      {companies.map(c => <option key={c.id} value={c.id}>{c.name} (RUT: {c.rut})</option>)}
-                    </select>
-                  </div>
-                  <div className="flex gap-2 pt-2">
-                    <button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2.5 rounded-lg transition-colors">
-                      {editingAssignment ? 'Guardar Cambios' : 'Crear Asignación'}
-                    </button>
-                    {editingAssignment && (
-                      <button type="button" onClick={() => setEditingAssignment(null)} className="border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50">
-                        Cancelar
-                      </button>
-                    )}
-                  </div>
-                </form>
-              </div>
 
-              <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <h3 className="text-lg font-medium text-slate-900 mb-4">Asignaciones Actuales ({assignments.length})</h3>
-                {assignments.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No hay asignaciones creadas.</p>
-                ) : (
-                  <div className="space-y-3 max-h-[350px] overflow-y-auto">
-                    {assignments.map(a => {
-                      const assignedUser = users.find(u => u.id === a.userId);
-                      const assignedCompany = companies.find(c => c.id === a.companyId);
-                      return (
-                        <div key={a.id} className="flex items-center justify-between p-3 border border-slate-100 bg-slate-50 rounded-lg">
-                          <div>
-                            <p className="font-medium text-slate-900">Empresa: {assignedCompany?.name || 'Desconocida'}</p>
-                            <p className="text-sm text-slate-500">
-                              Usuario: {assignedUser?.name || 'Desconocido'} ({assignedUser?.role === UserRole.ANALYST ? 'Analista' : 'Contador'})
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => setEditingAssignment(a)} className="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
-                              Editar
-                            </button>
-                            <button onClick={() => handleDeleteAssignment(a.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">
-                              Eliminar
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Confirmación de Seguridad (Escribe <span className="font-mono text-rose-600">PURGAR_DEMO</span>):
+                    </label>
+                    <input
+                      type="text"
+                      value={testPurgeConfirmation}
+                      onChange={(e) => setTestPurgeConfirmation(e.target.value)}
+                      placeholder="PURGAR_DEMO"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-rose-500"
+                    >
+                    </input>
                   </div>
-                )}
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={handleExecuteTestPurge}
+                    disabled={isTestPurging || testPurgeConfirmation.trim().toUpperCase() !== 'PURGAR_DEMO'}
+                    className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    {isTestPurging ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Purgando datos de prueba...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Ejecutar Purga de Prueba</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           )}
         </div>
       )}
+
+      {/* Modal de Demostración FERRETERIA DON ALI KT LTDA */}
+      <DemoFerreteriaManagerModal
+        isOpen={showDemoFerreteriaModal}
+        onClose={() => setShowDemoFerreteriaModal(false)}
+        studyId={studyId}
+        currentCompany={companies.find(c => isDemoFerreteriaCompany(c)) || selectedCompanyForAccounting}
+        userEmail={currentUserEmail || undefined}
+        userId={currentUserId || undefined}
+        onSuccess={() => {
+          fetchData();
+        }}
+      />
     </div>
   );
 }

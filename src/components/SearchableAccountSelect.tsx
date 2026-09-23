@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Search, X, Check, BookOpen } from 'lucide-react';
 import { ChartOfAccount } from '../types';
+import { sortAccountsNumerically } from '../utils/sortingUtils';
 
 export type Account = ChartOfAccount;
 
@@ -48,10 +49,11 @@ export function SearchableAccountSelect({
   }, []);
 
   const baseAccounts = useMemo(() => {
+    let list = accounts;
     if (filterImputableOnly) {
-      return accounts.filter(a => (a as any).imputable !== false && (a as any).isGrouping !== true);
+      list = accounts.filter(a => (a as any).imputable !== false && (a as any).isGrouping !== true);
     }
-    return accounts;
+    return sortAccountsNumerically(list);
   }, [accounts, filterImputableOnly]);
 
   const filteredAccounts = useMemo(() => {

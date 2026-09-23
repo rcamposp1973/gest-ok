@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 import { APP_VERSION } from '../constants/version';
 import { db } from '../lib/firebase';
-import { collection, addDoc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { LandingTestimonial, LandingPricingPlan } from '../types';
 import { DEFAULT_INITIAL_TESTIMONIALS } from './TestimonialManager';
 import { DEFAULT_INITIAL_PRICING_PLANS } from './PricingManager';
@@ -96,18 +96,47 @@ export default function LandingHome({ onGoToLogin }: LandingHomeProps) {
 
     const unsubPricing = onSnapshot(
       collection(db, 'landing_pricing'),
-      (snapshot) => {
+      async (snapshot) => {
         if (!snapshot.empty) {
-          const items = snapshot.docs
-            .map(d => ({ id: d.id, ...d.data() } as LandingPricingPlan))
-            .filter(p => p.status === 'active');
-          if (items.length > 0) {
-            items.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
-            setPricingPlans(items);
+          const rawDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as LandingPricingPlan));
+          
+          // Filtrar válidos oficiales
+          const validOfficialDocs = rawDocs.filter(
+            p => p.priceUF !== undefined && p.priceUF !== null && p.name && (p.name.toUpperCase().includes('ENTRADA') || p.name.toUpperCase().includes('10') || p.name.toUpperCase().includes('FULL') || p.name.toUpperCase().includes('CORPORATIVO') || p.name.toUpperCase().includes('ESTUDIO'))
+          );
+
+          if (validOfficialDocs.length === 0) {
+            setPricingPlans(DEFAULT_INITIAL_PRICING_PLANS.map((p, idx) => ({ ...p, id: `seed-p-${idx}` })));
+            return;
           }
+
+          // Eliminar duplicados en memoria usando un Map por nombre normalizado
+          const uniqueMap = new Map<string, LandingPricingPlan>();
+          for (const docItem of validOfficialDocs) {
+            if (docItem.status !== 'inactive') {
+              const key = docItem.name.trim().toUpperCase();
+              if (!uniqueMap.has(key)) {
+                uniqueMap.set(key, docItem);
+              }
+            }
+          }
+
+          const items = Array.from(uniqueMap.values());
+          items.sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+
+          if (items.length > 0) {
+            setPricingPlans(items);
+          } else {
+            setPricingPlans(DEFAULT_INITIAL_PRICING_PLANS.map((p, idx) => ({ ...p, id: `seed-p-${idx}` })));
+          }
+        } else {
+          setPricingPlans(DEFAULT_INITIAL_PRICING_PLANS.map((p, idx) => ({ ...p, id: `seed-p-${idx}` })));
         }
       },
-      (err) => console.warn('Aviso lectura planes precios:', err)
+      (err) => {
+        console.warn('Aviso lectura planes precios:', err);
+        setPricingPlans(DEFAULT_INITIAL_PRICING_PLANS.map((p, idx) => ({ ...p, id: `seed-p-${idx}` })));
+      }
     );
 
     return () => {
@@ -708,82 +737,124 @@ export default function LandingHome({ onGoToLogin }: LandingHomeProps) {
           
           <div className="text-center max-w-2xl mx-auto mb-14 space-y-3">
             <span className="text-xs font-bold uppercase tracking-widest text-[#533AFD] bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-              Precios Claros y Transparentes
+              Planes y Precios Oficiales
             </span>
             <h2 className="text-2xl sm:text-4xl font-extrabold text-[#0D253D] tracking-tight">
-              Planes que crecen con tu estudio o empresa
+              Diseñado para contadores independientes y estudios en crecimiento
             </h2>
             <p className="text-sm text-[#425466]">
-              Sin costos ocultos ni cobros por factura emitida. Actualizaciones tributarias incluidas.
+              Sin costos ocultos ni cobros por factura emitida. Actualizaciones tributarias SII y soporte incluidos.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto items-stretch">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto items-stretch">
             {pricingPlans.map((plan) => {
-              const isFreeOrContact = plan.priceCLP === 0;
-              const formattedPrice = isFreeOrContact
-                ? 'A Convenir'
-                : `$${plan.priceCLP.toLocaleString('es-CL')}`;
+              const isCorporate = plan.name.toLowerCase().includes('corporativo') || plan.name.toLowerCase().includes('pymes');
+              const displayPrice = plan.priceText || (plan.priceUF ? `UF ${String(plan.priceUF).replace('.', ',')} + IVA` : (plan.priceCLP ? `$${plan.priceCLP.toLocaleString('es-CL')}` : 'A Convenir'));
+              
+              // Determinar cupos de empresas y usuarios
+              const companiesLimit = plan.maxCompanies 
+                ? (plan.maxCompanies >= 500 ? '500 Empresas' : `${plan.maxCompanies} ${plan.maxCompanies === 1 ? 'Empresa' : 'Empresas'}`)
+                : (plan.name.includes('10') ? '10 Empresas' : plan.name.includes('Full') ? '100 Empresas' : plan.name.includes('Entrada') ? '1 Empresa' : '500 Empresas');
+              
+              const usersLimit = plan.maxUsers
+                ? (plan.maxUsers >= 20 ? '20 Usuarios' : `${plan.maxUsers} ${plan.maxUsers === 1 ? 'Usuario' : 'Usuarios'}`)
+                : (plan.name.includes('10') ? '2 Usuarios' : plan.name.includes('Full') ? '4 Usuarios' : plan.name.includes('Entrada') ? '1 Usuario' : '20 Usuarios');
 
               return (
                 <div
                   key={plan.id}
-                  className={`rounded-3xl p-8 border flex flex-col justify-between relative transition-all ${
+                  className={`rounded-3xl p-6 sm:p-7 border flex flex-col justify-between relative transition-all ${
                     plan.popular
-                      ? 'bg-white border-2 border-[#533AFD] shadow-2xl'
-                      : 'bg-[#F6F9FC] border-slate-200 shadow-xs'
+                      ? 'bg-white border-2 border-[#533AFD] shadow-2xl ring-4 ring-indigo-500/10'
+                      : 'bg-[#F6F9FC] border-slate-200 shadow-xs hover:border-indigo-200 hover:shadow-md'
                   }`}
                 >
                   {plan.popular && (
-                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#533AFD] text-white text-[10px] font-extrabold tracking-wider uppercase px-3 py-1 rounded-full shadow-md">
+                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#533AFD] text-white text-[10px] font-extrabold tracking-wider uppercase px-3 py-1 rounded-full shadow-md whitespace-nowrap">
                       Más Popular para Estudios
                     </div>
                   )}
 
                   <div>
-                    <h3 className="text-lg font-bold text-[#0D253D]">{plan.name}</h3>
-                    {plan.description && (
-                      <p className="text-xs text-[#64748D] mt-1">{plan.description}</p>
-                    )}
-
-                    <div className="mt-5 mb-6">
-                      <span className={`text-3xl sm:text-4xl font-extrabold font-mono ${
-                        plan.popular ? 'text-[#533AFD]' : 'text-[#0D253D]'
-                      }`}>
-                        {formattedPrice}
-                      </span>
-                      <span className="text-xs text-[#64748D] font-medium"> {plan.period}</span>
+                    {/* Header con Nombre y Badge */}
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <h3 className="text-base font-extrabold text-[#0D253D] leading-tight">{plan.name}</h3>
+                      {plan.badge && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 whitespace-nowrap shrink-0">
+                          {plan.badge}
+                        </span>
+                      )}
                     </div>
 
-                    <ul className="space-y-3 text-xs text-[#425466]">
+                    {/* Precio Principal */}
+                    <div className="mt-3 mb-3 pb-3 border-b border-slate-200/70">
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className={`text-2xl sm:text-3xl font-extrabold font-mono ${
+                          plan.popular ? 'text-[#533AFD]' : 'text-[#0D253D]'
+                        }`}>
+                          {displayPrice}
+                        </span>
+                        <span className="text-xs text-[#64748D] font-medium"> {plan.period || '/ mes + IVA'}</span>
+                      </div>
+                      {plan.priceCLP && plan.priceCLP > 0 && (
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          Ref. CLP: ${plan.priceCLP.toLocaleString('es-CL')} / mes
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Subtítulo / Descripción resumida */}
+                    {plan.subtitle && (
+                      <p className="text-xs font-semibold text-slate-700 mb-3 leading-relaxed">{plan.subtitle}</p>
+                    )}
+
+                    {/* Ficha de Capacidad (Empresas y Usuarios) */}
+                    <div className="flex items-center justify-between gap-2 py-2 px-3 bg-slate-100/80 rounded-xl border border-slate-200/70 mb-4 text-xs text-slate-700">
+                      <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>{companiesLimit}</span>
+                      </div>
+                      <span className="text-slate-300">•</span>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                        <Users className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>{usersLimit}</span>
+                      </div>
+                    </div>
+
+                    {/* Lista de Características */}
+                    <ul className="space-y-2.5 text-xs text-[#425466]">
                       {(plan.features || []).map((feature, fIdx) => (
-                        <li key={fIdx} className="flex items-center gap-2">
-                          <Check className={`w-4 h-4 shrink-0 ${plan.popular ? 'text-[#533AFD]' : 'text-[#059669]'}`} />
-                          <span>{feature}</span>
+                        <li key={fIdx} className="flex items-start gap-2">
+                          <Check className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${plan.popular ? 'text-[#533AFD]' : 'text-[#059669]'}`} />
+                          <span className="leading-snug">{feature}</span>
                         </li>
                       ))}
                     </ul>
                   </div>
 
-                  {isFreeOrContact ? (
-                    <a
-                      href="#contacto"
-                      className="mt-8 block text-center py-3 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-xs font-bold text-[#0D253D] rounded-full transition cursor-pointer shadow-xs"
-                    >
-                      Contactar Ventas
-                    </a>
-                  ) : (
-                    <button
-                      onClick={() => onGoToLogin()}
-                      className={`mt-8 w-full py-3.5 px-4 text-xs font-bold rounded-full transition cursor-pointer ${
-                        plan.popular
-                          ? 'bg-[#533AFD] hover:bg-[#4326EB] text-white shadow-lg shadow-indigo-500/25 transform hover:-translate-y-0.5'
-                          : 'bg-white hover:bg-slate-50 border border-slate-300 text-[#0D253D] shadow-xs'
-                      }`}
-                    >
-                      {plan.popular ? 'Probar Estudio Contable' : `Comenzar Plan ${plan.name}`}
-                    </button>
-                  )}
+                  {/* Botón de Acción */}
+                  <div className="pt-6">
+                    {isCorporate ? (
+                      <a
+                        href="#contacto"
+                        className="block text-center py-3 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-xs font-bold text-[#0D253D] rounded-full transition cursor-pointer shadow-xs"
+                      >
+                        Contactar Ventas / Cotizar
+                      </a>
+                    ) : (
+                      <button
+                        onClick={() => onGoToLogin()}
+                        className={`w-full py-3 px-4 text-xs font-bold rounded-full transition cursor-pointer ${
+                          plan.popular
+                            ? 'bg-[#533AFD] hover:bg-[#4326EB] text-white shadow-md shadow-indigo-500/25 transform hover:-translate-y-0.5'
+                            : 'bg-white hover:bg-slate-50 border border-slate-300 text-[#0D253D] shadow-xs'
+                        }`}
+                      >
+                        {plan.popular ? 'Comenzar Plan Estudio Full' : `Contratar ${plan.name}`}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}

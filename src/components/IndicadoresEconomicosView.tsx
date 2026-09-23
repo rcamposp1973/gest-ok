@@ -73,17 +73,19 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
       // Si no existen datos o están vacíos para este año, generar indicadores base oficiales
       if (list.length === 0) {
         const rawGenerated = generateOfficialChileanIndicators(`${yearToLoad}-01-01`);
-        const generated: ExchangeRate[] = rawGenerated.map(item => ({
-          id: item.date,
-          date: item.date,
-          uf: item.uf,
-          dolar: item.dolar,
-          utm: item.utm,
-          euro: item.euro,
-          yen: item.yen,
-          ipc: item.ipc,
-          ipcAcomulado: item.ipcAcomulado
-        }));
+        const generated: ExchangeRate[] = rawGenerated
+          .filter(item => item.date.startsWith(`${yearToLoad}-`))
+          .map(item => ({
+            id: item.date,
+            date: item.date,
+            uf: item.uf,
+            dolar: item.dolar,
+            utm: item.utm,
+            euro: item.euro,
+            yen: item.yen,
+            ipc: item.ipc,
+            ipcAcomulado: item.ipcAcomulado
+          }));
 
         // Guardar lote en Firestore
         const batch = writeBatch(db);
@@ -97,6 +99,44 @@ export default function IndicadoresEconomicosView({ studyId, selectedYear }: Ind
           type: 'info',
           text: `Se inicializaron automáticamente los indicadores oficiales del Banco Central y SII para el año ${yearToLoad}.`
         });
+      } else {
+        // Verificar y corregir posibles inconsistencias intra-mes en UTM e IPC
+        const fullGenerated = generateOfficialChileanIndicators(`${yearToLoad}-01-01`);
+        const genMap = new Map(fullGenerated.map(g => [g.date, g]));
+        let hasInconsistencies = false;
+
+        const healedList = list.map(item => {
+          const expected = genMap.get(item.date);
+          if (expected) {
+            // Si la UTM o IPC difiere dentro del mes o la UF tiene un salto anómalo mayor a $300 en un solo día
+            const isUtmMismatch = Math.abs((item.utm || 0) - expected.utm) > 500;
+            const isUfAnomaly = Math.abs((item.uf || 0) - expected.uf) > 300;
+            if (isUtmMismatch || isUfAnomaly) {
+              hasInconsistencies = true;
+              return {
+                ...item,
+                uf: expected.uf,
+                utm: expected.utm,
+                ipc: expected.ipc,
+                ipcAcomulado: expected.ipcAcomulado,
+                dolar: item.dolar || expected.dolar,
+                euro: item.euro || expected.euro,
+                yen: item.yen || expected.yen
+              };
+            }
+          }
+          return item;
+        });
+
+        if (hasInconsistencies) {
+          const batch = writeBatch(db);
+          healedList.forEach(item => {
+            const docRef = doc(db, 'studies', studyId, 'exchangeRates', item.date);
+            batch.set(docRef, item);
+          });
+          await batch.commit();
+          list = healedList;
+        }
       }
 
       // Ordenar por fecha ascendente

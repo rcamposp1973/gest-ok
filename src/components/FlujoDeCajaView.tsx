@@ -388,7 +388,7 @@ export default function FlujoDeCajaView({
               onChange={(e) => setSelectedYear(parseInt(e.target.value))}
               className="bg-white border border-slate-300 rounded font-bold px-2 py-0.5 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500"
             >
-              {[2028, 2027, 2026, 2025, 2024, 2023].map(y => (
+              {[2027, 2026, 2025].map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>

@@ -32,7 +32,8 @@ import {
   Receipt,
   FileText,
   UserCheck,
-  Key
+  Key,
+  X
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import JuniorAITrainingCenter from './JuniorAITrainingCenter';
@@ -46,6 +47,7 @@ const COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'
 export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSystemMonitorProps) {
   // State
   const [studies, setStudies] = useState<Study[]>([]);
+  const [studySearchQuery, setStudySearchQuery] = useState<string>('');
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [superUsers, setSuperUsers] = useState<SuperUser[]>([]);
@@ -442,6 +444,20 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
       (a, b) => b.activityCount + b.companiesCount - (a.activityCount + a.companiesCount)
     );
   }, [studies, companies, recentLogs]);
+
+  const filteredStudyRanking = useMemo(() => {
+    if (!studySearchQuery.trim()) return studyRanking;
+    const q = studySearchQuery.toLowerCase().trim();
+    const cleanQ = q.replace(/[^0-9kK]/g, '');
+
+    return studyRanking.filter(({ study }) => {
+      const nameMatch = study.name?.toLowerCase().includes(q);
+      const rutRawMatch = study.rut?.toLowerCase().includes(q);
+      const rutCleanMatch = cleanQ.length > 0 && study.rut?.replace(/[^0-9kK]/g, '').toLowerCase().includes(cleanQ);
+      const emailMatch = (study.adminEmail || study.email || '')?.toLowerCase().includes(q);
+      return nameMatch || rutRawMatch || rutCleanMatch || emailMatch;
+    });
+  }, [studyRanking, studySearchQuery]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -1046,14 +1062,35 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
       {/* TAB 3: STUDIES & CAPACITY BREAKDOWN */}
       {activeTab === 'studies' && (
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
               <h3 className="text-sm font-black text-slate-900">
-                Resumen de Estudios Contables y Capacidad de Empresas
+                Resumen de Estudios Contables y Capacidad de Empresas ({studies.length})
               </h3>
               <p className="text-xs text-slate-500">
                 Monitoreo de límites de plan y empresas creadas por cada estudio.
               </p>
+            </div>
+
+            {/* Quick search input */}
+            <div className="relative w-full sm:w-72">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={studySearchQuery}
+                onChange={(e) => setStudySearchQuery(e.target.value)}
+                placeholder="Buscar por nombre o RUT..."
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all outline-hidden text-slate-800 placeholder:text-slate-400 font-medium"
+              />
+              {studySearchQuery && (
+                <button
+                  onClick={() => setStudySearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1071,7 +1108,7 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {studyRanking.map(({ study, companiesCount, activityCount }) => {
+                {filteredStudyRanking.map(({ study, companiesCount, activityCount }) => {
                   const maxComp = study.maxCompanies || 10;
                   const pct = Math.min(100, Math.round((companiesCount / maxComp) * 100));
                   const isVigente = study.estado === 'Vigente' || study.estado === undefined;
@@ -1131,6 +1168,15 @@ export default function SuperAdminSystemMonitor({ onSelectStudy }: SuperAdminSys
                     </tr>
                   );
                 })}
+                {filteredStudyRanking.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400 italic">
+                      {studies.length === 0
+                        ? 'No hay estudios registrados actualmente.'
+                        : `No se encontraron estudios que coincidan con "${studySearchQuery}".`}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

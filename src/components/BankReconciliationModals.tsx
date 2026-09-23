@@ -15,6 +15,7 @@ import {
 } from '../types';
 import { getNextOpenPeriodAndDate, checkIsPeriodClosed } from '../utils/periodUtils';
 import { SearchableAuxiliarySelect } from './SearchableAuxiliarySelect';
+import { useDraggableModal } from '../hooks/useDraggableModal';
 import {
   Plus,
   Trash2,
@@ -26,7 +27,9 @@ import {
   Calculator,
   ChevronRight,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Move,
+  GripHorizontal
 } from 'lucide-react';
 
 interface ImportCSVModalProps {
@@ -54,19 +57,33 @@ function ImportCSVModalContent({
   onImport,
   currentPeriod
 }: ImportCSVModalProps) {
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen: true });
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center border-b pb-2">
-          <div>
-            <h4 className="text-sm font-black text-slate-900 uppercase flex items-center gap-1.5">
-              <span>📥</span> Importar Cartola Bancaria (Saldos Acumulativos Multimes)
-            </h4>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Al importar, los movimientos se grabarán automáticamente y encadenarán los saldos de mes a mes.
-            </p>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto border border-slate-200"
+      >
+        <div
+          {...dragProps}
+          className="flex justify-between items-center border-b pb-2 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
+          <div className="flex items-center gap-2">
+            <div className="p-1 rounded bg-slate-100 text-slate-400 hover:text-slate-600">
+              <Move className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-slate-900 uppercase flex items-center gap-1.5">
+                <span>📥</span> Importar Cartola Bancaria (Saldos Acumulativos Multimes)
+              </h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Al importar, los movimientos se grabarán automáticamente y encadenarán los saldos de mes a mes.
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 font-bold text-lg">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 font-bold text-lg p-1">
             ✕
           </button>
         </div>
@@ -175,23 +192,37 @@ function ManualMatchModalContent({
   onMatch,
   selectedPeriod
 }: ManualMatchModalProps & { manualMatchLine: BankStatementLine }) {
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen: true });
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-5 space-y-4 max-h-[90vh] flex flex-col">
-        <div className="flex justify-between items-center border-b pb-2">
-          <div>
-            <h4 className="text-sm font-black text-slate-900 uppercase flex items-center gap-1.5">
-              <span>🔗</span> Conciliar Partida con Asiento (Mismo Mes o Distinto Mes)
-            </h4>
-            <div className="text-xs text-slate-600 mt-0.5">
-              Línea Cartola: <strong className="text-slate-900">{manualMatchLine.description}</strong> ({manualMatchLine.date}) — Monto:{' '}
-              <strong className={manualMatchLine.charge > 0 ? 'text-rose-700' : 'text-emerald-700'}>
-                ${((manualMatchLine.charge || 0) + (manualMatchLine.deposit || 0)).toLocaleString('es-CL')} (
-                {manualMatchLine.charge > 0 ? 'Cargo / Egreso' : 'Abono / Ingreso'})
-              </strong>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-5 space-y-4 max-h-[90vh] flex flex-col border border-slate-200"
+      >
+        <div
+          {...dragProps}
+          className="flex justify-between items-center border-b pb-2 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
+          <div className="flex items-center gap-2">
+            <div className="p-1 rounded bg-slate-100 text-slate-400 hover:text-slate-600">
+              <Move className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-slate-900 uppercase flex items-center gap-1.5">
+                <span>🔗</span> Conciliar Partida con Asiento (Mismo Mes o Distinto Mes)
+              </h4>
+              <div className="text-xs text-slate-600 mt-0.5">
+                Línea Cartola: <strong className="text-slate-900">{manualMatchLine.description}</strong> ({manualMatchLine.date}) — Monto:{' '}
+                <strong className={manualMatchLine.charge > 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                  ${((manualMatchLine.charge || 0) + (manualMatchLine.deposit || 0)).toLocaleString('es-CL')} (
+                  {manualMatchLine.charge > 0 ? 'Cargo / Egreso' : 'Abono / Ingreso'})
+                </strong>
+              </div>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 font-bold text-lg">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 font-bold text-lg p-1">
             ✕
           </button>
         </div>
@@ -1467,18 +1498,45 @@ function QuickVoucherModalContent({
     }
   };
 
+  // Global F2 keyboard shortcut to submit voucher
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSubmit();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleSubmit]);
+
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen: true });
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full my-auto overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full my-auto overflow-hidden flex flex-col max-h-[92vh] border border-slate-200"
+      >
         {/* Header */}
-        <div className="p-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex justify-between items-center shadow-sm">
-          <div>
-            <h4 className="text-sm font-black uppercase tracking-wider flex items-center gap-2">
-              <span>⚡</span> Contabilizar Partida Bancaria Automática
-            </h4>
-            <p className="text-xs text-indigo-200 mt-0.5">
-              Imputación directa con validación estricta de análisis según Plan de Cuentas
-            </p>
+        <div
+          {...dragProps}
+          className="p-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex justify-between items-center shadow-sm cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1 rounded bg-white/10 text-slate-300 hover:text-white" title="Arrastrar ventana">
+              <Move className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black uppercase tracking-wider flex items-center gap-2">
+                <span>⚡</span> Contabilizar Partida Bancaria Automática
+              </h4>
+              <p className="text-xs text-indigo-200 mt-0.5">
+                Imputación directa con validación estricta de análisis según Plan de Cuentas (Ventana movible)
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -2429,9 +2487,11 @@ function QuickVoucherModalContent({
           </button>
           <button
             onClick={handleSubmit}
-            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2 hover:scale-[1.01] active:scale-[0.99]"
+            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
           >
-            <span>✓</span> Crear Asiento, Conciliar y Guardar
+            <span>✓</span>
+            <span>Crear Asiento, Conciliar y Guardar</span>
+            <kbd className="ml-1.5 px-1.5 py-0.5 bg-emerald-800 text-emerald-100 rounded text-[10px] font-mono border border-emerald-500/60 shadow-xs">F2</kbd>
           </button>
         </div>
       </div>

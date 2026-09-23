@@ -3,6 +3,7 @@ import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { SuperUser } from '../types';
 import { ShieldCheck, UserPlus, Edit3, Trash2, CheckCircle2, XCircle, Key, Eye, EyeOff, AlertTriangle, Phone, Mail, ShieldAlert } from 'lucide-react';
+import { formatRut } from '../utils/rutMatcher';
 
 export default function SuperUsersManager() {
   const [superUsers, setSuperUsers] = useState<SuperUser[]>([]);
@@ -129,7 +130,7 @@ export default function SuperUsersManager() {
         const updatePayload: any = {
           name: cleanName,
           email: cleanEmail,
-          rut: formData.rut?.trim() || '',
+          rut: formatRut(formData.rut || ''),
           phone: formData.phone?.trim() || '',
           estado: formData.estado || 'Activo',
         };
@@ -142,7 +143,7 @@ export default function SuperUsersManager() {
         await addDoc(collection(db, 'superUsers'), {
           name: cleanName,
           email: cleanEmail,
-          rut: formData.rut?.trim() || '',
+          rut: formatRut(formData.rut || ''),
           phone: formData.phone?.trim() || '',
           password: formData.password,
           estado: formData.estado || 'Activo',
@@ -311,7 +312,7 @@ export default function SuperUsersManager() {
                     <tr key={user.id || user.email} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-3.5">
                         <div className="font-bold text-slate-900">{user.name}</div>
-                        {user.rut && <div className="text-[11px] font-mono text-slate-500">RUT: {user.rut}</div>}
+                        {user.rut && <div className="text-[11px] font-mono text-slate-500">RUT: {formatRut(user.rut)}</div>}
                       </td>
                       <td className="p-3.5 font-mono text-slate-700">
                         <div className="flex items-center gap-1.5">
@@ -426,7 +427,8 @@ export default function SuperUsersManager() {
                   <input
                     type="text"
                     value={formData.rut || ''}
-                    onChange={(e) => setFormData({ ...formData, rut: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, rut: formatRut(e.target.value) })}
+                    onBlur={(e) => setFormData({ ...formData, rut: formatRut(e.target.value) })}
                     placeholder="12.345.678-9"
                     className="w-full border border-slate-300 rounded-lg p-2.5 font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />

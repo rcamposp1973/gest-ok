@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, doc, setDoc, getDocs, query } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, getDocs, updateDoc, query } from 'firebase/firestore';
 import {
   BankStatementLine,
   ChartOfAccount,
@@ -15,6 +15,8 @@ import { extractRutFromGloss, areRutsEqual, ExtractedRutInfo } from '../utils/ru
 import { sanitizeForFirestore } from '../utils/bankReconciliationUtils';
 import { logAuditEvent } from '../utils/auditLogger';
 import { getNextOpenPeriodAndDate, checkIsPeriodClosed } from '../utils/periodUtils';
+import { useDraggableModal } from '../hooks/useDraggableModal';
+import { Move } from 'lucide-react';
 
 export interface AutoRutMatchModalProps {
   isOpen: boolean;
@@ -516,6 +518,22 @@ function AutoRutMatchModalContent({
           };
         }
 
+        // Mark RCV Document as Pagada / Cancelada in Firestore
+        if (item.matchedDocument?.id) {
+          try {
+            const rcvDocRef = doc(db, `studies/${studyId}/companies/${company.id}/rcvDocuments`, item.matchedDocument.id);
+            await updateDoc(rcvDocRef, {
+              estadoPago: 'Pagada',
+              estadoCobranza: 'Pagada',
+              saldoPendiente: 0,
+              voucherId: voucherRef.id,
+              updatedAt: new Date().toISOString()
+            });
+          } catch (rcvErr) {
+            console.warn('Warning updating matched RCV document:', rcvErr);
+          }
+        }
+
         // Memorize learned rule for Junior
         if (item.rutInfo?.rutClean) {
           const prevTimes = newLearnedRules[item.rutInfo.rutClean]?.timesApplied || 0;
@@ -587,18 +605,27 @@ function AutoRutMatchModalContent({
     }
   };
 
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen: true });
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
-      <div className={`bg-white rounded-2xl shadow-2xl max-w-6xl w-full border-2 overflow-hidden flex flex-col max-h-[92vh] ${
-        themeMode === 'NUEZ_MARIPOSA' ? 'border-amber-400/80 shadow-amber-500/20' : 'border-rose-600/80 shadow-rose-600/20'
-      }`}>
+    <div className="fixed inset-0 z-50 bg-slate-900/30 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+      <div
+        style={modalStyle}
+        className={`bg-white rounded-2xl shadow-2xl max-w-6xl w-full border-2 overflow-hidden flex flex-col max-h-[92vh] ${
+          themeMode === 'NUEZ_MARIPOSA' ? 'border-amber-400/80 shadow-amber-500/20' : 'border-rose-600/80 shadow-rose-600/20'
+        }`}
+      >
         
         {/* Animated Banner Header */}
-        <div className={`p-4 sm:p-5 text-white relative flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-500 ${
-          themeMode === 'NUEZ_MARIPOSA' 
-            ? 'bg-gradient-to-r from-amber-950 via-amber-900 to-yellow-950' 
-            : 'bg-gradient-to-r from-slate-950 via-rose-950 to-slate-900 border-b border-rose-500/40'
-        }`}>
+        <div
+          {...dragProps}
+          className={`p-4 sm:p-5 text-white relative flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-500 cursor-grab active:cursor-grabbing select-none ${
+            themeMode === 'NUEZ_MARIPOSA' 
+              ? 'bg-gradient-to-r from-amber-950 via-amber-900 to-yellow-950' 
+              : 'bg-gradient-to-r from-slate-950 via-rose-950 to-slate-900 border-b border-rose-500/40'
+          }`}
+          title="Haz clic y arrastra para mover esta ventana"
+        >
           <div className="flex items-center gap-3">
             
             {/* ICON: ANIMATED NUEZ MARIPOSA / CEREBRO or MAZINGER-Z */}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, doc, setDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, getDoc, addDoc, doc, setDoc, query, where } from 'firebase/firestore';
 import {
   Company,
   ChartOfAccount,
@@ -20,13 +20,16 @@ import {
 import { checkIsPeriodClosed, getLatestOpenPeriod, getNextOpenPeriodAndDate } from '../utils/periodUtils';
 import { logAuditEvent } from '../utils/auditLogger';
 import { sanitizeVoucherLines } from '../utils/voucherValidation';
+import { notify } from '../context/ToastContext';
 import {
   getPreviousPeriod,
   getNextPeriod,
   recalculateRunningBalances,
+  mergeStatementLines,
   sanitizeForFirestore,
   calculateReconciliationMath,
-  getDuplicateVouchersMap
+  getDuplicateVouchersMap,
+  isMatchingBankReconciliation
 } from '../utils/bankReconciliationUtils';
 import {
   Filter,
@@ -49,10 +52,13 @@ import {
   Maximize2,
   Minimize2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Landmark,
+  Save
 } from 'lucide-react';
 import { ImportCSVModal, ManualMatchModal, QuickVoucherModal } from './BankReconciliationModals';
 import AutoRutMatchModal from './AutoRutMatchModal';
+import JuniorGlossAutomationModal from './JuniorGlossAutomationModal';
 import BankCartolaSmartImportModal from './BankCartolaSmartImportModal';
 import PendingItemsReportModal from './PendingItemsReportModal';
 import { parseChileanNumber } from '../utils/bankCartolaParser';
@@ -87,7 +93,10 @@ interface ConciliacionBancariaViewProps {
   projects?: ProjectMaster[];
   products?: ProductMaster[];
   customAnalysisItems?: CustomAnalysisTableItem[];
+  currentUserRole?: string;
   onVouchersUpdated?: () => void;
+  onAccountsUpdated?: () => void;
+  onClose?: () => void;
 }
 
 export default function ConciliacionBancariaView({
@@ -103,7 +112,8 @@ export default function ConciliacionBancariaView({
   projects = [],
   products = [],
   customAnalysisItems = [],
-  onVouchersUpdated
+  onVouchersUpdated,
+  onClose
 }: ConciliacionBancariaViewProps) {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('');
   const [selectedPeriod, setSelectedPeriod] = useState<string>(() => getLatestOpenPeriod(fiscalYears));
@@ -142,9 +152,11 @@ export default function ConciliacionBancariaView({
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState<boolean>(false);
 
   // Modals
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState<boolean>(false);
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
   const [showSmartImportModal, setShowSmartImportModal] = useState<boolean>(false);
   const [showAutoRutModal, setShowAutoRutModal] = useState<boolean>(false);
+  const [showJuniorGlossModal, setShowJuniorGlossModal] = useState<boolean>(false);
   const [showPendingReportModal, setShowPendingReportModal] = useState<boolean>(false);
   const [pastedCSV, setPastedCSV] = useState<string>('');
   const [importInitialBalance, setImportInitialBalance] = useState<number>(0);
@@ -164,6 +176,9 @@ export default function ConciliacionBancariaView({
 
   // Dual Panels Layout: 'side-by-side' (Lado a Lado) | 'stacked' (Arriba / Abajo)
   const [panelsLayout, setPanelsLayout] = useState<'side-by-side' | 'stacked'>('side-by-side');
+
+  // Full Screen Mode
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
 
   const companyRef = doc(db, 'studies', studyId, 'companies', company.id);
 
@@ -215,16 +230,16 @@ export default function ConciliacionBancariaView({
       const prevPeriodStr = getPreviousPeriod(activePeriod);
 
       // Sort all previous reconciliations for this account chronologically
-      const prevRec = recs.find(r => r.bankAccountId === selectedBankAccountId && r.period === prevPeriodStr);
-      const autoInitialBalance = prevRec ? prevRec.bankFinalBalance : 0;
+      const prevRec = recs.find(r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === prevPeriodStr);
+      const autoInitialBalance = prevRec?.bankFinalBalance !== undefined ? prevRec.bankFinalBalance : 0;
 
       // Load matching reconciliation if exists for current account and period
-      const existing = recs.find(r => r.bankAccountId === selectedBankAccountId && r.period === activePeriod);
+      const existing = recs.find(r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === activePeriod);
       if (existing) {
         setStatementLines(existing.lines || []);
         const initBal = existing.bankInitialBalance !== undefined ? existing.bankInitialBalance : autoInitialBalance;
         setBankInitialBalanceInput(initBal);
-        setBankFinalBalanceInput(existing.bankFinalBalance || 0);
+        setBankFinalBalanceInput(existing.bankFinalBalance !== undefined ? existing.bankFinalBalance : 0);
         setNotes(existing.notes || '');
       } else {
         setStatementLines([]);
@@ -241,7 +256,7 @@ export default function ConciliacionBancariaView({
     if (selectedBankAccountId) {
       fetchReconciliations();
     }
-  }, [selectedBankAccountId, selectedPeriod]);
+  }, [selectedBankAccountId, selectedPeriod, vouchers]);
 
   // Set of voucher IDs currently matched in the active in-memory cartola
   const currentMatchedVoucherIds = useMemo(() => {
@@ -256,7 +271,7 @@ export default function ConciliacionBancariaView({
   const otherPeriodsMatchedVouchers = useMemo(() => {
     const map = new Map<string, { period: string; voucherNumber?: number }>();
     savedReconciliations.forEach(r => {
-      if (r.bankAccountId === selectedBankAccountId && r.id !== currentRecId && r.lines) {
+      if (isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.id !== currentRecId && r.lines) {
         r.lines.forEach(l => {
           if (l.matchedStatus === 'Conciliado' && l.matchedVoucherId) {
             map.set(l.matchedVoucherId, { period: r.period, voucherNumber: l.matchedVoucherNumber });
@@ -265,7 +280,7 @@ export default function ConciliacionBancariaView({
       }
     });
     return map;
-  }, [savedReconciliations, selectedBankAccountId, currentRecId]);
+  }, [savedReconciliations, selectedBankAccount, selectedBankAccountId, currentRecId]);
 
   // All Bank Vouchers in accounting (any period)
   const allBankVouchers = useMemo(() => {
@@ -427,7 +442,7 @@ export default function ConciliacionBancariaView({
     if (!selectedBankAccount) return [];
 
     const accountRecs = savedReconciliations
-      .filter(r => r.bankAccountId === selectedBankAccountId)
+      .filter(r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId))
       .sort((a, b) => a.period.localeCompare(b.period));
 
     const currentPeriodExists = accountRecs.some(r => r.period === selectedPeriod);
@@ -526,7 +541,7 @@ export default function ConciliacionBancariaView({
         // Build combined statement lines across all historical periods for math calculation
         const combinedAllLines: (BankStatementLine & { period: string })[] = [];
         savedReconciliations.forEach(r => {
-          if (r.bankAccountId === selectedBankAccount.id && r.period !== period && r.lines) {
+          if (isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period !== period && r.lines) {
             r.lines.forEach(l => {
               combinedAllLines.push({
                 ...l,
@@ -579,7 +594,7 @@ export default function ConciliacionBancariaView({
 
         // Update local savedReconciliations
         setSavedReconciliations(prev => {
-          const idx = prev.findIndex(r => r.id === recId);
+          const idx = prev.findIndex(r => r.id === recId || (isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === period));
           if (idx >= 0) {
             const next = [...prev];
             next[idx] = recData;
@@ -591,7 +606,7 @@ export default function ConciliacionBancariaView({
         // Cascade/update initial balance of the subsequent month if it exists
         const nextPeriodStr = getNextPeriod(period);
         const nextRec = savedReconciliations.find(
-          r => r.bankAccountId === selectedBankAccount.id && r.period === nextPeriodStr
+          r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === nextPeriodStr
         );
         if (nextRec && nextRec.bankInitialBalance !== finalBal) {
           const { updatedLines: nextLines, finalBalance: nextFinalBal } = recalculateRunningBalances(
@@ -645,7 +660,7 @@ export default function ConciliacionBancariaView({
     if (!selectedBankAccount) return;
 
     if (statementLines.length === 0) {
-      alert(`La cartola del período ${selectedPeriod} para ${selectedBankAccount.name} ya se encuentra vacía.`);
+      notify.info(`La cartola del período ${selectedPeriod} para ${selectedBankAccount.name} ya se encuentra vacía.`, 'Cartola Vacía');
       return;
     }
 
@@ -653,10 +668,9 @@ export default function ConciliacionBancariaView({
     const conciliatedLines = statementLines.filter(l => l.matchedStatus === 'Conciliado');
 
     if (conciliatedLines.length > 0) {
-      alert(
-        `⚠️ NO SE PUEDE ANULAR LA CARTOLA DEL PERÍODO ${selectedPeriod}\n\n` +
-        `Esta cartola contiene ${conciliatedLines.length} movimiento(s) en estado "Conciliado".\n\n` +
-        `Para poder anular, borrar o volver a cargar la cartola de este mes, debes primero desconciliar o desvincular los movimientos marcados como Conciliados.`
+      notify.warning(
+        `Esta cartola contiene ${conciliatedLines.length} movimiento(s) en estado "Conciliado". Para poder anularla o recargarla, desconcilia primero los movimientos vinculados.`,
+        `No se puede anular (${selectedPeriod})`
       );
       return;
     }
@@ -674,10 +688,10 @@ export default function ConciliacionBancariaView({
       setBankFinalBalanceInput(bankInitialBalanceInput);
       await persistReconciliation(selectedPeriod, [], bankInitialBalanceInput, bankInitialBalanceInput);
 
-      alert(`✅ Cartola del período ${selectedPeriod} anulada correctamente. Ahora puedes volver a cargar la cartola limpia.`);
+      notify.success(`Cartola del período ${selectedPeriod} anulada correctamente. Ahora puedes volver a cargar la cartola limpia.`, 'Cartola Anulada');
     } catch (err: any) {
       console.error("Error al anular cartola:", err);
-      alert("Error al anular la cartola: " + (err.message || 'Error desconocido'));
+      notify.error("Error al anular la cartola: " + (err.message || 'Error desconocido'));
     }
   };
 
@@ -687,7 +701,7 @@ export default function ConciliacionBancariaView({
     const lineInCurrent = statementLines.find(l => l.id === lineId);
     if (lineInCurrent) {
       if (lineInCurrent.matchedStatus === 'Conciliado') {
-        alert('⚠️ No se puede eliminar un movimiento que ya está conciliado. Desvincula el comprobante contable primero.');
+        notify.warning('No se puede eliminar un movimiento que ya está conciliado. Desvincula el comprobante contable primero.', 'Movimiento Conciliado');
         return;
       }
       const amt = (lineInCurrent.charge || 0) + (lineInCurrent.deposit || 0);
@@ -701,6 +715,7 @@ export default function ConciliacionBancariaView({
       setBankFinalBalanceInput(finalBalance);
       await persistReconciliation(selectedPeriod, updatedLines, bankInitialBalanceInput, finalBalance);
       await fetchReconciliations();
+      notify.success('Movimiento eliminado de la cartola.', 'Cartola Actualizada');
       return;
     }
 
@@ -710,7 +725,7 @@ export default function ConciliacionBancariaView({
         const lineInRec = rec.lines.find(l => l.id === lineId);
         if (lineInRec) {
           if (lineInRec.matchedStatus === 'Conciliado') {
-            alert('⚠️ No se puede eliminar un movimiento que ya está conciliado. Desvincula el comprobante contable primero.');
+            notify.warning('No se puede eliminar un movimiento que ya está conciliado. Desvincula el comprobante contable primero.', 'Movimiento Conciliado');
             return;
           }
           const amt = (lineInRec.charge || 0) + (lineInRec.deposit || 0);
@@ -722,6 +737,7 @@ export default function ConciliacionBancariaView({
           const { updatedLines, finalBalance } = recalculateRunningBalances(filtered, rec.bankInitialBalance || 0);
           await persistReconciliation(rec.period, updatedLines, rec.bankInitialBalance || 0, finalBalance);
           await fetchReconciliations();
+          notify.success('Movimiento eliminado del período ' + rec.period, 'Cartola Actualizada');
           return;
         }
       }
@@ -825,22 +841,73 @@ export default function ConciliacionBancariaView({
 
     const sortedPeriods = Array.from(periodMap.keys()).sort();
     let progressiveBalance = importInitialBalance;
-    let totalSavedCount = 0;
+    let totalAddedCount = 0;
+    let totalDuplicatesCount = 0;
+    let summaryDetail = '';
 
     for (const p of sortedPeriods) {
-      const pLines = periodMap.get(p)!;
-      const initialForThisPeriod = progressiveBalance;
-      const { updatedLines, finalBalance } = recalculateRunningBalances(pLines, initialForThisPeriod);
+      const pNewLines = periodMap.get(p)!;
+      let pExistingLines: BankStatementLine[] = [];
+      let pInitialBal = 0;
+      let foundExisting = false;
+
+      if (p === selectedPeriod && statementLines.length > 0) {
+        pExistingLines = [...statementLines];
+        pInitialBal = bankInitialBalanceInput;
+        foundExisting = true;
+      }
+
+      if (!foundExisting && selectedBankAccount) {
+        try {
+          const cleanCode = (selectedBankAccount.code || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const docSnap = await getDoc(doc(companyRef, 'bankReconciliations', `${cleanCode}_${p}`));
+          if (docSnap.exists()) {
+            const data = docSnap.data() as BankReconciliation;
+            pExistingLines = data.lines || [];
+            pInitialBal = data.bankInitialBalance !== undefined ? data.bankInitialBalance : 0;
+            foundExisting = true;
+          }
+        } catch (e) {
+          console.warn('Error fetching direct reconciliation doc:', e);
+        }
+      }
+
+      if (!foundExisting) {
+        const rec = savedReconciliations.find(
+          r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === p
+        );
+        if (rec) {
+          pExistingLines = rec.lines || [];
+          pInitialBal = rec.bankInitialBalance !== undefined ? rec.bankInitialBalance : 0;
+          foundExisting = true;
+        }
+      }
+
+      if (!foundExisting || pExistingLines.length === 0) {
+        const prevP = getPreviousPeriod(p);
+        const prevRec = savedReconciliations.find(
+          r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === prevP
+        );
+        pInitialBal = prevRec?.bankFinalBalance !== undefined ? prevRec.bankFinalBalance : (progressiveBalance || importInitialBalance);
+      }
+
+      // Merge new lines with existing lines and skip duplicates
+      const { mergedLines, addedCount, duplicateCount } = mergeStatementLines(pExistingLines, pNewLines);
+      totalAddedCount += addedCount;
+      totalDuplicatesCount += duplicateCount;
+
+      const effectiveInitial = pExistingLines.length > 0 ? pInitialBal : (progressiveBalance || importInitialBalance);
+      const { updatedLines, finalBalance } = recalculateRunningBalances(mergedLines, effectiveInitial);
       progressiveBalance = finalBalance;
 
       // Auto-save this period to Firestore
-      await persistReconciliation(p, updatedLines, initialForThisPeriod, finalBalance);
-      totalSavedCount += updatedLines.length;
+      await persistReconciliation(p, updatedLines, effectiveInitial, finalBalance);
+      summaryDetail += `\n• Período ${p}: ${mergedLines.length} movimientos totales (+${addedCount} añadidos, ${duplicateCount} omitidos) → Saldo Final: $${finalBalance.toLocaleString('es-CL')}`;
 
       // If this period matches the selected period, update active view state
       if (p === selectedPeriod) {
         setStatementLines(updatedLines);
-        setBankInitialBalanceInput(initialForThisPeriod);
+        setBankInitialBalanceInput(effectiveInitial);
         setBankFinalBalanceInput(finalBalance);
       }
     }
@@ -852,10 +919,12 @@ export default function ConciliacionBancariaView({
 
     setShowImportModal(false);
     setPastedCSV('');
-    await fetchReconciliations();
+    await fetchReconciliations(sortedPeriods[0] || selectedPeriod);
 
     alert(
-      `✅ Cartola importada y grabada automáticamente:\n• ${totalSavedCount} movimientos distribuidos en ${sortedPeriods.length} período(s) (${sortedPeriods.join(', ')}).\n• Saldo Inicial: $${importInitialBalance.toLocaleString('es-CL')}\n• Saldo Final Acumulado: $${progressiveBalance.toLocaleString('es-CL')}.`
+      `✅ Cartola importada, fusionada y grabada con éxito:\n• ${totalAddedCount} movimientos incorporados.\n` +
+      (totalDuplicatesCount > 0 ? `• ${totalDuplicatesCount} duplicados omitidos.\n` : '') +
+      `• Movimientos ordenados cronológicamente.${summaryDetail}\n• Saldo Final: $${progressiveBalance.toLocaleString('es-CL')}.`
     );
   };
 
@@ -1002,21 +1071,15 @@ export default function ConciliacionBancariaView({
     setStatementLines(finalLines);
     await persistReconciliation(selectedPeriod, finalLines, bankInitialBalanceInput, bankFinalBalanceInput);
 
-    let summaryMessage = `⚡ Match Automático completado y grabado:\n• ${matchedInPeriodCount} partidas conciliadas en el mes actual (${selectedPeriod})\n• ${matchedCrossPeriodCount} partidas regularizadas cruzando otros períodos.`;
-
     if (duplicateSkippedReasons.length > 0) {
-      summaryMessage += `\n\n⚠️ PARTIDAS OMITIDAS POR DUPLICIDAD EN CONTABILIDAD (${duplicateSkippedReasons.length}):\n`;
-      summaryMessage += `Se detectaron movimientos con 2 o más comprobantes contables con el mismo monto (posibles comprobantes duplicados por el contador). Por seguridad y auditoría, NO fueron conciliados automáticamente:\n`;
-      duplicateSkippedReasons.slice(0, 5).forEach((d, idx) => {
-        summaryMessage += `\n${idx + 1}. [${d.type}] ${d.lineDescription} ($${d.amount.toLocaleString('es-CL')}): Coincide con ${d.duplicateCount} comprobantes (Asientos ${d.voucherNumbers.map(n => `N° ${n}`).join(', ')} en ${d.scope}).`;
-      });
-      if (duplicateSkippedReasons.length > 5) {
-        summaryMessage += `\n... y ${duplicateSkippedReasons.length - 5} partidas más.`;
-      }
-      summaryMessage += `\n\n👉 Revise y elimine el comprobante duplicado en el libro contable o realice el match manual si corresponde.`;
+      const detailMsg = `• ${matchedInPeriodCount} partidas conciliadas (${selectedPeriod})\n• ${matchedCrossPeriodCount} cruzadas con otros períodos.\n⚠️ ${duplicateSkippedReasons.length} omitidas por comprobantes duplicados con igual monto.`;
+      notify.warning(detailMsg, 'Match Automático con Observaciones', 6000);
+    } else {
+      notify.success(
+        `• ${matchedInPeriodCount} partidas conciliadas (${selectedPeriod})\n• ${matchedCrossPeriodCount} regularizadas cruzando otros períodos.`,
+        '⚡ Match Automático Completado'
+      );
     }
-
-    alert(summaryMessage);
   };
 
   // 4. Toggle manual match / unmatch + Immediate Auto-Save
@@ -1117,6 +1180,32 @@ export default function ConciliacionBancariaView({
     }
   };
 
+  // Helper: Desconciliar todos los movimientos del período activo
+  const handleUnmatchAll = async () => {
+    if (statementLines.length === 0) {
+      notify.info(`La cartola del período ${selectedPeriod} no tiene movimientos.`, 'Sin Movimientos');
+      return;
+    }
+    const conciliated = statementLines.filter(l => l.matchedStatus === 'Conciliado');
+    if (conciliated.length === 0) {
+      notify.info('No hay movimientos en estado "Conciliado" en este período para desconciliar.', 'Sin Movimientos Conciliados');
+      return;
+    }
+    if (!window.confirm(`¿Estás seguro de desconciliar los ${conciliated.length} movimientos de ${selectedPeriod}?\n\nLos comprobantes contables quedarán liberados como pendientes.`)) {
+      return;
+    }
+    const updated = statementLines.map(l => ({
+      ...l,
+      matchedStatus: 'Pendiente' as const,
+      matchedVoucherId: undefined,
+      matchedVoucherNumber: undefined,
+      matchedVoucherPeriod: undefined
+    }));
+    setStatementLines(updated);
+    await persistReconciliation(selectedPeriod, updated, bankInitialBalanceInput, bankFinalBalanceInput);
+    notify.success(`Se desconciliaron ${conciliated.length} movimientos del período ${selectedPeriod}.`, 'Desconciliación Masiva');
+  };
+
   // 6. Quick Post Unaccounted Bank Fee or Income + Auto-Match + Immediate Auto-Save
   const handleQuickPostVoucher = async (customData?: {
     period: string;
@@ -1127,14 +1216,14 @@ export default function ConciliacionBancariaView({
     newAuxiliaryToSave?: Auxiliary;
   }) => {
     if (!quickVoucherLine || !selectedBankAccount) {
-      alert('Información del movimiento bancario no disponible.');
+      notify.error('Información del movimiento bancario no disponible.');
       return;
     }
 
     const counterAccId = customData?.counterAccountId || quickExpenseAccountId;
     const counterAcc = accounts.find(a => a.id === counterAccId);
     if (!counterAcc && (!customData?.lines || customData.lines.length === 0)) {
-      alert('Seleccione la cuenta de contrapartida (Gasto Bancario / Ingreso).');
+      notify.warning('Seleccione la cuenta de contrapartida (Gasto Bancario / Ingreso).', 'Falta Cuenta');
       return;
     }
 
@@ -1144,7 +1233,7 @@ export default function ConciliacionBancariaView({
 
     const periodCheck = checkIsPeriodClosed(targetPeriod, fiscalYears);
     if (periodCheck.isClosed) {
-      alert(`⚠️ Acción Bloqueada:\n\n${periodCheck.errorMsg}\n\nNo puedes registrar comprobantes en un período cerrado.`);
+      notify.warning(`No puedes registrar comprobantes en un período cerrado: ${periodCheck.errorMsg}`, 'Período Cerrado');
       return;
     }
 
@@ -1283,15 +1372,17 @@ export default function ConciliacionBancariaView({
         }
       }
 
-      alert(
+      notify.success(
         effective.wasShifted
-          ? `✅ Comprobante N° ${nextVoucherNumber} generado el ${targetDate} (Período ${targetPeriod}, por estar cerrado el mes original ${effective.originalPeriod}), conciliado y guardado automáticamente.`
-          : `✅ Comprobante N° ${nextVoucherNumber} generado en período ${targetPeriod} (${targetDate}), conciliado y guardado automáticamente.`
+          ? `Comprobante N° ${nextVoucherNumber} generado el ${targetDate} (Período ${targetPeriod}, por estar cerrado el mes original ${effective.originalPeriod}), conciliado y guardado automáticamente.`
+          : `Comprobante N° ${nextVoucherNumber} generado en período ${targetPeriod} (${targetDate}), conciliado y guardado automáticamente.`,
+        '✅ Comprobante Contabilizado y Conciliado',
+        4200
       );
       if (onVouchersUpdated) onVouchersUpdated();
     } catch (err: any) {
       console.error('Error posting quick voucher:', err);
-      alert('Error: ' + err.message);
+      notify.error('Error al generar comprobante: ' + err.message);
     }
   };
 
@@ -1324,8 +1415,9 @@ export default function ConciliacionBancariaView({
     const source = unifiedHistoricalCartola.length > 0 ? unifiedHistoricalCartola : allStatementLines;
     source.forEach(l => {
       const d = (l.date || '').trim();
-      const yr = d.slice(0, 4) || (l.period ? l.period.slice(0, 4) : '');
-      const mo = d.slice(5, 7) || (l.period ? l.period.slice(5, 7) : '');
+      const linePeriod = (l as any).period || '';
+      const yr = d.slice(0, 4) || (linePeriod ? linePeriod.slice(0, 4) : '');
+      const mo = d.slice(5, 7) || (linePeriod ? linePeriod.slice(5, 7) : '');
       if (cartolaYearFilter === 'TODOS' || yr === cartolaYearFilter) {
         if (counts[mo] !== undefined) {
           counts[mo] = (counts[mo] || 0) + 1;
@@ -1481,154 +1573,224 @@ export default function ConciliacionBancariaView({
   }, [manualMatchLine, allBankVouchers, modalScope, modalExactOnly, modalSearch, selectedPeriod]);
 
   return (
-    <div className="space-y-4">
-      {/* Top Header with Auto-Save Badge */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🏦</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">
-              Conciliación Bancaria Multiatributo y Multimes
-            </h3>
+    <div className="fixed inset-0 z-50 bg-[#0b1329]/70 backdrop-blur-xs flex flex-col w-screen h-screen overflow-hidden animate-in fade-in duration-150">
+      {/* HEADER DE VENTANA EMERGENTE - PANTALLA COMPLETA SIN DISTRACTORES */}
+      <div className="bg-slate-900 text-white px-4 py-2.5 flex items-center justify-between border-b border-slate-800 shrink-0 shadow-lg z-20">
+        {/* Lado Izquierdo: Icono, Título y Nombre Empresa */}
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white border border-indigo-400/40 shadow-inner shrink-0">
+            <Landmark className="w-4 h-4 text-indigo-100" />
           </div>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <p className="text-xs text-slate-500">
-              Saldos encadenados y acumulativos mes a mes ({company.name})
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold tracking-tight text-white uppercase">
+                Conciliación Bancaria Inteligente
+              </h2>
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">
+                Pantalla Completa
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 font-medium">
+              {company.name} • RUT: {company.rut}
             </p>
-            {/* Auto-save real-time indicator */}
-            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-              {autoSaveStatus === 'SAVING' && (
-                <>
-                  <span className="animate-spin text-indigo-600">⏳</span>
-                  <span className="text-indigo-700">Guardando en la base de datos...</span>
-                </>
-              )}
-              {autoSaveStatus === 'SAVED' && (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span className="text-emerald-800">Grabado automático ({lastSavedTime})</span>
-                </>
-              )}
-              {autoSaveStatus === 'ERROR' && (
-                <>
-                  <span className="text-rose-600">⚠️</span>
-                  <span className="text-rose-700">{saveMessage || 'Error al guardar'}</span>
-                </>
-              )}
-            </div>
-
-            {/* Persistence & state retention badge */}
-            <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200" title="Su progreso de conciliación, filtros y cartola activa se mantienen intactos al cambiar de pestaña dentro del sistema.">
-              <span>⚡</span>
-              <span>Estado Retenido en Navegación</span>
-            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => {
-              const csvContent =
-                'data:text/csv;charset=utf-8,\uFEFFFecha;Descripcion;N_Doc;Cargo;Abono;Saldo\n2026-08-01;PAGO PROVEEDOR FACTURA 1024;1024;50000;0;450000\n2026-08-02;ABONO CLIENTE TRANSFERENCIA;TR-12;0;120000;570000\n2026-08-05;COMISION MANTENCION CTA;COM;5500;0;564500';
-              const encodedUri = encodeURI(csvContent);
-              const link = document.createElement('a');
-              link.setAttribute('href', encodedUri);
-              link.setAttribute('download', `Plantilla_Cartola_Bancaria.csv`);
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
-            title="Descargar plantilla CSV para subir cartolas"
-          >
-            <span>📊</span>
-            <span>Plantilla CSV</span>
-          </button>
-
-          <button
-            onClick={() => setShowSmartImportModal(true)}
-            className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black rounded-lg shadow-sm transition-all flex items-center gap-1.5 border border-indigo-400/30"
-            title="Lectura inteligente de cartolas Excel / CSV de cualquier banco chileno con deduplicación y cuadratura"
-          >
-            <span>🏦</span>
-            <span>Lectura Inteligente Cartola</span>
-            <span className="bg-white/20 text-[9px] px-1 py-0.2 rounded uppercase font-bold">Smart</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setImportInitialBalance(bankInitialBalanceInput);
-              setShowImportModal(true);
-            }}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5 shadow-2xs"
-          >
-            <span>📥</span>
-            <span>Importar CSV / Pegar</span>
-          </button>
-
-          {/* ANULAR / LIMPIAR CARTOLA DEL MES BUTTON */}
-          <button
-            onClick={handleClearCartolaPeriod}
-            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-lg border border-rose-200 transition-colors flex items-center gap-1.5 shadow-2xs"
-            title="Anular o borrar la cartola cargada de este mes si no tiene movimientos conciliados"
-          >
-            <span>🗑️</span>
-            <span>Anular Cartola</span>
-          </button>
-
-          {/* NUEZ MARIPOSA / AUTO RUT MATCH BUTTON */}
-          <button
-            onClick={() => setShowAutoRutModal(true)}
-            className="relative group px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center gap-1.5 border-2 border-amber-300 overflow-hidden"
-            title="Nuez Mariposa: Match y Contabilización Automática por RUT en Cartola"
-          >
-            {/* Glowing aura */}
-            <span className="absolute -inset-1 bg-amber-400/50 rounded-xl blur-xs opacity-75 group-hover:opacity-100 transition animate-pulse"></span>
-            <span className="relative flex items-center gap-1.5">
-              <svg className="w-4 h-4 text-slate-950 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2C8 2 5 4.5 5 8c0 2 1 3.5 2.5 4.5C6 13.5 5 15 5 17c0 3 3 5 7 5s7-2 7-5c0-2-1-3.5-2.5-4.5C18 11.5 19 10 19 8c0-3.5-3-6-7-6z" fill="currentColor" opacity="0.25" />
-                <path d="M12 2v20" strokeDasharray="2 2" />
-                <path d="M7.5 8c1-.5 2.5 0 3 1s0 2.5-1 3" />
-                <path d="M16.5 8c-1-.5-2.5 0-3 1s0 2.5 1 3" />
-              </svg>
-              <span className="uppercase tracking-tight font-extrabold">🧠 Nuez Mariposa (RUT Match)</span>
-              <span className="bg-amber-950 text-amber-300 text-[9px] px-1.5 py-0.5 rounded font-mono font-black">PRO</span>
-            </span>
-          </button>
-
-          <button
-            onClick={handleAutoMatch}
-            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-            title="Cruce automático de montos idénticos en el mes y entre otros meses"
-          >
-            <span>⚡</span>
-            <span>Match Automático Multimes</span>
-          </button>
-
-          <button
-            onClick={() => setShowPendingReportModal(true)}
-            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center gap-1.5 border border-slate-700"
-            title="Ver reporte oficial de partidas pendientes de conciliación bancaria"
-          >
-            <span>📑</span>
-            <span>Partidas Pendientes</span>
-          </button>
+        {/* Lado Derecho: Auto-guardado, Guardar, Acciones y Botón Cerrar */}
+        <div className="flex items-center gap-2.5">
+          {/* Indicador de Auto-guardado en tiempo real */}
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+            {autoSaveStatus === 'SAVING' && (
+              <>
+                <span className="animate-spin text-indigo-400">⏳</span>
+                <span className="text-indigo-300">Guardando...</span>
+              </>
+            )}
+            {autoSaveStatus === 'SAVED' && (
+              <>
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-emerald-300">Grabado automático ({lastSavedTime})</span>
+              </>
+            )}
+            {autoSaveStatus === 'ERROR' && (
+              <>
+                <span className="text-rose-400">⚠️</span>
+                <span className="text-rose-300">{saveMessage || 'Error al guardar'}</span>
+              </>
+            )}
+          </div>
 
           <button
             onClick={async () => {
               await persistReconciliation(selectedPeriod, statementLines, bankInitialBalanceInput, bankFinalBalanceInput);
-              alert('💾 Conciliación bancaria verificada y sincronizada en Firestore.');
+              alert('💾 Conciliación bancaria verificada y sincronizada.');
             }}
-            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer border border-emerald-500"
           >
-            <span>💾</span>
-            <span>Guardar Ahora</span>
+            <Save className="w-3.5 h-3.5 text-emerald-100" />
+            <span>Guardar Acta</span>
           </button>
+
+          {/* Consolidated Actions Dropdown */}
+          <div className="relative inline-block text-left">
+            <button
+              type="button"
+              onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
+              className="px-3 py-1.5 bg-[#533AFD] hover:bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-all border border-indigo-400/30"
+            >
+              <span>⚡ Acciones y Herramientas</span>
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+
+            {isActionsDropdownOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setIsActionsDropdownOpen(false)} 
+                />
+                <div className="absolute right-0 mt-1.5 w-72 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-50 text-xs divide-y divide-slate-100">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Importación & Plantillas
+                  </div>
+                  <div className="py-1">
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); setShowSmartImportModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">🏦</span>
+                      <div>
+                        <div className="font-bold text-slate-800">Importar Cartola Excel / Smart</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Lectura inteligente cualquier banco</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); setImportInitialBalance(bankInitialBalanceInput); setShowImportModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">📥</span>
+                      <div>
+                        <div className="font-bold text-slate-800">Importar CSV / Pegar Texto</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Pegado directo de cartolas</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsActionsDropdownOpen(false);
+                        const csvContent = 'data:text/csv;charset=utf-8,\uFEFFFecha;Descripcion;N_Doc;Cargo;Abono;Saldo\n2026-08-01;PAGO PROVEEDOR FACTURA 1024;1024;50000;0;450000\n2026-08-02;ABONO CLIENTE TRANSFERENCIA;TR-12;0;120000;570000\n2026-08-05;COMISION MANTENCION CTA;COM;5500;0;564500';
+                        const encodedUri = encodeURI(csvContent);
+                        const link = document.createElement('a');
+                        link.setAttribute('href', encodedUri);
+                        link.setAttribute('download', `Plantilla_Cartola_Bancaria.csv`);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">📊</span>
+                      <div>
+                        <div className="font-bold text-slate-800">Descargar Plantilla CSV</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Formato modelo estándar</div>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Automatización & Cruces
+                  </div>
+                  <div className="py-1">
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); handleAutoMatch(); }}
+                      className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">⚡</span>
+                      <div>
+                        <div className="font-bold text-slate-800">Auto-Conciliar con IA / Multimes</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Cruce exacto en mes y cruzado</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); setShowAutoRutModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-amber-900 hover:bg-amber-50 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">🧠</span>
+                      <div>
+                        <div className="font-bold text-amber-900">Nuez Mariposa (RUT Match)</div>
+                        <div className="text-[10px] text-amber-700 font-normal">Match y asiento automático por RUT</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); setShowJuniorGlossModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-indigo-900 hover:bg-indigo-50 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">🤖</span>
+                      <div>
+                        <div className="font-bold text-indigo-900">Junior: Contabilizar por Glosa</div>
+                        <div className="text-[10px] text-indigo-700 font-normal">Reglas automáticas por glosa</div>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Reportes & Mantenimiento
+                  </div>
+                  <div className="py-1">
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); setShowPendingReportModal(true); }}
+                      className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">📑</span>
+                      <div>
+                        <div className="font-bold text-slate-800">Exportar Informe / Partidas Pendientes</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Reporte oficial de conciliación</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); handleUnmatchAll(); }}
+                      className="w-full text-left px-3 py-1.5 text-amber-700 hover:bg-amber-50 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">🔄</span>
+                      <div>
+                        <div className="font-bold text-amber-800">Desconciliar Todo el Período</div>
+                        <div className="text-[10px] text-amber-600 font-normal">Liberar comprobantes del mes</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setIsActionsDropdownOpen(false); handleClearCartolaPeriod(); }}
+                      className="w-full text-left px-3 py-1.5 text-rose-700 hover:bg-rose-50 font-semibold flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="text-base">🗑️</span>
+                      <div>
+                        <div className="font-bold text-rose-700">Anular / Limpiar Cartola del Mes</div>
+                        <div className="text-[10px] text-rose-500 font-normal">Borrar movimientos no conciliados</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Botón Cerrar Modal */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-rose-950/80 hover:border-rose-600/60 text-slate-300 hover:text-rose-200 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer border border-slate-700 group ml-1"
+              title="Cerrar ventana emergente de conciliación bancaria"
+            >
+              <X className="w-4 h-4 text-slate-400 group-hover:text-rose-300" />
+              <span>Cerrar</span>
+            </button>
+          )}
         </div>
       </div>
 
+      {/* ÁREA DE TRABAJO SCROLLABLE */}
+      <div className="flex-1 overflow-y-auto bg-slate-100 p-3 md:p-4 space-y-3">
+
       {/* Control Bar: Account, Period, Cumulative Balance Control */}
-      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3.5 text-xs">
+      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs">
         <div>
           <label className="block font-bold text-slate-700 mb-1">Cuenta Bancaria:</label>
           <select
@@ -2655,42 +2817,106 @@ export default function ConciliacionBancariaView({
         selectedBankAccount={selectedBankAccount}
         selectedPeriod={selectedPeriod}
         existingLines={statementLines}
+        allExistingLines={allStatementLines}
         currentInitialBalance={bankInitialBalanceInput}
         onImportComplete={async ({ newLines, initialBalance, finalBalance, bankName }) => {
-          // Check if lines span multiple periods based on line.date (YYYY-MM)
+          // Group new lines by period (YYYY-MM)
           const periodBuckets = new Map<string, BankStatementLine[]>();
-
-          // Merge non-duplicate new lines with existing lines and sort chronologically
-          const combined = [...statementLines, ...newLines].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-
-          combined.forEach(line => {
+          newLines.forEach(line => {
             const p = line.date && line.date.length >= 7 ? line.date.slice(0, 7) : selectedPeriod;
             if (!periodBuckets.has(p)) periodBuckets.set(p, []);
             periodBuckets.get(p)!.push(line);
           });
 
           const sortedPeriods = Array.from(periodBuckets.keys()).sort();
-          let runningInitial = initialBalance;
           let summaryPeriodsText = '';
+          let totalAddedAll = 0;
+          let totalDuplicatesAll = 0;
 
           for (const p of sortedPeriods) {
-            const pLines = periodBuckets.get(p)!;
-            const { updatedLines, finalBalance: pFinal } = recalculateRunningBalances(pLines, runningInitial);
-            await persistReconciliation(p, updatedLines, runningInitial, pFinal);
-            summaryPeriodsText += `\n• Período ${p}: ${pLines.length} movimientos (Saldo Final: $${pFinal.toLocaleString('es-CL')})`;
+            const pNewLines = periodBuckets.get(p)!;
+            
+            // Find existing lines for this period
+            let pExistingLines: BankStatementLine[] = [];
+            let pInitialBalance = 0;
+            let foundExisting = false;
+
+            if (p === selectedPeriod && statementLines.length > 0) {
+              pExistingLines = [...statementLines];
+              pInitialBalance = bankInitialBalanceInput;
+              foundExisting = true;
+            }
+
+            if (!foundExisting && selectedBankAccount) {
+              try {
+                const cleanCode = (selectedBankAccount.code || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+                const docSnap = await getDoc(doc(companyRef, 'bankReconciliations', `${cleanCode}_${p}`));
+                if (docSnap.exists()) {
+                  const data = docSnap.data() as BankReconciliation;
+                  pExistingLines = data.lines || [];
+                  pInitialBalance = data.bankInitialBalance !== undefined ? data.bankInitialBalance : 0;
+                  foundExisting = true;
+                }
+              } catch (e) {
+                console.warn('Error fetching direct reconciliation doc in modal import:', e);
+              }
+            }
+
+            if (!foundExisting) {
+              const rec = savedReconciliations.find(
+                r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === p
+              );
+              if (rec) {
+                pExistingLines = rec.lines || [];
+                pInitialBalance = rec.bankInitialBalance !== undefined ? rec.bankInitialBalance : 0;
+                foundExisting = true;
+              }
+            }
+
+            if (!foundExisting || pExistingLines.length === 0) {
+              // Find previous period final balance if exists
+              const prevP = getPreviousPeriod(p);
+              const prevRec = savedReconciliations.find(
+                r => isMatchingBankReconciliation(r, selectedBankAccount, selectedBankAccountId) && r.period === prevP
+              );
+              pInitialBalance = prevRec?.bankFinalBalance !== undefined ? prevRec.bankFinalBalance : (initialBalance || 0);
+            }
+
+            // Merge existing lines with new lines
+            const { mergedLines, addedCount, duplicateCount } = mergeStatementLines(pExistingLines, pNewLines);
+            totalAddedAll += addedCount;
+            totalDuplicatesAll += duplicateCount;
+
+            // Determine effective initial balance:
+            const effectiveInitial = pExistingLines.length > 0 ? pInitialBalance : (pInitialBalance || initialBalance || 0);
+
+            // Recalculate running balance for all sorted lines
+            const { updatedLines, finalBalance: pFinal } = recalculateRunningBalances(mergedLines, effectiveInitial);
+
+            // Persist
+            await persistReconciliation(p, updatedLines, effectiveInitial, pFinal);
+            summaryPeriodsText += `\n• Período ${p}: ${mergedLines.length} movimientos totales (${addedCount} nuevos añadidos, ${duplicateCount} duplicados omitidos) → Saldo Final: $${pFinal.toLocaleString('es-CL')}`;
 
             if (p === selectedPeriod) {
-              setBankInitialBalanceInput(runningInitial);
+              setBankInitialBalanceInput(effectiveInitial);
               setBankFinalBalanceInput(pFinal);
               setStatementLines(updatedLines);
             }
-            runningInitial = pFinal;
           }
 
-          await fetchReconciliations();
+          // If single imported period and different from current selectedPeriod, switch to it
+          if (sortedPeriods.length === 1 && sortedPeriods[0] !== selectedPeriod) {
+            setSelectedPeriod(sortedPeriods[0]);
+          }
+
+          await fetchReconciliations(sortedPeriods[0] || selectedPeriod);
 
           alert(
-            `✅ Cartola de ${bankName} inyectada con éxito:\n• ${newLines.length} nuevos movimientos procesados.${summaryPeriodsText}\n• Guardado automáticamente en Firestore.`
+            `✅ Cartola de ${bankName} procesada e integrada con éxito:\n` +
+            `• ${totalAddedAll} nuevos movimientos incorporados a la cartola.\n` +
+            (totalDuplicatesAll > 0 ? `• ${totalDuplicatesAll} movimientos duplicados omitidos.\n` : '') +
+            `• Movimientos fusionados y ordenados por fecha cronológica.${summaryPeriodsText}\n` +
+            `• Guardado y respaldado automáticamente en Firestore.`
           );
         }}
       />
@@ -2778,6 +3004,30 @@ export default function ConciliacionBancariaView({
         outstandingChecks={allBankVouchers.filter(bv => !bv.isMatchedInCurrent && !bv.isMatchedInOther && (bv.credit || 0) > 0)}
         depositsInTransit={allBankVouchers.filter(bv => !bv.isMatchedInCurrent && !bv.isMatchedInOther && (bv.debit || 0) > 0)}
       />
+
+      <JuniorGlossAutomationModal
+        isOpen={showJuniorGlossModal}
+        onClose={() => setShowJuniorGlossModal(false)}
+        studyId={studyId}
+        company={company}
+        accounts={accounts}
+        vouchers={vouchers}
+        auxiliaries={auxiliaries || []}
+        fiscalYears={fiscalYears}
+        selectedBankAccountId={selectedBankAccountId}
+        costCenters={costCenters}
+        expenseItems={expenseItems}
+        projects={projects}
+        products={products}
+        customAnalysisItems={customAnalysisItems}
+        onSuccess={async () => {
+          await fetchReconciliations();
+          if (onVouchersUpdated) {
+            onVouchersUpdated();
+          }
+        }}
+      />
+      </div>
     </div>
   );
 }

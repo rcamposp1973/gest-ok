@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, writeBatch, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ChartOfAccount, Company } from '../types';
+import { compareAccountCodes } from '../utils/sortingUtils';
 import * as XLSX from 'xlsx';
 import {
   FileSpreadsheet,
@@ -768,7 +769,7 @@ export default function PlanDeCuentasGrid({ studyId, company, onRefreshCompany }
       if (columnFilters.ifrs && !acc.codigoIFRS?.toLowerCase().includes(columnFilters.ifrs.toLowerCase())) return false;
 
       return matchesSearch && matchesType && matchesImputable;
-    });
+    }).sort((a, b) => compareAccountCodes(a.code, b.code));
   }, [accounts, searchTerm, filterType, filterImputable, columnFilters]);
 
   return (

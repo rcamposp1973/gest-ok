@@ -8,6 +8,7 @@ import {
   ProductMaster, 
   CustomAnalysisTableItem 
 } from '../types';
+import { formatRut } from '../utils/rutMatcher';
 import { 
   X, 
   Building2, 
@@ -23,8 +24,10 @@ import {
   Mail,
   Phone,
   FileText,
-  Sparkles
+  Sparkles,
+  Move
 } from 'lucide-react';
+import { useDraggableModal } from '../hooks/useDraggableModal';
 
 interface AuxiliaryModalProps {
   isOpen: boolean;
@@ -77,6 +80,23 @@ export default function AuxiliaryModal({
 
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Global F2 keyboard shortcut to save
+  useEffect(() => {
+    if (!isOpen || isReadOnly) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        e.stopPropagation();
+        const formEl = document.querySelector('form[data-aux-modal-form="true"]') as HTMLFormElement | null;
+        if (formEl) {
+          formEl.requestSubmit();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isReadOnly]);
 
   // Sincronizar formulario cuando cambia editingAuxiliary o isOpen
   useEffect(() => {
@@ -147,7 +167,7 @@ export default function AuxiliaryModal({
 
   // RUT Formatter
   const handleRutChange = (val: string) => {
-    setRut(val.toUpperCase());
+    setRut(formatRut(val));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -163,7 +183,7 @@ export default function AuxiliaryModal({
       setSaving(true);
       setErrorMessage('');
       await onSave({
-        rut: rut.trim().toUpperCase(),
+        rut: formatRut(rut),
         name: name.trim().toUpperCase(),
         role,
         email: email.trim().toLowerCase(),
@@ -190,24 +210,33 @@ export default function AuxiliaryModal({
     }
   };
 
+  const { dragProps, modalStyle } = useDraggableModal({ isOpen });
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4 overflow-y-auto">
+      <div
+        style={modalStyle}
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden my-8"
+      >
         
         {/* CABECERA DEL MODAL */}
-        <div className="bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800">
+        <div
+          {...dragProps}
+          className="bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800 cursor-grab active:cursor-grabbing select-none"
+          title="Haz clic y arrastra para mover esta ventana"
+        >
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30">
-              <Building2 className="w-5 h-5" />
+            <div className="p-2 bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30" title="Arrastrar ventana">
+              <Move className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
                 {editingAuxiliary ? 'Modificar Ficha de Auxiliar' : 'Registrar Nuevo Auxiliar (Cliente / Proveedor)'}
               </h2>
               <p className="text-xs text-slate-400">
-                Gestión de cuentas corrientes de auxiliares y parámetros de análisis por defecto
+                Gestión de cuentas corrientes de auxiliares y parámetros por defecto (Ventana movible)
               </p>
             </div>
           </div>
@@ -228,7 +257,7 @@ export default function AuxiliaryModal({
         )}
 
         {/* FORMULARIO */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+        <form data-aux-modal-form="true" onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
 
           {/* SECCIÓN 1: DATOS IDENTIFICATORIOS */}
           <div className="space-y-4">
@@ -246,7 +275,8 @@ export default function AuxiliaryModal({
                   type="text"
                   value={rut}
                   onChange={(e) => handleRutChange(e.target.value)}
-                  placeholder="Ej. 76123456-7"
+                  onBlur={(e) => setRut(formatRut(e.target.value))}
+                  placeholder="Ej. 76.123.456-7"
                   required
                   disabled={isReadOnly}
                   className="w-full px-3 py-2 text-xs font-mono font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 focus:bg-white"
@@ -691,7 +721,7 @@ export default function AuxiliaryModal({
             <button
               type="submit"
               disabled={saving || isReadOnly}
-              className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl shadow-md transition-all flex items-center gap-2"
+              className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
             >
               {saving ? (
                 <>
@@ -702,6 +732,7 @@ export default function AuxiliaryModal({
                 <>
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{editingAuxiliary ? 'Guardar Cambios' : 'Registrar Auxiliar'}</span>
+                  <kbd className="ml-1 px-1.5 py-0.5 bg-indigo-800 text-indigo-100 rounded text-[10px] font-mono border border-indigo-400/40 shadow-xs font-bold">F2</kbd>
                 </>
               )}
             </button>

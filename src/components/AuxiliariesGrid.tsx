@@ -34,7 +34,8 @@ import {
   FileText
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { validateRutModulo11, cleanRutString, formatChileanRut } from '../utils/rutMatcher';
+import { validateRutModulo11, cleanRutString, formatChileanRut, formatRut } from '../utils/rutMatcher';
+import { compareRuts } from '../utils/sortingUtils';
 import AuxiliaryUpgradeModal from './AuxiliaryUpgradeModal';
 
 export interface RutAnalysis {
@@ -298,10 +299,12 @@ export default function AuxiliariesGrid({
 
       // Búsqueda global
       const q = globalSearch.toLowerCase().trim();
+      const cleanQ = cleanRutString(q);
       if (q) {
         const matchesGlobal =
           (aux.rut || '').toLowerCase().includes(q) ||
           analysis.formatted.toLowerCase().includes(q) ||
+          (cleanQ && cleanRutString(aux.rut || '').includes(cleanQ)) ||
           (aux.name || '').toLowerCase().includes(q) ||
           (aux.defaultGloss || '').toLowerCase().includes(q) ||
           (aux.email || '').toLowerCase().includes(q) ||
@@ -311,7 +314,11 @@ export default function AuxiliariesGrid({
       }
 
       // Filtros por columna en el encabezado
-      if (columnFilters.rut && !(aux.rut || '').toLowerCase().includes(columnFilters.rut.toLowerCase().trim()) && !analysis.formatted.toLowerCase().includes(columnFilters.rut.toLowerCase().trim())) {
+      const cleanColRut = cleanRutString(columnFilters.rut);
+      if (columnFilters.rut && 
+          !(aux.rut || '').toLowerCase().includes(columnFilters.rut.toLowerCase().trim()) && 
+          !analysis.formatted.toLowerCase().includes(columnFilters.rut.toLowerCase().trim()) &&
+          !(cleanColRut && cleanRutString(aux.rut || '').includes(cleanColRut))) {
         return false;
       }
       if (columnFilters.name && !(aux.name || '').toLowerCase().includes(columnFilters.name.toLowerCase().trim())) {
@@ -359,12 +366,14 @@ export default function AuxiliariesGrid({
   // Ordenamiento secundario
   const sortedAuxiliaries = useMemo(() => {
     return [...filteredAuxiliaries].sort((a, b) => {
+      if (sortBy === 'rut') {
+        const cmp = compareRuts(a.rut, b.rut);
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+
       let valA = '';
       let valB = '';
-      if (sortBy === 'rut') {
-        valA = (a.rut || '').toLowerCase();
-        valB = (b.rut || '').toLowerCase();
-      } else if (sortBy === 'name') {
+      if (sortBy === 'name') {
         valA = (a.name || '').toLowerCase();
         valB = (b.name || '').toLowerCase();
       } else if (sortBy === 'role') {

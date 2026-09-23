@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
 import { printAndLogOfficialBook } from '../utils/folioService';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Scale, Printer, Download } from 'lucide-react';
 
 interface Balance8ColumnasViewProps {
   studyId?: string;
@@ -10,6 +10,8 @@ interface Balance8ColumnasViewProps {
   accounts: ChartOfAccount[];
   fiscalYears: FiscalPeriodYear[];
   onOpenAuditor?: () => void;
+  onNavigateToLibroDiario?: () => void;
+  onFixCeecVouchers?: () => Promise<void>;
 }
 
 interface BalanceRow {
@@ -32,7 +34,9 @@ export default function Balance8ColumnasView({
   vouchers,
   accounts,
   fiscalYears,
-  onOpenAuditor
+  onOpenAuditor,
+  onNavigateToLibroDiario,
+  onFixCeecVouchers
 }: Balance8ColumnasViewProps) {
   const [periodFilter, setPeriodFilter] = useState<string>('Todos');
   const [dateFrom, setDateFrom] = useState<string>('');
@@ -95,17 +99,20 @@ export default function Balance8ColumnasView({
       if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
       if (dateFrom && v.date < dateFrom) return false;
       if (dateTo && v.date > dateTo) return false;
-      return v.status === 'Descuadrado' || v.isDescuadrado || Math.abs((v.totalDebit || 0) - (v.totalCredit || 0)) > 0.01;
+      const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+      const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+      return Math.abs(vDeb - vCred) > 0.01;
     });
 
     // Sum movements ONLY from valid, perfectly balanced vouchers (Strict Partida Doble)
     const validVouchers = vouchers.filter(v => {
       if (v.status === 'Anulado') return false;
-      if (v.status === 'Descuadrado' || v.isDescuadrado) return false;
-      if (Math.abs((v.totalDebit || 0) - (v.totalCredit || 0)) > 0.01) return false;
       if (periodFilter !== 'Todos' && v.period !== periodFilter) return false;
       if (dateFrom && v.date < dateFrom) return false;
       if (dateTo && v.date > dateTo) return false;
+      const vDeb = v.totalDebit ?? v.lines?.reduce((s, l) => s + (Number(l.debit) || 0), 0) ?? 0;
+      const vCred = v.totalCredit ?? v.lines?.reduce((s, l) => s + (Number(l.credit) || 0), 0) ?? 0;
+      if (Math.abs(vDeb - vCred) > 0.01) return false;
       return true;
     });
 
@@ -518,73 +525,66 @@ export default function Balance8ColumnasView({
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">⚖️</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Balance Tributario de 8 Columnas</h3>
+      <div className="bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs flex flex-wrap justify-between items-center gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center text-indigo-700 border border-indigo-200/60">
+            <Scale className="w-4 h-4" />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Matriz estándar de Sumas, Saldos, Inventario y Resultados ({company.name} - RUT: {company.rut})
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border ${
+          <h3 className="text-sm font-bold text-slate-900 tracking-tight uppercase">Balance Tributario de 8 Columnas</h3>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
             isFullyBalanced 
               ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
               : 'bg-rose-50 text-rose-800 border-rose-300'
           }`}>
-            <span>{isFullyBalanced ? '✓ Balance Cuadrado' : '⚠️ Descuadre Detectado'}</span>
-          </div>
+            {isFullyBalanced ? '✓ Cuadrado' : '⚠️ Descuadrado'}
+          </span>
+        </div>
 
+        <div className="flex items-center gap-1.5 flex-wrap">
           {onOpenAuditor && (
             <button
               onClick={onOpenAuditor}
-              className="px-3 py-1.5 bg-indigo-900 hover:bg-indigo-950 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border border-indigo-700"
+              className="px-2.5 py-1.5 bg-indigo-900 hover:bg-indigo-950 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border border-indigo-700 cursor-pointer"
               title="Auditar este Balance de 8 Columnas y emitir Dictamen Oficial"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-indigo-300" />
-              <span>Auditar Estados Financieros</span>
+              <span className="hidden sm:inline">Auditar</span>
+            </button>
+          )}
+          {descuadradosCount > 0 && onFixCeecVouchers && (
+            <button
+              onClick={onFixCeecVouchers}
+              className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg border border-amber-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+              title="Detectar y regularizar automáticamente comprobantes con Crédito Especial Constructora CEEC"
+            >
+              <span className="text-sm">⚡</span>
             </button>
           )}
           <button
             onClick={handlePrintOfficialBook}
             disabled={isPrintingOfficial}
-            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            className="px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50 cursor-pointer"
             title="Emisión de Balance General de 8 Columnas con numeración correlativa y folios timbrados por el SII"
           >
-            <span>🖨️</span>
-            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Balance Oficial (Folios SII)'}</span>
+            <Printer className="w-3.5 h-3.5 text-indigo-200" />
+            <span className="hidden sm:inline">{isPrintingOfficial ? 'Emitiendo...' : 'Folios SII'}</span>
           </button>
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg border border-emerald-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Exportar Balance 8 Columnas a CSV / Excel"
           >
-            <span>📥</span>
-            <span>Exportar CSV / Excel</span>
+            <Download className="w-4 h-4 text-emerald-700" />
           </button>
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-lg border border-indigo-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg border border-indigo-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Imprimir Balance de 8 Columnas"
           >
-            <span>🖨️</span>
-            <span>Imprimir</span>
+            <Printer className="w-4 h-4 text-indigo-700" />
           </button>
         </div>
       </div>
-
-      {/* Alerta de comprobantes excluidos por descuadratura */}
-      {descuadradosCount > 0 && (
-        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl text-amber-900 text-xs flex items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-base">⚠️</span>
-            <div>
-              <span className="font-bold">Partida Doble Estricta:</span> Se han excluido automáticamente <strong>{descuadradosCount}</strong> comprobante(s) que presentaban descuadre o falta de balance (Debe ≠ Haber) para garantizar un Balance Tributario 100% fidedigno y cuadrado.
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Filter Bar */}
       <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between">

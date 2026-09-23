@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Company, Voucher, ChartOfAccount, FiscalPeriodYear } from '../types';
 import { generateSIIReportPDF } from '../utils/pdfGenerator';
 import { printAndLogOfficialBook } from '../utils/folioService';
+import { Layers, Printer, FileText, Download } from 'lucide-react';
 
 interface LibroMayorViewProps {
   studyId?: string;
@@ -421,47 +422,44 @@ export default function LibroMayorView({
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📚</span>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Libro Mayor Contable</h3>
+      <div className="bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs flex flex-wrap justify-between items-center gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center text-indigo-700 border border-indigo-200/60">
+            <Layers className="w-4 h-4" />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Centralización y saldos por cuenta contable con detalle de movimientos ({company.name} - RUT: {company.rut})
-          </p>
+          <h3 className="text-sm font-bold text-slate-900 tracking-tight uppercase">Libro Mayor Contable</h3>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={handlePrintOfficialBook}
             disabled={isPrintingOfficial}
-            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            className="px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50 cursor-pointer"
             title="Emisión oficial de Libro Mayor con folios correlativos timbrados por el SII"
           >
-            <span>🖨️</span>
-            <span>{isPrintingOfficial ? 'Emitiendo Folios...' : 'Libro Mayor Oficial (Folios SII)'}</span>
+            <Printer className="w-3.5 h-3.5 text-indigo-200" />
+            <span className="hidden sm:inline">{isPrintingOfficial ? 'Emitiendo...' : 'Folios SII'}</span>
           </button>
           <button
             onClick={handleDownloadSIIReport}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Descargar Informe SII en PDF"
           >
-            <span>📄</span>
-            <span>Informe SII (PDF)</span>
+            <FileText className="w-4 h-4 text-slate-300" />
           </button>
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg border border-emerald-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Exportar Libro Mayor a CSV / Excel"
           >
-            <span>📥</span>
-            <span>Exportar CSV / Excel</span>
+            <Download className="w-4 h-4 text-emerald-700" />
           </button>
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-lg border border-indigo-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg border border-indigo-300 flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+            title="Imprimir Libro Mayor"
           >
-            <span>🖨️</span>
-            <span>Imprimir</span>
+            <Printer className="w-4 h-4 text-indigo-700" />
           </button>
         </div>
       </div>
