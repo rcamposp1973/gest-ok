@@ -17,11 +17,34 @@ export interface SuperUser {
   createdAt?: string;
 }
 
+export interface StudyModulePermissions {
+  contabilidadBase?: boolean; // Vouchers, Diario, Mayor, Auxiliares, Balance 8 Columnas
+  ifrsAuditoria?: boolean; // Balance IFRS, Estado de Resultados, Dictamen Auditor
+  rcvSii?: boolean; // RCV SII Compras, Ventas, BHR, sincronización
+  formulario29?: boolean; // F29 oficial con códigos SII y propuesta
+  cartolasBancarias?: boolean; // Importación masiva cartolas bancarias Excel/CSV
+  conciliacionBancaria?: boolean; // Conciliación bancaria inteligente
+  tesoreria?: boolean; // Nóminas de pago proveedores, Cobranza
+  kpisIndicadores?: boolean; // Tablero KPIs, Ratios, Flujo de Caja Proyectado
+  comercialInventario?: boolean; // Facturación DTE, Inventario Kardex PMP, Catálogo
+  remuneraciones?: boolean; // Personal, Liquidaciones, Previred, LRD DT
+  visorClientes?: boolean; // Portal / Visor seguro para clientes del estudio
+  copilotoIA?: boolean; // Cuadernos inteligentes y Copiloto IA
+  [key: string]: boolean | undefined;
+}
+
+export type StudySubscriptionStatus = 'Vigente' | 'Solo_Lectura' | 'Suspendido_Pago' | 'Sin_Vigencia';
+
 export interface Plan {
   id: string;
   name: string;
+  code?: string;
+  priceUF?: number | null;
+  priceText?: string;
   maxCompanies: number;
   maxUsers: number;
+  defaultModules?: StudyModulePermissions;
+  features?: string[];
 }
 
 export interface StudyAdmin {
@@ -40,8 +63,15 @@ export interface Study {
   id: string;
   name: string;
   planId?: string;
+  planCode?: string; // PLAN_ENTRADA, PLAN_ESTUDIO_10, PLAN_ESTUDIO_FULL, PLAN_CORPORATIVO, CUSTOM
+  planName?: string;
+  subscriptionStatus?: StudySubscriptionStatus; // Vigente, Solo_Lectura (Gracia), Suspendido_Pago (Bloqueado)
+  paymentNotes?: string;
+  nextBillingDate?: string;
   maxCompanies?: number; // Cantidad límite de empresas permitidas
   maxUsers?: number; // Cantidad límite de usuarios permitidos
+  modules?: StudyModulePermissions; // Matriz de accesos y módulos contratados
+  customAddons?: { [key: string]: boolean }; // Adicionales contratados expresamente
   rut: string;
   address: string;
   phone: string;
@@ -158,6 +188,7 @@ export interface Company {
   id: string;
   studyId: string;
   name: string; // Razón Social
+  razonSocial?: string; // Alias Razón Social
   fantasyName?: string; // Nombre Fantasía
   rut: string; // RUT
   giro?: string; // Giro / Actividad Económica
@@ -172,6 +203,10 @@ export interface Company {
   contactName?: string; // Contacto Operativo Nombre
   contactPhone?: string; // Contacto Operativo Teléfono
   estado?: 'Activo' | 'Inactivo';
+  isEmpresaConstructora?: boolean; // Tratamiento especial constructoras (CEEC Art. 21 DL 910)
+  isDemoCompany?: boolean; // Empresa exclusiva para demostraciones de ventas (reseteable)
+  initialRemanenteUTM?: number; // Remanente inicial de apertura en UTM
+  initialRemanentePesos?: number; // Remanente inicial de apertura en Pesos
   f29CodeSettings?: { [key: string]: boolean };
   f29AccountParams?: F29AccountingParams;
   customF29Codes?: CustomF29Code[];
@@ -183,6 +218,8 @@ export interface Company {
   regimenTributario?: string;
   tasaPpm?: number;
   ppmRateHistory?: { rate: number; effectiveFrom: string }[];
+  modules?: StudyModulePermissions; // Configuración o personalización modular por empresa
+  subscriptionStatus?: 'Vigente' | 'Solo_Lectura' | 'Suspendido_Pago' | 'Activo' | 'Inactivo';
 }
 
 export interface Assignment {
@@ -314,6 +351,7 @@ export interface RCVDocument {
   nombreTipoDoc?: string;
   folio: string;
   fechaEmision: string; // YYYY-MM-DD
+  date?: string; // Compatibilidad YYYY-MM-DD
   fechaVencimiento?: string; // YYYY-MM-DD
   montoNeto: number; // Para Compras/Ventas: Neto afecto. Para Honorarios: Bruto
   montoIva: number; // Para Compras/Ventas: IVA (Débito/Crédito). Para Honorarios: Retención (13.75%/14.5%/15.25%)
@@ -323,7 +361,12 @@ export interface RCVDocument {
   montoRetencion?: number;
   montoLiquido?: number;
   montoOtrosImpuestos?: number; // Impuestos adicionales (ILA, diesel, carnes, licores, etc.)
+  isBoletaResumen?: boolean; // Identificador de resumen consolidado de boletas de venta
+  totalDocumentos?: number; // Conteo de documentos agrupados en el resumen
   refFolioOrig?: string; // Folio de referencia para NC / ND
+  refTipoDocOrig?: string; // Tipo docto referenciado (ej: 33, 34)
+  montoCeec?: number; // Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)
+  isConstructoraCeec?: boolean; // Indicador de rebaja franquicia CEEC en la factura
   estadoContabilizado: boolean;
   voucherId?: string;
   auxiliaryId?: string;
@@ -410,6 +453,8 @@ export type AccountingVoucher = Voucher;
 export interface Voucher {
   id: string;
   voucherNumber: number;
+  companyId?: string;
+  origin?: string;
   date: string; // YYYY-MM-DD
   period: string; // YYYY-MM
   type: 'Ingreso' | 'Egreso' | 'Traspaso';
@@ -443,9 +488,22 @@ export interface AuditLog {
   companyId?: string;
   companyName?: string;
   action: 'LOGIN' | 'LOGOUT' | 'CREAR' | 'MODIFICAR' | 'ELIMINAR' | 'CONTABILIZAR' | 'ANULAR' | 'IMPORTACION_MASIVA' | 'PURGA' | 'EXPORTAR' | 'CREATE' | 'UPDATE';
-  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV' | 'DEMO_PURGE' | 'MARKETING_PROMO' | 'MARKETING_LANDING' | 'TESTIMONIOS' | 'PLANES_PRECIOS';
+  module: 'AUTENTICACION' | 'ESTUDIOS' | 'EMPRESAS' | 'COMPROBANTES' | 'RCV_COMPRAS' | 'RCV_VENTAS' | 'RCV_HONORARIOS' | 'PLAN_CUENTAS' | 'AUXILIARES' | 'PERIODOS_FISCALES' | 'PLANES' | 'SUPER_ADMINS' | 'USUARIOS' | 'DTE' | 'CONCILIACION' | 'F29' | 'PAGOS_COBRANZAS' | 'PARAMETROS_RCV' | 'DEMO_PURGE' | 'MARKETING_PROMO' | 'MARKETING_LANDING' | 'TESTIMONIOS' | 'PLANES_PRECIOS' | 'INVENTARIOS' | 'BODEGAS' | 'REPORTES_ANALITICOS' | 'PRESUPUESTOS';
   details: string;
   metadata?: { [key: string]: any };
+}
+
+export interface CompanyBudget {
+  id: string; // e.g. "budget_ventas_2025"
+  companyId: string;
+  year: number;
+  type: 'VENTAS' | 'GASTOS';
+  monthlyBudget: { [month: number]: number }; // month 1-12 in CLP
+  annualBudget: number;
+  growthTargetPercent?: number;
+  notes?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface RCVAccountingParams {
@@ -454,6 +512,8 @@ export interface RCVAccountingParams {
   retencionBheAccountId?: string; // IVA Retenido / Retención BHE (Honorarios)
   exentoAccountId?: string; // Impuesto Exento / No Gravado
   otrosImpuestosAccountId?: string; // Impuestos Adicionales (ILA, Harinas, Licores, etc.)
+  ceecAccountId?: string; // Cuenta Activo Crédito Especial Empresas Constructoras (Art. 21 D.L. 910)
+  isEmpresaConstructora?: boolean; // Tratamiento Especial Constructoras (Rebaja Crédito CEEC en Ventas)
   defaultCustomerAccountId?: string; // Clientes por Cobrar por Defecto
   defaultSupplierAccountId?: string; // Proveedores por Pagar por Defecto
   defaultHonorariosAccountId?: string; // Honorarios por Pagar por Defecto
@@ -525,6 +585,23 @@ export interface CollectionRecord {
   createdAt: string;
 }
 
+export interface BankStatementLineClientInput {
+  identifiedAt?: string;
+  identifiedByEmail?: string;
+  identifiedByName?: string;
+  explanation: string; // Explicación o glosa dada por el dueño de empresa (ej: "Combustible camioneta", "Pago factura 451 Sodimac")
+  suggestedCategory?: 'PROVEEDOR' | 'CLIENTE' | 'RETIRO_SOCIO' | 'GASTO_GENERAL' | 'REMUNERACION' | 'IMPUESTO' | 'TRANSFERENCIA_INTERNA' | 'OTRO';
+  suggestedRut?: string;
+  suggestedRazonSocial?: string;
+  suggestedAccountId?: string;
+  suggestedAccountCode?: string;
+  suggestedAccountName?: string;
+  suggestedDocRef?: string;
+  attachmentName?: string;
+  notes?: string;
+  status?: 'PENDIENTE_REVISION' | 'CONTABILIZADO';
+}
+
 export interface BankStatementLine {
   id: string;
   date: string; // YYYY-MM-DD
@@ -537,6 +614,7 @@ export interface BankStatementLine {
   matchedVoucherNumber?: number;
   matchedVoucherPeriod?: string; // Período del comprobante contable vinculado (ej: 2026-02)
   matchedStatus: 'Pendiente' | 'Conciliado' | 'No_Corresponde';
+  clientInput?: BankStatementLineClientInput;
 }
 
 export interface BankReconciliation {
@@ -561,6 +639,30 @@ export interface BankReconciliation {
   notes?: string;
   lines: BankStatementLine[];
   updatedAt: string;
+}
+
+export interface JuniorGlossRule {
+  id?: string;
+  studyId?: string;
+  companyId?: string;
+  title?: string;
+  pattern: string; // Subcadena o texto a buscar en la glosa de la cartola (ej: "COMISION", "PAC TRANSBANK", "INTERESES")
+  matchType?: 'CONTAINS' | 'STARTS_WITH' | 'EXACT';
+  movementType: 'ALL' | 'CARGO' | 'ABONO'; // CARGO -> Comprobante de Egreso, ABONO -> Comprobante de Ingreso
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  auxiliaryRut?: string;
+  auxiliaryName?: string;
+  targetGloss?: string; // Glosa personalizada para el comprobante contable (opcional)
+  costCenter?: string;
+  expenseItem?: string;
+  project?: string;
+  product?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  timesUsed?: number;
 }
 
 export interface CustomF29Code {
@@ -606,6 +708,7 @@ export interface F29DebitoFiscal {
   debitoBoletasEmitidas: number; // Cód 110 / 111
   debitoNotasDebito: number; // Cód 512 / 513
   creditoNotasCreditoEmitidas: number; // Cód 509 / 510
+  ceecCreditoConstructora?: number; // Cód 126 / 128 (-) Crédito Especial Empresas Constructoras Art. 21 DL 910
   totalDebitoFiscal: number; // Cód 538
   ventasExentasTotal: number; // Cód 585 / 142
   docsCount: number;
@@ -637,6 +740,37 @@ export interface F29Retenciones {
   prestamoSolidario: number;
   totalRetenciones: number;
   docsCount: number;
+}
+
+export interface FiniquitoRecord {
+  id?: string;
+  companyId: string;
+  employeeId: string;
+  employeeRut: string;
+  employeeName: string;
+  causalTermino: string;
+  causalNombre: string;
+  fechaIngreso: string;
+  fechaCese: string;
+  anosServicio: number;
+  ultimaRemuneracion: number;
+  
+  montoIndemnizacionAnosServicio: number;
+  montoSustitutivaAvisoPrevio: number;
+  diasVacacionesPendientes: number;
+  montoVacacionesProporcionales: number;
+  otrosHaberesFiniquito: number;
+  
+  descuentosPrestamos: number;
+  descuentosOtros: number;
+  
+  totalBrutoFiniquito: number;
+  totalDescuentosFiniquito: number;
+  totalLiquidoFiniquito: number;
+  
+  fechaPago: string;
+  estado: 'BORRADOR' | 'FIRMADO' | 'PAGADO';
+  createdAt: string;
 }
 
 export interface F29PPM {
@@ -813,6 +947,20 @@ export interface FolioUsageLog {
   notes?: string;
 }
 
+export interface Warehouse {
+  id: string;
+  companyId: string;
+  code: string; // e.g. "BOD-01", "BOD-MATRIZ"
+  name: string; // e.g. "Bodega Central - Casa Matriz"
+  address?: string;
+  responsible?: string;
+  phone?: string;
+  isDefault?: boolean;
+  estado: 'Activo' | 'Inactivo';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ProductService {
   id: string;
   companyId?: string;
@@ -820,19 +968,25 @@ export interface ProductService {
   name: string;
   type: 'PRODUCT' | 'SERVICE'; // Controla si mueve Kardex/Stock o no
   unitOfMeasure: string; // UN, HRS, GL, KG, M, etc.
+  unit?: string; // Compatibilidad ProductMaster
+  description?: string; // Compatibilidad ProductMaster
   salesPrice: number; // Neto
   purchaseCost: number; // Neto / PMP
   
   // Imputación contable y operativa
   salesAccountId?: string; // Cuenta Ingreso (ej: 410101 Ventas Servicios)
   purchaseAccountId?: string; // Cuenta Gasto/Activo (ej: 510201 Honorarios o 110601 Mercaderías)
+  costOfGoodsAccountId?: string; // Cuenta Costo de Ventas (ej: 610101 Costo de Ventas)
+  inventoryAssetAccountId?: string; // Cuenta Activo Realizable (ej: 110601 Mercaderías en Bodega)
   defaultCostCenterId?: string; // Centro de Costo por defecto
   defaultItemGastoId?: string; // Ítem / Clasificación de Gasto
+  defaultWarehouseId?: string; // Bodega asignada por defecto
   
   // Control de inventario (Solo aplica si type === 'PRODUCT')
   currentStock: number;
   minStock: number;
   allowNegativeStock: boolean;
+  stocksByWarehouse?: { [warehouseId: string]: number }; // Desglose físico por bodega
   
   category?: string;
   barcode?: string;
@@ -881,6 +1035,10 @@ export interface CommercialDocument {
   giroContraparte?: string;
   direccionContraparte?: string;
   
+  // Logística y Bodega
+  warehouseId?: string;
+  warehouseName?: string;
+  
   // Detalle de ítems
   items: CommercialItemLine[];
   
@@ -910,12 +1068,16 @@ export interface InventoryMovement {
   productName: string;
   date: string;
   type: 'IN' | 'OUT' | 'ADJUSTMENT';
-  movementReason: 'COMPRA' | 'VENTA' | 'GUIA_DESPACHO' | 'MERMA' | 'AJUSTE_INVENTARIO' | 'CONSUMO_INTERNO' | 'DEVOLUCION' | 'APERTURA';
+  movementReason: 'COMPRA' | 'VENTA' | 'GUIA_DESPACHO' | 'MERMA' | 'AJUSTE_INVENTARIO' | 'CONSUMO_INTERNO' | 'DEVOLUCION' | 'APERTURA' | 'TRASPASO_BODEGA';
   quantity: number;
   unitCost: number;
   totalCost: number;
   previousStock: number;
   resultingStock: number;
+  warehouseId?: string;
+  warehouseName?: string;
+  targetWarehouseId?: string;
+  targetWarehouseName?: string;
   voucherId?: string;
   commercialDocId?: string;
   documentNumber?: string;
@@ -1222,7 +1384,11 @@ export interface LandingPricingPlan {
   name: string;
   subtitle?: string;
   price?: string;
+  priceUF?: number | null;
+  priceText?: string;
   billingPeriod?: string;
+  maxCompanies?: number;
+  maxUsers?: number;
   features: string[];
   ctaText?: string;
   highlighted?: boolean;

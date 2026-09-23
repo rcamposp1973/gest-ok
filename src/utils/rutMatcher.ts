@@ -57,6 +57,21 @@ export function formatChileanRut(body: string, dv: string): string {
 }
 
 /**
+ * Format any raw RUT string into the official Chilean format with dots and hyphen: 11.111.111-1
+ * Always ensures dots and hyphen exist: e.g. 111111111 -> 11.111.111-1, 76468757-4 -> 76.468.757-4
+ */
+export function formatRut(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const clean = raw.replace(/[^0-9kK]/g, '').toUpperCase();
+  if (clean.length < 2) return raw.trim().toUpperCase();
+  const dv = clean.slice(-1);
+  const body = clean.slice(0, -1).replace(/^0+/, '');
+  if (!body) return clean;
+  const formattedBody = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${formattedBody}-${dv}`;
+}
+
+/**
  * Extract potential RUTs from a bank statement gloss.
  * Handles glosses like:
  * - "TEF 0105559089 CLIENTE SP A"

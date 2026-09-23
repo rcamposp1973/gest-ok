@@ -166,6 +166,28 @@ export async function fetchRcvDirectSimpleApi(params: FetchRcvParams): Promise<F
           const montoExento = Number(item.montoExento || 0);
           const montoTotal = Number(item.montoTotal || (montoNeto + montoIva + montoExento));
 
+          // Normalize client RUT and Razon Social - ensure emitting company is NOT set as client
+          const rawClientRut = (
+            item.rutCliente ||
+            item.rutReceptor ||
+            item.rutRecep ||
+            (item.rutRecep && item.dvRecep ? `${item.rutRecep}-${item.dvRecep}` : '') ||
+            item.rutComprador ||
+            (item.rut && formatRutWithDash(item.rut) !== cleanCompanyRut ? item.rut : '') ||
+            ''
+          );
+          const clientRut = rawClientRut ? formatRutWithDash(rawClientRut) : '76.000.000-0';
+          const clientName = (
+            item.razonSocialReceptor ||
+            item.razonSocialCliente ||
+            item.rznSocRecep ||
+            item.razonSocial ||
+            item.rznSoc ||
+            item.nombreReceptor ||
+            item.cliente ||
+            'CLIENTE FACTURA'
+          );
+
           docs.push({
             tipoRegistro: 'Venta',
             tipoDocumento: tipoDte,
@@ -174,8 +196,8 @@ export async function fetchRcvDirectSimpleApi(params: FetchRcvParams): Promise<F
             folio,
             rutEmisor: cleanCompanyRut,
             razonSocialEmisor: companyName || 'EMPRESA EMISORA',
-            rutReceptor: item.rutCliente || item.rutReceptor || item.rutProveedor || '76.000.000-0',
-            razonSocialReceptor: item.razonSocial || item.razonSocialReceptor || 'CLIENTE DTE',
+            rutReceptor: clientRut,
+            razonSocialReceptor: clientName,
             fechaEmision,
             montoNeto,
             montoIva,
@@ -212,7 +234,9 @@ export async function fetchRcvDirectSimpleApi(params: FetchRcvParams): Promise<F
                 montoIva,
                 montoExento,
                 montoTotal,
-                period: `${yearNum}-${formattedMonth}`
+                period: `${yearNum}-${formattedMonth}`,
+                isBoletaResumen: true,
+                totalDocumentos: totalDocs
               });
             }
           }

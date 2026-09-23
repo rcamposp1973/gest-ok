@@ -79,23 +79,33 @@ export function parseChileanNumber(val: any): number {
  * Normalizes Excel date or string date to YYYY-MM-DD
  */
 export function normalizeDate(val: any, fallbackPeriod: string): string {
-  if (!val) return `${fallbackPeriod}-01`;
+  if (val === null || val === undefined || val === '') return `${fallbackPeriod}-01`;
   
+  // Date instance from XLSX cellDates: true or JS Date
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   // Excel Serial date number
   if (typeof val === 'number') {
     const utc_days = Math.floor(val - 25569);
     const date_info = new Date(utc_days * 86400 * 1000);
-    const y = date_info.getUTCFullYear();
-    const m = String(date_info.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(date_info.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    if (!isNaN(date_info.getTime())) {
+      const y = date_info.getUTCFullYear();
+      const m = String(date_info.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(date_info.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
   }
   
   const str = String(val).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
   
-  // DD/MM/YYYY or DD-MM-YYYY
-  const slashParts = str.split(/[\/\-]/);
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const slashParts = str.split(/[\/\-\.]/);
   if (slashParts.length === 3) {
     if (slashParts[0].length === 4) {
       return `${slashParts[0]}-${slashParts[1].padStart(2, '0')}-${slashParts[2].padStart(2, '0')}`;
@@ -104,8 +114,25 @@ export function normalizeDate(val: any, fallbackPeriod: string): string {
       return `${slashParts[2]}-${slashParts[1].padStart(2, '0')}-${slashParts[0].padStart(2, '0')}`;
     }
     if (slashParts[2].length === 2) {
-      return `20${slashParts[2]}-${slashParts[1].padStart(2, '0')}-${slashParts[0].padStart(2, '0')}`;
+      const yPrefix = parseInt(slashParts[2], 10) > 50 ? '19' : '20';
+      return `${yPrefix}${slashParts[2]}-${slashParts[1].padStart(2, '0')}-${slashParts[0].padStart(2, '0')}`;
     }
+  }
+
+  // Format DD/MM without year e.g. "17/04"
+  if (slashParts.length === 2 && slashParts[0].length <= 2 && slashParts[1].length <= 2) {
+    const fallbackYear = fallbackPeriod.includes('-') ? fallbackPeriod.split('-')[0] : '2025';
+    const day = slashParts[0].padStart(2, '0');
+    const month = slashParts[1].padStart(2, '0');
+    return `${fallbackYear}-${month}-${day}`;
+  }
+
+  const dParsed = new Date(str);
+  if (!isNaN(dParsed.getTime()) && dParsed.getFullYear() > 2000 && dParsed.getFullYear() < 2100) {
+    const y = dParsed.getFullYear();
+    const m = String(dParsed.getMonth() + 1).padStart(2, '0');
+    const d = String(dParsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   
   return `${fallbackPeriod}-01`;
@@ -116,7 +143,8 @@ export function normalizeDate(val: any, fallbackPeriod: string): string {
  */
 export function createLineFingerprint(line: { date: string; description: string; charge: number; deposit: number; documentNumber?: string }): string {
   const normDesc = (line.description || '').trim().toUpperCase().replace(/\s+/g, ' ');
-  const doc = (line.documentNumber || '').trim().toUpperCase();
+  let doc = (line.documentNumber || '').trim().toUpperCase();
+  if (doc === '0' || doc === '-' || doc === 'S/N' || doc === 'SN') doc = '';
   const chg = Math.round(line.charge || 0);
   const dep = Math.round(line.deposit || 0);
   return `${line.date}|${chg}|${dep}|${normDesc}|${doc}`;

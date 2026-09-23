@@ -31,6 +31,117 @@ export function getNextPeriod(periodStr: string): string {
 }
 
 /**
+ * Checks if a bank reconciliation belongs to a specific bank account by comparing ID, Code or doc ID
+ */
+export function isMatchingBankReconciliation(
+  r: BankReconciliation | any,
+  bankAccount: ChartOfAccount | undefined,
+  bankAccountId?: string
+): boolean {
+  if (!r) return false;
+  const accId = bankAccount?.id || bankAccountId;
+  const accCode = bankAccount?.code;
+
+  if (accId && (r.bankAccountId === accId || r.bankAccountCode === accId)) return true;
+  if (accCode && (r.bankAccountId === accCode || r.bankAccountCode === accCode)) return true;
+
+  if (accCode) {
+    const cleanCode = accCode.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (r.id && (r.id.startsWith(`${cleanCode}_`) || r.id === cleanCode)) return true;
+  }
+  if (accId) {
+    const cleanId = accId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (r.id && (r.id.startsWith(`${cleanId}_`) || r.id === cleanId)) return true;
+  }
+  return false;
+}
+
+/**
+ * Creates deterministic fingerprint for bank statement line deduplication
+ */
+export function createLineFingerprint(line: {
+  date: string;
+  description: string;
+  charge: number;
+  deposit: number;
+  documentNumber?: string;
+}): string {
+  const normDesc = (line.description || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  let doc = (line.documentNumber || '').trim().toUpperCase();
+  if (doc === '0' || doc === '-' || doc === 'S/N' || doc === 'SN') doc = '';
+  const chg = Math.round(line.charge || 0);
+  const dep = Math.round(line.deposit || 0);
+  return `${line.date}|${chg}|${dep}|${normDesc}|${doc}`;
+}
+
+export interface MergeStatementLinesResult {
+  mergedLines: BankStatementLine[];
+  addedCount: number;
+  duplicateCount: number;
+  existingPreservedCount: number;
+  earliestDate: string | null;
+  latestDate: string | null;
+}
+
+/**
+ * Merges new bank statement lines into existing lines:
+ * - Detects and skips duplicates using line fingerprint and IDs.
+ * - Preserves existing reconciled statuses (matchedStatus, matchedVoucherId, etc.).
+ * - Sorts all resulting lines chronologically by date.
+ */
+export function mergeStatementLines(
+  existingLines: BankStatementLine[],
+  newLines: BankStatementLine[]
+): MergeStatementLinesResult {
+  const existingFingerprints = new Set<string>();
+  const existingIds = new Set<string>();
+
+  (existingLines || []).forEach(l => {
+    if (l.id) existingIds.add(l.id);
+    const fp = createLineFingerprint(l);
+    existingFingerprints.add(fp);
+  });
+
+  const merged = [...(existingLines || [])];
+  let addedCount = 0;
+  let duplicateCount = 0;
+
+  (newLines || []).forEach(l => {
+    const fp = createLineFingerprint(l);
+    if ((l.id && existingIds.has(l.id)) || existingFingerprints.has(fp)) {
+      duplicateCount++;
+    } else {
+      merged.push({
+        ...l,
+        matchedStatus: l.matchedStatus || 'Pendiente'
+      });
+      existingFingerprints.add(fp);
+      if (l.id) existingIds.add(l.id);
+      addedCount++;
+    }
+  });
+
+  // Sort chronologically by date (YYYY-MM-DD)
+  merged.sort((a, b) => {
+    const dateComp = (a.date || '').localeCompare(b.date || '');
+    if (dateComp !== 0) return dateComp;
+    return 0;
+  });
+
+  const earliestDate = merged.length > 0 ? merged[0].date : null;
+  const latestDate = merged.length > 0 ? merged[merged.length - 1].date : null;
+
+  return {
+    mergedLines: merged,
+    addedCount,
+    duplicateCount,
+    existingPreservedCount: (existingLines || []).length,
+    earliestDate,
+    latestDate
+  };
+}
+
+/**
  * Recalculates running balance line by line starting from initial balance
  */
 export function recalculateRunningBalances(lines: BankStatementLine[], initialBal: number) {
