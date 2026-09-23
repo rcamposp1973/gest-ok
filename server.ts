@@ -217,6 +217,31 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
                 const montoExento = Number(item.montoExento || 0);
                 const montoTotal = Number(item.montoTotal || (montoNeto + montoIva + montoExento));
 
+                // Normalize client RUT and Razon Social - ensure emitting company is NOT set as client
+                const rawClientRut = (
+                  item.rutCliente ||
+                  item.rutReceptor ||
+                  item.rutRecep ||
+                  (item.rutRecep && item.dvRecep ? `${item.rutRecep}-${item.dvRecep}` : '') ||
+                  item.rutComprador ||
+                  (item.rut && item.rut.replace(/[^0-9kK]/g, '').toUpperCase() !== cleanCompanyRutRaw.toUpperCase() ? item.rut : '') ||
+                  ''
+                );
+                const clientRutWithDash = rawClientRut.length > 1
+                  ? `${rawClientRut.replace(/[^0-9kK]/g, '').slice(0, -1)}-${rawClientRut.replace(/[^0-9kK]/g, '').slice(-1)}`
+                  : (rawClientRut || '76.000.000-0');
+
+                const clientName = (
+                  item.razonSocialReceptor ||
+                  item.razonSocialCliente ||
+                  item.rznSocRecep ||
+                  item.razonSocial ||
+                  item.rznSoc ||
+                  item.nombreReceptor ||
+                  item.cliente ||
+                  'CLIENTE FACTURA'
+                );
+
                 docs.push({
                   tipoRegistro: 'Venta',
                   tipoDocumento: tipoDte,
@@ -224,9 +249,9 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
                   nombreTipoDoc: item.tipoDTEString || item.tipoDocString || (tipoDte === '33' ? 'Factura Electrónica' : tipoDte === '34' ? 'Factura Exenta' : tipoDte === '61' ? 'Nota de Crédito' : 'DTE Venta'),
                   folio,
                   rutEmisor: cleanCompanyRutWithDash,
-                  razonSocialEmisor: req.body.companyName || 'SOC DE INVERSIONES ALCALA SPA',
-                  rutReceptor: item.rutCliente || item.rutReceptor || item.rutProveedor || '76.000.000-0',
-                  razonSocialReceptor: item.razonSocial || item.razonSocialReceptor || 'CLIENTE DTE',
+                  razonSocialEmisor: req.body.companyName || 'EMPRESA EMISORA',
+                  rutReceptor: clientRutWithDash,
+                  razonSocialReceptor: clientName,
                   fechaEmision,
                   montoNeto,
                   montoIva,
@@ -236,7 +261,7 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
                 });
               }
 
-              // B: Resúmenes de Ventas (por ejemplo: Boletas Electrónicas Tipo 39 o 41 del mes)
+              // B: Resúmenes de Ventas (Boletas Electrónicas Tipo 39 o 41 del mes)
               const resumenesVentas = dataVentas?.ventas?.resumenes || dataVentas?.resumenes || [];
               for (const resItem of resumenesVentas) {
                 const tipoDte = Number(resItem.tipoDte || 0);
@@ -255,7 +280,7 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
                       nombreTipoDoc: resItem.tipoDteString || (tipoDte === 39 ? 'Boleta Electrónica (Resumen Mensual)' : 'Resumen DTE'),
                       folio: `RESUMEN-${totalDocs}DOCS`,
                       rutEmisor: cleanCompanyRutWithDash,
-                      razonSocialEmisor: req.body.companyName || 'SOC DE INVERSIONES ALCALA SPA',
+                      razonSocialEmisor: req.body.companyName || 'EMPRESA EMISORA',
                       rutReceptor: '66.666.666-6',
                       razonSocialReceptor: `Clientes Varios (${totalDocs} Boletas)`,
                       fechaEmision: `${yearNum}-${formattedMonth}-28`,
@@ -263,7 +288,9 @@ app.post("/api/sii/rescatar-rcv", async (req, res) => {
                       montoIva,
                       montoExento,
                       montoTotal,
-                      period: `${yearNum}-${formattedMonth}`
+                      period: `${yearNum}-${formattedMonth}`,
+                      isBoletaResumen: true,
+                      totalDocumentos: totalDocs
                     });
                   }
                 }

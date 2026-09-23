@@ -130,6 +130,31 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
             const montoExento = Number(item.montoExento || 0);
             const montoTotal = Number(item.montoTotal || (montoNeto + montoIva + montoExento));
 
+            // Normalize client RUT and Razon Social - ensure emitting company is NOT set as client
+            const rawClientRut = (
+              item.rutCliente ||
+              item.rutReceptor ||
+              item.rutRecep ||
+              (item.rutRecep && item.dvRecep ? `${item.rutRecep}-${item.dvRecep}` : '') ||
+              item.rutComprador ||
+              (item.rut && item.rut.replace(/[^0-9kK]/g, '').toUpperCase() !== cleanCompanyRut ? item.rut : '') ||
+              ''
+            );
+            const clientRutWithDash = rawClientRut.length > 1
+              ? `${rawClientRut.replace(/[^0-9kK]/g, '').slice(0, -1)}-${rawClientRut.replace(/[^0-9kK]/g, '').slice(-1)}`
+              : (rawClientRut || '76.000.000-0');
+
+            const clientName = (
+              item.razonSocialReceptor ||
+              item.razonSocialCliente ||
+              item.rznSocRecep ||
+              item.razonSocial ||
+              item.rznSoc ||
+              item.nombreReceptor ||
+              item.cliente ||
+              'CLIENTE FACTURA'
+            );
+
             docs.push({
               tipoRegistro: 'Venta',
               tipoDocumento: tipoDte,
@@ -138,8 +163,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               folio,
               rutEmisor: cleanCompanyRutWithDash,
               razonSocialEmisor: companyName || 'EMPRESA EMISORA',
-              rutReceptor: item.rutCliente || item.rutReceptor || item.rutProveedor || '76.000.000-0',
-              razonSocialReceptor: item.razonSocial || item.razonSocialReceptor || 'CLIENTE DTE',
+              rutReceptor: clientRutWithDash,
+              razonSocialReceptor: clientName,
               fechaEmision,
               montoNeto,
               montoIva,
@@ -176,7 +201,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                   montoIva,
                   montoExento,
                   montoTotal,
-                  period: `${yearNum}-${formattedMonth}`
+                  period: `${yearNum}-${formattedMonth}`,
+                  isBoletaResumen: true,
+                  totalDocumentos: totalDocs
                 });
               }
             }
